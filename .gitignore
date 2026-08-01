@@ -1,0 +1,18 @@
+# Licensed subscription data — Draft Sharks / Footballguys / FantasyPros
+# exports are paid content. Never commit them to a public repo.
+data/
+raw/
+exports/
+
+# Generated cheatsheets (Excel + PDF output)
+output/
+build/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
