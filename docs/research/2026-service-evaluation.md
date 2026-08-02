@@ -132,3 +132,36 @@ Rank  Tier  Player                Pos  Team  Bye  ADP    Floor    Consensus  FP 
 
 The claim may still hold for FantasyPros and Footballguys — it was not tested against
 their extracts.
+
+### Follow-up: vendor documentation checked 2026-08-01
+
+**Draft Sharks — TQB confirmed supported, independently of the 2024 export.**
+Their live league-sync scoring configurator
+(<https://www.draftsharks.com/league/mvp/scoring>) lists **`TQB Team Quarterback`** as a
+selectable roster position, alongside other nonstandard slots (`QRWT QB/WR/RB/TE`,
+`RW RB/WR`, `WT WR/TE`). CBS is listed among supported hosts on both that page and
+<https://www.draftsharks.com/kb/fantasy-football-league-sync>. Two independent
+confirmations now: the 2024 export and current vendor documentation.
+
+**FantasyPros — disqualifying limitation, and it is not about TQB.**
+FantasyPros support documentation states they *"support the customization of popular
+passing, receiving and rushing settings as well as custom roster setups, however they
+do not currently support custom yardage bonuses or Kicker/DST settings."*
+
+SFFL scoring is **entirely** yardage bonuses — receiving yards in 7 bands, rushing in 9,
+passing in 4, banded FG distance, and DST points/yards allowed. FantasyPros cannot
+represent any of it, so its custom values would be wrong at every position, not merely
+at TQB. This explains why the 2025 cheatsheet was built on generic settings.
+
+Consequence for the recommendation above: the case for adding FantasyPros MVP rested on
+(a) a second CBS-syncing *live draft* assistant and (b) consensus rankings. (a) is worth
+nothing for an offline auction, and (b) cannot be made league-correct. Still usable as a
+generic consensus sanity check; not as a source of values for this league.
+
+**Footballguys — undetermined.** Claims *"the most extensive league support in the
+industry. IDP, keeper, auction"* but publishes no roster-slot list and does not mention
+TQB anywhere public. Requires asking them directly. Their VBD engine remains attractive
+for threshold scoring *if* they can represent yardage bonuses and TQB.
+
+Open question for any vendor: can it represent **banded/threshold scoring** at all?
+That, not TQB, is the harder requirement.
