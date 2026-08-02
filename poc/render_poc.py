@@ -33,13 +33,24 @@ FLEX_SLOTS = 5            # RB/WR/TE per team
 TOTAL_MONEY = TEAMS * BUDGET
 TOTAL_SPOTS = TEAMS * ROSTER
 
+# Validated with dataviz/scripts/validate_palette.js, light mode, --pairs all.
+#
+# Validated as two sets, because the six colors never co-occur: the overall board
+# carries TQB/RB/WR/TE, while K and DST appear only together on their own page.
+#   TQB/RB/WR/TE  -> all pass, worst pair 18.9 dE protan / 20.8 normal
+#   K/DST         -> all pass, worst pair 10.2 dE deutan / 21.8 normal
+#
+# TQB is gold rather than green: red<->green is dE 5.7 under deuteranopia, and
+# purple was worse still against blue at dE 1.1 under protanopia.
+# WR/TE keep a light-dark gradient of one hue - same position, related colors -
+# with enough lightness separation to clear the normal-vision floor at 20.8.
 COLORS = {
-    "TQB": HexColor("#6D4AA6"),
-    "RB": HexColor("#2E8B57"),
-    "WR": HexColor("#1F6FB2"),
-    "TE": HexColor("#6FA8D6"),
-    "K": HexColor("#D98A2B"),
-    "DST": HexColor("#7A6A5A"),
+    "TQB": HexColor("#D9A441"),   # gold
+    "RB": HexColor("#C0392B"),    # red - most-scanned distinction
+    "WR": HexColor("#1B6CA8"),    # blue, dark end of the receiver gradient
+    "TE": HexColor("#5BAEE8"),    # blue, light end - same pool as WR
+    "K": HexColor("#00968F"),     # teal
+    "DST": HexColor("#8E5FBF"),   # purple
 }
 ZEBRA, RULE, BOXLINE, MUTED = (
     HexColor("#F5F5F5"), HexColor("#CCCCCC"), HexColor("#9A9A9A"), HexColor("#777777")
@@ -66,20 +77,51 @@ def load_ds():
     return out
 
 
+# DST rows carry a full franchise name with no abbreviation. The real pipeline
+# resolves this in identity/aliases.yaml; the POC needs the same mapping inline.
+TEAM_ABBR = {
+    "Arizona Cardinals": "ARI", "Atlanta Falcons": "ATL", "Baltimore Ravens": "BAL",
+    "Buffalo Bills": "BUF", "Carolina Panthers": "CAR", "Chicago Bears": "CHI",
+    "Cincinnati Bengals": "CIN", "Cleveland Browns": "CLE", "Dallas Cowboys": "DAL",
+    "Denver Broncos": "DEN", "Detroit Lions": "DET", "Green Bay Packers": "GB",
+    "Houston Texans": "HOU", "Indianapolis Colts": "IND",
+    "Jacksonville Jaguars": "JAC", "Kansas City Chiefs": "KC",
+    "Las Vegas Raiders": "LV", "Los Angeles Chargers": "LAC",
+    "Los Angeles Rams": "LAR", "Miami Dolphins": "MIA", "Minnesota Vikings": "MIN",
+    "New England Patriots": "NE", "New Orleans Saints": "NO",
+    "New York Giants": "NYG", "New York Jets": "NYJ",
+    "Philadelphia Eagles": "PHI", "Pittsburgh Steelers": "PIT",
+    "San Francisco 49ers": "SF", "Seattle Seahawks": "SEA",
+    "Tampa Bay Buccaneers": "TB", "Tennessee Titans": "TEN",
+    "Washington Commanders": "WAS",
+}
+
+
 def load_fp_kdst():
-    """K and DST from the 2025 FantasyPros cheatsheet, which carries real $ values."""
+    """K and DST from their dedicated blocks in the 2025 FantasyPros cheatsheet.
+
+    Reading these from the *overall* column truncated the lists to whatever
+    cracked the overall rankings - 28 kickers and 30 defenses. The dedicated
+    blocks carry 45 and 32.
+    """
     rows = list(csv.reader(open(ICLOUD + "cheatsheet (3).csv")))
+    hdr = rows[1]
     out = []
-    for r in rows[2:]:
-        if not r or not r[0].strip():
-            continue
-        m = re.match(r"^(.*?)\s*\((\w+)\s*-\s*(\w+)\)$", r[0].strip())
-        if not m or m.group(2) not in ("K", "DST"):
-            continue
-        out.append({
-            "name": m.group(1).strip(), "pos": m.group(2), "team": m.group(3),
-            "bye": r[1].strip(), "adp": "", "proj": 0.0, "their": r[2].strip(),
-        })
+    for pos in ("K", "DST"):
+        i = hdr.index(pos)
+        for r in rows[2:]:
+            if len(r) <= i + 2 or not r[i].strip():
+                continue
+            raw = r[i].strip()
+            if " - " in raw:
+                name, team = raw.rsplit(" - ", 1)
+            else:
+                name, team = raw, TEAM_ABBR.get(raw, "")
+            out.append({
+                "name": name.strip(), "pos": pos, "team": team,
+                "bye": r[i + 1].strip(), "adp": "", "proj": 0.0,
+                "their": r[i + 2].strip(),
+            })
     return out
 
 
@@ -224,6 +266,30 @@ class Sheet:
             self.footer()
             self.c.showPage()
 
+    def dual_board(self, title, subtitle, left, lname, right, rname, key, bookmark):
+        """Two independent lists side by side on one page, one per column."""
+        c = self.c
+        # Per-column labels occupy the same band the page key uses on every other
+        # board, so this page's header sits at identical heights to the rest.
+        self.page_header(title, subtitle, None)
+        c.bookmarkPage(bookmark)
+        self.bm.append(bookmark)
+        per_col = self.rows_per_col()
+        key_y = PAGE_H - MARGIN - 33
+        for ci, (lst, label) in enumerate([(left, lname), (right, rname)]):
+            x = MARGIN + ci * (COL_W + GUTTER)
+            y_top = PAGE_H - MARGIN - HEADER_H
+            c.setFillColor(COLORS[lst[0]["pos"]] if lst else MUTED)
+            c.rect(x, key_y, 5, 7, stroke=0, fill=1)
+            c.setFillColor(black)
+            c.setFont("Helvetica-Bold", 7)
+            c.drawString(x + 8, key_y + 1.5, label)
+            self.col_header(x, y_top + 2)
+            for i, p in enumerate(lst[:per_col]):
+                self.row(x, y_top - (i + 1) * ROW_H, i + 1, p, i % 2 == 1)
+        self.footer()
+        c.showPage()
+
     def footer(self):
         c = self.c
         c.setFont("Helvetica", 5.5)
@@ -354,8 +420,9 @@ def main():
     rb = sorted([p for p in ds if p["pos"] == "RB"], key=lambda p: -p["mine"])[:74]
     wrte = sorted([p for p in ds if p["pos"] in ("WR", "TE")],
                   key=lambda p: -p["mine"])[:148]
-    k = [p for p in kdst if p["pos"] == "K"][:37]
-    dst = [p for p in kdst if p["pos"] == "DST"][:37]
+    # 32 each, matching the number of NFL franchises
+    k = [p for p in kdst if p["pos"] == "K"][:32]
+    dst = [p for p in kdst if p["pos"] == "DST"][:32]
 
     s = Sheet(OUT)
     s.board("Overall Board", "TQB ranked inline with flex by $ value. WR/TE one pool.",
@@ -364,10 +431,9 @@ def main():
     s.board("Running Backs", "", rb, ["RB"], "3. Running Backs")
     s.board("Receivers (WR + TE)", "One merged position in this league",
             wrte, ["WR", "TE"], "4. Receivers")
-    s.board("Kickers", "2025 FantasyPros — absent from the DS export", k, ["K"],
-            "5. Kickers")
-    s.board("Team Defense", "2025 FantasyPros — absent from the DS export", dst,
-            ["DST"], "6. Team Defense")
+    s.dual_board("Kickers & Team Defense",
+                 "2025 FantasyPros — both absent from the DS export",
+                 k, "KICKERS", dst, "TEAM DEFENSE", ["K", "DST"], "5. K / DST")
     s.management_page()
     s.save()
 
