@@ -58,18 +58,18 @@ STAT_KEYS = frozenset({
 })
 
 
-def score_game(lg, stats, pos=None):
+def score_game(lg, stats, pos):
     """Total SFFL points for one game's stat line.
 
-    `pos` gates the defense block. Real ingest output is dense: every profile
-    maps def_pa/def_ya onto every row regardless of position, defaulting to
-    0.0 for non-defenses. 0 sits inside the top band for both def_pa and
-    def_ya, so testing key presence (`"def_pa" in stats`) alone would award
-    every skill-position player phantom defense points on a dense stat dict.
-    When `pos` is given, the defense block only runs for pos == "DST". When
-    `pos` is None (the historical call signature, used by hand-built sparse
-    stat dicts such as the golden DST tests below), we fall back to key
-    presence so those callers are unaffected.
+    `pos` is REQUIRED and gates the defense block: it runs for pos == "DST"
+    and for nothing else. There is deliberately no inference from the stat
+    dict. Real ingest output is dense - every profile maps def_pa/def_ya onto
+    every row regardless of position, defaulting to 0.0 for non-defenses -
+    and 0 sits inside the top band for both def_pa and def_ya. An earlier
+    version gated on key presence (`"def_pa" in stats`), which silently paid
+    every receiver and kicker +12 points a game for a shutout they never
+    played. That bug is why the gate is positional, and why `pos` has no
+    default: a caller that does not know the position cannot score a line.
     """
     g = stats.get
     p = lg.points
@@ -98,8 +98,7 @@ def score_game(lg, stats, pos=None):
     total += g("fg_60", 0) * p["fg_60_plus"]
     total += g("fg_missed", 0) * p["fg_missed"]
 
-    is_defense = pos == "DST" if pos is not None else ("def_pa" in stats or "def_ya" in stats)
-    if is_defense:
+    if pos == "DST":
         total += band_points(lg.bands["def_pa"], g("def_pa", 0))
         total += band_points(lg.bands["def_ya"], g("def_ya", 0))
         total += sack_points(lg.sack_rule, g("def_sack", 0))
