@@ -1,0 +1,37 @@
+name: footballguys
+files: ["projection-set-*.csv"]
+by_index: false
+columns:
+  name: name
+  team: team
+  pos: pos
+  games: ssn-gms
+  set_name: set-name
+  pass_att: pass-att
+  pass_cmp: pass-cmp
+  pass_yds: pass-yds
+  pass_td: pass-td
+  pass_int: pass-int
+  pass_2pt: pass-2pt
+  rush_yds: rush-yds
+  rush_td: rush-td
+  rush_2pt: rush-2pt
+  rec_ct: rec-rec
+  rec_yds: rec-yds
+  rec_td: rec-td
+  rec_2pt: rec-2pt
+  xp_made: kck-xpc
+  def_pa: tmd-pa
+  def_ya: tmd-ya
+  def_sack: tmd-sck
+  def_int: tmd-int
+  def_fum_rec: tmd-fmr
+  def_td: tmd-td
+  def_safety: tmd-saf
+filters:
+  pos: ["qb", "rb", "wr", "te", "pk", "td"]
+capabilities:
+  provides_fg_distance_bands: false
+  provides_two_point: true
+  provides_def_safety: true
+  multi_set: true
