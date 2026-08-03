@@ -518,3 +518,43 @@ Short and long tiers are equal; the middle tiers are not. A goal-line rushing TD
 3 where a 5-yard receiving TD scores 5, and a 36-74 yard rushing TD scores 2 more than
 the equivalent reception. Deliberate per the commissioner. The value engine must not
 assume touchdown parity across positions.
+
+## TODO: Widen the Weekly Collection (start a fresh session)
+
+`data/weekly/2025/` is currently a **starter sample**: 18 players, 301 player-weeks,
+seeded by `poc/seed_weekly.py` from logs gathered while validating the scoring engine.
+It covers every position and is enough to build and prove the calibration curves end to
+end. It is **too thin to trust the curves themselves** — 18 players cannot span the
+range of per-game means the curves interpolate over.
+
+**Target: roughly 120 players** — about 30 each at RB and WR/TE, 15-20 each at TQB, K
+and DST — chosen to span low, middle and high per-game means at every position.
+
+**Method, already proven:**
+
+1. Harvest player IDs per position from
+   `/stats/data-stats-report/all:<POS>/season:2025/standard/stats?print_rows=9999`,
+   read with `get_page_text`. Do NOT read that table with `javascript_tool` — a content
+   filter rejects the response.
+2. Fetch each game log from inside the page with `javascript_tool`, which works and is
+   far cheaper than navigating per player:
+
+   ```js
+   const res = await fetch('/players/playerpage/gamelog/<ID>/', {credentials:'same-origin'});
+   const doc = new DOMParser().parseFromString(await res.text(), 'text/html');
+   const t = Array.from(doc.querySelectorAll('table')).find(x => x.rows.length > 10);
+   ```
+
+   Row 0 is the stat-group row (expand by colspan), row 1 the headers, rows 2+ the data.
+   Column layout differs per position, so map `(group, header)` pairs rather than
+   positions.
+3. Regular season only, weeks 1-18. Omit weeks a player did not appear rather than
+   writing zeros — a bye must not drag a per-game mean down.
+4. Append to `data/weekly/2025/<POS>.csv` using the header in
+   `docs/superpowers/plans/2026-08-03-value-engine.md` Task 1.
+
+**Integrity check to re-run after widening:** score every seeded row with `score_game`
+and compare to `cbs_fpts`. Rows may fall short (TD distance bonuses are not published),
+but **no row may exceed** its CBS value. An over-scoring row means a transcription error.
+
+Do this in a fresh session — it is mechanical work that needs none of the design context.
