@@ -95,9 +95,10 @@ DST_GOLDEN = [
 ]
 
 
+@pytest.mark.parametrize("pos", [None, "DST"])
 @pytest.mark.parametrize("stats,expected", DST_GOLDEN)
-def test_dst_matches_real_cbs_output(lg, stats, expected):
-    assert score_game(lg, stats) == expected
+def test_dst_matches_real_cbs_output(lg, stats, expected, pos):
+    assert score_game(lg, stats, pos=pos) == expected
 
 
 def test_receiving_game(lg):
