@@ -30,6 +30,18 @@ PYTHONPATH=src ./.venv/bin/python -m sffl.cli ingest \
 
 Turns any vendor extract into a scored, league-correct pool — 543 players, TQB=32.
 
+## Timeline — hard deadline
+
+| Date | What |
+|---|---|
+| 2026-08-03 | Plan 1 merged. Extracts archived to iCloud as insurance. |
+| **week of 2026-08-23** | **Re-pull fresh extracts** from Draft Sharks and Footballguys for final rankings. Confirm Draft Sharks still reads **AUCTION**, not Snake — every sync imports as Snake and a reverted setting yields a plausible file with a worthless value column. |
+| **2026-08-26** | **AUCTION.** Excel and PDF must be generated and printed/loaded before this. |
+
+Working backwards: plans 2, 3 and 4 all need to land before the week of 08-23 so the
+final refresh is just new numbers through a finished pipeline, not new code under time
+pressure.
+
 ## Facts a fresh session must NOT re-derive
 
 - **The scoring engine is validated and must not be modified.** 44 of 45 bands proven
