@@ -25,6 +25,15 @@ def test_canonical_teams():
     assert normalize_team("") == ""
 
 
+def test_html_entities_are_decoded_before_normalization():
+    # One real vendor file HTML-escapes names (e.g. "Ja&apos;Marr Chase"). If
+    # normalize_name doesn't decode the entity first, re.sub strips "&" and
+    # ";" but leaves "apos" fused into the name, producing a player_key that
+    # never matches the correctly-spelled version from another vendor.
+    assert normalize_name("Ja&apos;Marr Chase") == normalize_name("Ja'Marr Chase")
+    assert normalize_name("Ja&apos;Marr Chase") == "jamarr chase"
+
+
 def test_player_key_is_stable_across_sources():
     # Draft Sharks says "Cameron Ward / TEN"; Footballguys says "Cam Ward / TEN".
     # Normalization alone does NOT unify these - that is the alias layer's job.
