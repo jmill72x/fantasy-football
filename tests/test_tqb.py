@@ -1,3 +1,5 @@
+import pytest
+
 from sffl.league import load_league
 from sffl.schema import PlayerProjection
 from sffl.tqb import build_tqb
@@ -66,3 +68,43 @@ def test_non_quarterbacks_are_ignored():
     out = build_tqb(LG, players)
     assert len(out) == 1
     assert "rec_yds" not in out[0].stats
+
+
+def test_qb_extraneous_fields_are_dropped():
+    """QB record with non-passing/rushing stat key has that key dropped."""
+    players = [
+        PlayerProjection(
+            name="Joe Burrow", team="CIN", pos="QB", source="test",
+            source_year=2026, games=17,
+            stats=dict(pass_yds=4690, pass_cmp=428, pass_td=37, pass_int=0.0,
+                       rush_yds=145, rush_td=0.0, rec_yds=50),  # rec_yds is extraneous
+            raw_name="Joe Burrow", set_name=None,
+        ),
+    ]
+    out = build_tqb(LG, players)
+    assert len(out) == 1
+    assert out[0].stats["pass_yds"] == 4690
+    assert "rec_yds" not in out[0].stats
+
+
+def test_multi_set_data_raises_without_set_name():
+    """Calling build_tqb with set_name=None on multi-set data raises ValueError."""
+    players = [
+        qb("Josh Allen", "BUF", 17, 4010, 349, 29, 610, set_name="Consensus"),
+        qb("Josh Allen", "BUF", 17, 4180, 360, 31, 690, set_name="Dan Hindery"),
+    ]
+    with pytest.raises(ValueError) as exc_info:
+        build_tqb(LG, players, set_name=None)
+    assert "Consensus" in str(exc_info.value)
+    assert "Dan Hindery" in str(exc_info.value)
+
+
+def test_single_set_data_works_with_set_name_none():
+    """Single-set source (all set_name=None) works with set_name=None."""
+    players = [
+        qb("Joe Burrow", "CIN", 17, 4690, 428, 37, 145, set_name=None),
+        qb("Jake Browning", "CIN", 0, 0, 0, 0, 0, set_name=None),
+    ]
+    out = build_tqb(LG, players, set_name=None)
+    assert len(out) == 1
+    assert out[0].stats["pass_yds"] == 4690
