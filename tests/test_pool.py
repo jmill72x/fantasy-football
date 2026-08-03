@@ -1,5 +1,6 @@
 import pytest
 
+from sffl import pool as pool_module
 from sffl.league import load_league
 from sffl.pool import build_pool, score_season
 from sffl.schema import PlayerProjection
@@ -81,3 +82,46 @@ def test_build_pool_multi_set_source_without_set_raises_clear_error():
     # The available set names must be named so the user knows what to pass.
     assert "Consensus" in msg
     assert "Dan Hindery" in msg
+
+
+def test_typo_set_name_on_multi_set_source_raises_naming_available_sets():
+    """A mistyped --set must not silently filter every row to zero.
+
+    Before the fix, filtering by a set name that matches nothing produced an
+    empty pool with no error at all - the CLI would report a "successful"
+    ingest of 0 players.
+    """
+    with pytest.raises(ValueError) as exc_info:
+        build_pool(LG, FBG_PROFILE, FBG_FIXTURE, 2026, set_name="Typo Name")
+    msg = str(exc_info.value)
+    assert "Typo Name" in msg
+    assert "Consensus" in msg
+    assert "Dan Hindery" in msg
+
+
+def test_set_name_on_single_set_source_raises_source_has_no_sets():
+    """--set passed to a single-set source (every row set_name=None) must
+    raise, naming that the source has no sets - not silently yield 0 rows.
+    """
+    with pytest.raises(ValueError) as exc_info:
+        build_pool(LG, DS_PROFILE, DS_FIXTURE, 2026, set_name="Consensus")
+    msg = str(exc_info.value)
+    assert "no analyst sets" in msg or "no sets" in msg
+
+
+def test_unrelated_value_error_from_build_tqb_is_not_masked(monkeypatch):
+    """Only the genuine multi-set condition gets rewritten.
+
+    Any other ValueError build_tqb raises must propagate with its own
+    message intact, not get overwritten with the multi-set/--set message.
+    """
+    def boom(lg, rows, set_name=None):
+        raise ValueError("unrelated failure: bad franchise code XYZ")
+
+    monkeypatch.setattr(pool_module, "build_tqb", boom)
+
+    with pytest.raises(ValueError) as exc_info:
+        build_pool(LG, DS_PROFILE, DS_FIXTURE, 2026)
+    msg = str(exc_info.value)
+    assert "unrelated failure: bad franchise code XYZ" in msg
+    assert "--set" not in msg

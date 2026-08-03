@@ -2,7 +2,7 @@
 
 from sffl.ingest.profiles import load_profile, read_extract
 from sffl.scoring import score_game
-from sffl.tqb import build_tqb
+from sffl.tqb import MultipleAnalystSetsError, build_tqb
 
 
 def score_season(lg, player):
@@ -38,12 +38,28 @@ def build_pool(lg, profile_path, csv_path, year, set_name=None):
     """
     profile = load_profile(profile_path)
     rows = read_extract(profile, csv_path, year)
-    if set_name is not None:
-        rows = [r for r in rows if r.set_name == set_name]
 
+    if set_name is not None:
+        filtered = [r for r in rows if r.set_name == set_name]
+        if not filtered:
+            available = sorted({r.set_name for r in rows if r.set_name is not None})
+            if available:
+                raise ValueError(
+                    "%s has no rows for --set %r. Pass --set with one of: %s"
+                    % (profile.name, set_name, ", ".join(available))
+                )
+            raise ValueError(
+                "%s has no analyst sets (every record has set_name=None); "
+                "--set does not apply to this source, omit it." % profile.name
+            )
+        rows = filtered
+
+    # Only the genuine multi-set condition gets rewritten into a friendlier
+    # message; any other ValueError build_tqb might raise propagates as-is,
+    # with its own message and traceback, rather than being masked here.
     try:
         tqb = build_tqb(lg, rows, set_name=set_name)
-    except ValueError:
+    except MultipleAnalystSetsError:
         available = sorted({r.set_name for r in rows if r.set_name is not None})
         raise ValueError(
             "%s provides multiple analyst sets and no --set was given. "

@@ -28,6 +28,18 @@ columns:
   def_int: 34
   def_fum_rec: 35
   def_td: 36
+filters:
+  # This export's header carries individual-defensive-player columns (Solo,
+  # Assists, Pass Defended, Forced Fumble) even though today's file has no
+  # rows in those positions - see the "Fantasy Position" distinct-value
+  # check run against data/extracts/Draft Sharks/2026/rankings (1).csv
+  # (553 rows: DEF 32, K 37, QB 42, RB 130, TE 108, WR 204 - no IDP rows).
+  # This league drafts QB/RB/WR/TE/K/DST only; a future export that does
+  # populate those IDP columns must not let individual defensive players
+  # silently enter the scored pool as draftable units. QB stays in the
+  # filter because build_tqb still needs individual QB rows to construct
+  # the Team QB unit before build_pool drops them from the final pool.
+  pos: ["QB", "RB", "WR", "TE", "K", "DEF"]
 capabilities:
   provides_fg_distance_bands: true
   provides_two_point: false
