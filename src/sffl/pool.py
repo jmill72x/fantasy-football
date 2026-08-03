@@ -13,6 +13,20 @@ def score_season(lg, player):
     collapses the variance the bands reward and erases production that sits
     below a floor in the mean but clears it in individual weeks - Josh Allen's
     ~35 rushing yards per game scores zero here despite weeks well over 50.
+
+    TEAM DEFENSES ARE THE WORST CASE, and it is not a rounding error: sacks
+    score nothing below 3 IN A GAME (see `sack_points`), while a good NFL
+    defense averages 2.1-2.6. Every defense therefore lands under the
+    threshold in the mean and collects NONE of its projected sacks all
+    season. The Draft Sharks fixture projects the Eagles at 42 sacks; through
+    this function they contribute exactly 0 of the unit's ~92 points, where a
+    weekly distribution would pay roughly 30. A DST's single largest scoring
+    category is structurally zeroed here, so DSTs are systematically
+    undervalued relative to skill players, whose floors merely clip a tail.
+
+    See `test_known_limitation_season_path_zeroes_all_dst_sacks` - it pins the
+    current behaviour so the weekly model changes it visibly, on purpose.
+
     Replace this with a weekly distribution model once weekly data exists.
     """
     if not player.games:

@@ -51,6 +51,39 @@ def test_more_catches_never_score_fewer_points():
     assert score_season(LG, wr(105)) == (1 + 3) * 17
 
 
+def test_known_limitation_season_path_zeroes_all_dst_sacks():
+    """DOCUMENTS A KNOWN LIMITATION - this is not the behaviour we want.
+
+    Sacks score nothing below 3 in a game, and averaging a season total down
+    to a per-game line puts every real defense under that threshold: the
+    Draft Sharks fixture projects the Eagles at 42 sacks over 17 games, or
+    2.47 a game, so `sack_points` returns 0 and the unit collects NONE of its
+    largest projected category. Under a weekly distribution the true
+    expectation is roughly 30 points of the unit's ~92.
+
+    Do NOT "fix" this by special-casing sacks - the averaging approximation
+    is deliberate and documented in `score_season`. This test exists so the
+    weekly distribution model that replaces it has to change this assertion
+    deliberately and visibly, rather than moving DST valuations by accident.
+    """
+    pool = build_pool(LG, DS_PROFILE, DS_FIXTURE, 2026)
+    dst = next(p for p in pool if p.pos == "DST")
+    assert dst.stats["def_sack"] == 42 and dst.games == 17   # 2.47 a game
+
+    without_sacks = PlayerProjection(
+        name=dst.name, team=dst.team, pos=dst.pos, source=dst.source,
+        source_year=dst.source_year, games=dst.games, raw_name=dst.raw_name,
+        stats=dict(dst.stats, def_sack=0))
+
+    # 42 sacks and 0 sacks are worth precisely the same season score.
+    assert score_season(LG, dst) == score_season(LG, without_sacks)
+
+    # Not because the whole unit scores 0 - it scores ~92 points of pass-
+    # allowed, yards-allowed, turnover and touchdown production. The sacks
+    # alone vanish.
+    assert score_season(LG, dst) == pytest.approx(92)
+
+
 def test_zero_games_does_not_divide_by_zero():
     p = PlayerProjection(name="Y", team="CIN", pos="WR", source="t", source_year=2026,
                          games=0, stats=dict(rec_yds=0), raw_name="Y")
