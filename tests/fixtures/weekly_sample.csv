@@ -1,0 +1,6 @@
+player_id,name,team,pos,week,cbs_fpts,pass_cmp,pass_yds,pass_td,pass_int,rush_yds,rush_td,rec_ct,rec_yds,rec_td,xp_made,fg_u30,fg_30_39,fg_40_49,fg_50_59,fg_60,fg_missed,def_pa,def_ya,def_sack,def_int,def_fum_rec,def_td,def_safety
+2185957,Saquon Barkley,PHI,RB,3,0,0,0,0,0,46,0,4,9,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+2185957,Saquon Barkley,PHI,RB,8,19,0,0,0,0,150,1,4,24,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+2185957,Saquon Barkley,PHI,RB,13,2,0,0,0,0,56,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+2966320,Ja'Marr Chase,CIN,WR,8,8,0,0,0,0,0,0,12,91,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+2966320,Ja'Marr Chase,CIN,WR,11,0,0,0,0,0,0,0,3,30,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
