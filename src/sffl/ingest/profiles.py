@@ -10,6 +10,7 @@ import yaml
 
 from sffl.identity import normalize_team, player_key
 from sffl.schema import PlayerProjection
+from sffl.scoring import STAT_KEYS
 
 # Everything except these is treated as a stat to be parsed as a float.
 META = ("name", "team", "pos", "games", "set_name")
@@ -28,7 +29,20 @@ class SourceProfile(object):
 
 def load_profile(path):
     with open(path) as fh:
-        return SourceProfile(yaml.safe_load(fh))
+        raw = yaml.safe_load(fh)
+
+    columns = raw.get("columns", {})
+    unknown = sorted(
+        field for field in columns if field not in META and field not in STAT_KEYS
+    )
+    if unknown:
+        raise ValueError(
+            "%s declares column key(s) score_game does not read: %s. "
+            "Either fix the spelling to match sffl.scoring.STAT_KEYS, or the "
+            "stat is meta and belongs in profiles.META." % (path, ", ".join(unknown))
+        )
+
+    return SourceProfile(raw)
 
 
 def _num(v):

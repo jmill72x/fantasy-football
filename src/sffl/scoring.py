@@ -43,6 +43,21 @@ def sack_points(rule, n):
     return rule["threshold_points"] + (n - rule["threshold"]) * rule["per_sack_after"]
 
 
+# Every stat key `score_game` reads, below. This is the canonical vocabulary:
+# a source profile that declares a stat key outside this set is either
+# misspelled or inventing a stat scoring doesn't know about, and either way
+# whatever it maps there is silently discarded downstream. Keep this set in
+# lockstep with the g("...", 0) / stats[...] reads in score_game - it is not
+# derived from them because they're spread across literal calls below.
+STAT_KEYS = frozenset({
+    "pass_yds", "pass_cmp", "pass_td", "pass_int", "pass_2pt",
+    "rush_yds", "rush_td", "rush_2pt",
+    "rec_yds", "rec_ct", "rec_td", "rec_2pt",
+    "xp_made", "fg_u30", "fg_30_39", "fg_40_49", "fg_50_59", "fg_60", "fg_missed",
+    "def_pa", "def_ya", "def_sack", "def_int", "def_fum_rec", "def_td", "def_safety",
+})
+
+
 def score_game(lg, stats, pos=None):
     """Total SFFL points for one game's stat line.
 
