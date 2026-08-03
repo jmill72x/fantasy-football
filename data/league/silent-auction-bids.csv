@@ -47,15 +47,15 @@ year,rank,franchise,bid,bump,cap_cost,player,note
 2024,10,Ox's Mudders,30,0,30,,
 2024,11,Aggressive Gamblers,26,2,28,,won tie vs Bravo on bump
 2024,12,Bravo Company,26,0,26,,lost tie on bump
-2025,1,Sgt Hulka's Big Toes,,,43,Ja'Marr Chase,cap from roster sheet; bid/bump pending from commissioner
-2025,2,Stupid Mutants,,,41,Bijan Robinson,cap from roster sheet; bid/bump pending
-2025,3,Italian Style Partiers,,,40,Jahmyr Gibbs,cap from roster sheet; bid/bump pending
-2025,4,The Cruisers,,,39,Derrick Henry,cap from roster sheet; bid/bump pending
-2025,5,Winger's Ringers,,,38,Saquon Barkley,cap from roster sheet; bid/bump pending
-2025,6,Lean Mean Fighting Machine,,,37,CeeDee Lamb,cap from roster sheet; bid/bump pending
-2025,7,EM 50s,,,34,Christian McCaffrey,cap from roster sheet; bid/bump pending
-2025,8,Sawyer's Psychos,,,33,Ashton Jeanty,cap from roster sheet; bid/bump pending
-2025,9,Ox's Mud Wrestlers,,,30,Justin Jefferson,cap from roster sheet; bid/bump pending
-2025,10,Razzle Dazzle,,,27,Amon-Ra St. Brown,cap from roster sheet; tie at 27; bid/bump pending
-2025,11,Aggressive Gamblers,,,27,Malik Nabers,cap from roster sheet; tie at 27; bid/bump pending
-2025,12,Bravo Company,,,26,Nico Collins,cap from roster sheet; bid/bump pending
+2025,1,Sgt Hulka's Big Toes,43,1,43,Ja'Marr Chase,
+2025,2,Stupid Mutants,40,1,41,Bijan Robinson,won tie vs ISP on bump
+2025,3,Italian Style Partiers,40,0,40,Jahmyr Gibbs,lost tie on bump
+2025,4,The Cruisers,39,3,39,Derrick Henry,no tie; bump not charged
+2025,5,Winger's Ringers,38,0,38,Saquon Barkley,
+2025,6,Lean Mean Fighting Machine,37,0,37,CeeDee Lamb,
+2025,7,EM 50s,33,1,34,Christian McCaffrey,"won tie vs Sawyer; bumps equal, resolved live"
+2025,8,Sawyer's Psychos,33,1,33,Ashton Jeanty,"lost tie; bumps equal, resolved live"
+2025,9,Ox's Mudders,30,0,30,Justin Jefferson,
+2025,10,Razzle Dazzle,27,2,27,Amon-Ra St. Brown,no tie; bump not charged
+2025,11,Aggressive Gamblers,26,1,27,Malik Nabers,won tie vs Bravo on bump
+2025,12,Bravo Company,26,0,26,Nico Collins,lost tie on bump
