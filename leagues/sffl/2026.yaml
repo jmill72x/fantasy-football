@@ -1,0 +1,60 @@
+# STRIPES FANTASY FOOTBALL LEAGUE - 2026
+# Every band is [low, high, points], inclusive both ends. Outside all bands = 0.
+name: STRIPES FANTASY FOOTBALL LEAGUE
+season: 2026
+teams: 12
+budget: 110
+roster_size: 13
+starters: 8
+flex_slots: 5          # RB/WR/TE, floor of 1 RB and 1 WR/TE
+season_games: 17       # NFL regular-season games per franchise; the Team QB denominator
+silent_auction:
+  bid_floor: 26
+  bump_charged_only_on_winning_tie: true
+
+bands:
+  pass_yds:  [[150, 250, 2], [251, 350, 4], [351, 450, 5], [451, 9999, 7]]
+  pass_cmp:  [[15, 19, 2], [20, 24, 3], [25, 29, 4], [30, 34, 5], [35, 39, 6], [40, 99, 7]]
+  rush_yds:  [[50, 74, 2], [75, 99, 3], [100, 124, 4], [125, 149, 5], [150, 174, 6],
+              [175, 199, 7], [200, 224, 8], [225, 249, 9], [250, 9999, 10]]
+  rec_yds:   [[50, 74, 1], [75, 99, 2], [100, 124, 3], [125, 149, 4], [150, 174, 5],
+              [175, 199, 6], [200, 9999, 7]]
+  rec_ct:    [[5, 6, 2], [7, 8, 3], [9, 10, 4], [11, 12, 6], [13, 99, 7]]
+  def_pa:    [[0, 2, 6], [3, 5, 5], [6, 6, 4], [7, 9, 3], [10, 13, 2], [14, 14, 1], [15, 99, 0]]
+  def_ya:    [[0, 150, 6], [151, 250, 4], [251, 299, 3], [300, 350, 2],
+              [351, 399, 0], [400, 499, -1], [500, 9999, -2]]
+
+points:
+  pass_td: 5
+  pass_td_long_bonus: 1      # 36+ yards
+  pass_int: -1
+  pass_2pt: 2
+  rush_td: 3
+  rush_td_mid_bonus: 2       # 3-35 yards
+  rush_td_long_bonus: 5      # 36+ yards
+  rush_2pt: 2
+  rec_td: 5
+  rec_td_mid_bonus: 1        # 36-74 yards
+  rec_td_long_bonus: 3       # 75+ yards
+  rec_2pt: 2
+  off_fum_rec_td: 4
+  xp_made: 1
+  fg_under_30: 2
+  fg_30_39: 3
+  fg_40_49: 4
+  fg_50_59: 5
+  fg_60_plus: 8
+  fg_missed: -1
+  def_td: 6
+  def_safety: 4
+  def_int: 1
+  def_fum_rec: 1
+  def_st_2pt: 2
+  def_st_1pt_safety: 1
+
+# Sacks: 0 below 3, 3 points at exactly 3, +1 per sack after.
+# Verified against real CBS output (poc/verify_dst_scoring.py). Do not change.
+sack_rule:
+  threshold: 3
+  threshold_points: 3
+  per_sack_after: 1
