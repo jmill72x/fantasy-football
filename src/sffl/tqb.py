@@ -12,8 +12,6 @@ from sffl.schema import PlayerProjection
 PASSING_STATS = ("pass_att", "pass_cmp", "pass_yds", "pass_td", "pass_int",
                  "pass_2pt", "rush_yds", "rush_td", "rush_2pt")
 
-MAX_GAMES = 17
-
 
 def build_tqb(lg, players, set_name=None):
     """Return one TQB PlayerProjection per franchise found in `players`.
@@ -58,7 +56,15 @@ def build_tqb(lg, players, set_name=None):
             total = sum(q.stats.get(field, 0.0) for q in qbs)
             if total or any(field in q.stats for q in qbs):
                 stats[field] = total
-        games = min(MAX_GAMES, sum(q.games for q in qbs))
+        # A franchise plays its full season no matter how the snaps are split
+        # among its quarterbacks, so the denominator is the season length -
+        # never the sum of the quarterbacks' projected games. Summing made the
+        # per-game line depend on whether the vendor bothered to project
+        # backups: Cleveland's 9+6+1 room scored 127 at games=16 but 163 at
+        # games=17, while a lone 12-game starter scored 216 at games=12 and
+        # 188 at games=17. That scrambled the ranking of the 32 TQB units,
+        # which is exactly what replacement level is read off.
+        games = float(lg.season_games)
         out.append(PlayerProjection(
             name=team, team=team, pos="TQB",
             source=qbs[0].source, source_year=qbs[0].source_year,

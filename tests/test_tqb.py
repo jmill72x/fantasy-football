@@ -37,15 +37,30 @@ def test_multi_qb_franchise_sums_stats():
     t = out[0]
     assert t.stats["pass_yds"] == 3405
     assert t.stats["pass_cmp"] == 309
-    assert t.games == 16      # summed franchise starts, capped at 17
+    # The franchise plays 17 games however the room splits them (9+6+1 = 16).
+    assert t.games == LG.season_games
 
 
-def test_games_capped_at_seventeen():
-    out = build_tqb(LG, [
+def test_games_is_always_the_season_length():
+    """The denominator is the franchise's season, never the summed QB games.
+
+    Both directions of the old bug are covered: a room whose projected games
+    over-run the season, and a single starter projected for fewer.
+    """
+    over = build_tqb(LG, [
         qb("A", "NYJ", 12, 3000, 250, 20, 100),
         qb("B", "NYJ", 9, 2000, 170, 12, 50),
     ])
-    assert out[0].games == 17
+    assert over[0].games == LG.season_games
+
+    under = build_tqb(LG, [qb("Lone Starter", "CAR", 12, 2900, 240, 18, 120)])
+    assert under[0].games == LG.season_games
+
+
+def test_season_games_comes_from_the_league_profile():
+    """The 17 lives in YAML with every other league rule, not in Python."""
+    assert LG.season_games == 17
+    assert "season_games" in LG.raw
 
 
 def test_only_the_requested_set_is_used():

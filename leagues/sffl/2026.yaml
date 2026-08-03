@@ -7,6 +7,7 @@ budget: 110
 roster_size: 13
 starters: 8
 flex_slots: 5          # RB/WR/TE, floor of 1 RB and 1 WR/TE
+season_games: 17       # NFL regular-season games per franchise; the Team QB denominator
 silent_auction:
   bid_floor: 26
   bump_charged_only_on_winning_tie: true

@@ -15,6 +15,9 @@ class LeagueProfile(object):
         self.roster_size = int(raw["roster_size"])
         self.starters = int(raw["starters"])
         self.flex_slots = int(raw["flex_slots"])
+        # Games an NFL franchise plays. The denominator for any unit that is
+        # a franchise rather than a person - Team QB in particular.
+        self.season_games = int(raw["season_games"])
         self.silent_auction = raw.get("silent_auction", {})
         self.points = raw["points"]
         self.sack_rule = raw["sack_rule"]
