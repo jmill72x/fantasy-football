@@ -15,8 +15,29 @@ MAX_GAMES = 17
 
 
 def build_tqb(lg, players, set_name=None):
-    """Return one TQB PlayerProjection per franchise found in `players`."""
+    """Return one TQB PlayerProjection per franchise found in `players`.
+
+    When set_name is None, all quarterbacks must have set_name=None.
+    If any quarterback has a non-None set_name, ValueError is raised with the
+    distinct set names found. This prevents silent stat inflation from mixing
+    multiple analyst projections of the same quarterback. For single-vendor
+    datasets (all set_name=None), pass set_name=None or omit it.
+    """
     by_team = defaultdict(list)
+
+    # Check for mixed set_name values when set_name=None
+    if set_name is None:
+        non_none_sets = set()
+        for p in players:
+            if p.pos == "QB" and p.set_name is not None:
+                non_none_sets.add(p.set_name)
+        if non_none_sets:
+            raise ValueError(
+                f"set_name=None with multi-analyst data. "
+                f"Found analyst sets: {sorted(non_none_sets)}. "
+                f"Pass set_name=<name> to select one."
+            )
+
     for p in players:
         if p.pos != "QB":
             continue
