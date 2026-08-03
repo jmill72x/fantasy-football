@@ -95,24 +95,37 @@ DST_GOLDEN = [
 ]
 
 
-@pytest.mark.parametrize("pos", [None, "DST"])
 @pytest.mark.parametrize("stats,expected", DST_GOLDEN)
-def test_dst_matches_real_cbs_output(lg, stats, expected, pos):
-    assert score_game(lg, stats, pos=pos) == expected
+def test_dst_matches_real_cbs_output(lg, stats, expected):
+    assert score_game(lg, stats, "DST") == expected
 
 
 def test_receiving_game(lg):
     # 6 catches (band 5-6 = 2), 85 yards (band 75-99 = 2)
-    assert score_game(lg, dict(rec_ct=6, rec_yds=85)) == 4
+    assert score_game(lg, dict(rec_ct=6, rec_yds=85), "WR") == 4
 
 
 def test_below_all_floors_scores_zero(lg):
-    assert score_game(lg, dict(rec_ct=3, rec_yds=40, rush_yds=30)) == 0
+    assert score_game(lg, dict(rec_ct=3, rec_yds=40, rush_yds=30), "RB") == 0
 
 
 def test_kicking(lg):
     # 2 XP + one 45-yarder (4) + one 55-yarder (5) + one miss (-1)
-    assert score_game(lg, dict(xp_made=2, fg_40_49=1, fg_50_59=1, fg_missed=1)) == 10
+    assert score_game(lg, dict(xp_made=2, fg_40_49=1, fg_50_59=1, fg_missed=1), "K") == 10
+
+
+def test_defense_stats_score_nothing_for_a_non_dst_position(lg):
+    """The defense block is gated on position alone - nothing else reaches it.
+
+    Even a stat dict full of live defensive production scores zero defense
+    points unless the row IS a team defense. This is the whole reason the
+    key-presence gate was removed: with dense ingest rows the stat dict can
+    never be trusted to say what a row is.
+    """
+    dst_line, dst_expected = DST_GOLDEN[1]
+    assert score_game(lg, dst_line, "DST") == dst_expected
+    for pos in ("WR", "RB", "TE", "K", "TQB"):
+        assert score_game(lg, dst_line, pos) == 0
 
 
 def test_dense_wr_row_from_real_ingest_scores_no_phantom_defense_points(lg):
@@ -135,16 +148,16 @@ def test_dense_wr_row_from_real_ingest_scores_no_phantom_defense_points(lg):
     assert wr.stats.get("def_ya") == 0.0
 
     per_game = {f: v / wr.games for f, v in wr.stats.items()}
-    scored_with_pos = score_game(lg, per_game, pos="WR")
+    scored_with_pos = score_game(lg, per_game, "WR")
     # The same dense dict with the def_ keys stripped out entirely is the
     # ground truth for "no defense points included."
     skill_only = {f: v for f, v in per_game.items() if not f.startswith("def_")}
-    expected = score_game(lg, skill_only, pos="WR")
+    expected = score_game(lg, skill_only, "WR")
 
     assert scored_with_pos == expected
 
-    # The legacy key-presence fallback (pos=None) is exactly the bug this
-    # guards against: with the same dense dict it awards 12 phantom points
-    # (def_pa=0 -> top band 6, def_ya=0 -> top band 6) that pos="WR" must not.
-    scored_legacy_fallback = score_game(lg, per_game)
-    assert scored_legacy_fallback - scored_with_pos == 12
+    # And the phantom points are real, not merely absent: scoring that exact
+    # dense WR line as a defense pays 12 points for def_pa=0 (top band 6) and
+    # def_ya=0 (top band 6). Position is the only thing standing between this
+    # row and that payout, which is why the gate may not be inferred.
+    assert score_game(lg, per_game, "DST") - scored_with_pos == 12
