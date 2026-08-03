@@ -19,6 +19,37 @@ def test_score_season_averages_to_per_game_then_bands():
     assert score_season(LG, p) == (3 + 2) * 17
 
 
+def wr(rec_ct, rec_yds=1200, games=17):
+    return PlayerProjection(name="WR", team="CIN", pos="WR", source="t",
+                            source_year=2026, games=games,
+                            stats=dict(rec_yds=rec_yds, rec_ct=rec_ct),
+                            raw_name="WR")
+
+
+def test_more_catches_never_score_fewer_points():
+    """Regression: season totals divide to FRACTIONAL per-game rates.
+
+    With integer-edged bands treated as closed intervals, a WR averaging
+    6.18 catches per game (105 over 17) fell between rec_ct's [5,6] and
+    [7,8] bands and scored ZERO reception points for the season - 34 fewer
+    points than the same WR with three catches less. The old test used
+    102 catches over 17 games, which divides to exactly 6.0 and hid it.
+    """
+    prev = None
+    for catches in range(0, 260):
+        pts = score_season(LG, wr(catches))
+        if prev is not None:
+            assert pts >= prev, "%d catches scored %s, %d scored %s" % (
+                catches, pts, catches - 1, prev)
+        prev = pts
+
+    # The specific measured regression.
+    assert score_season(LG, wr(105)) >= score_season(LG, wr(102))
+    # 1200 yds / 17 = 70.6 per game -> rec_yds band [50,74] = 1
+    # 105 rec / 17  = 6.18 per game -> rec_ct band [7,8]   = 3   (was 0)
+    assert score_season(LG, wr(105)) == (1 + 3) * 17
+
+
 def test_zero_games_does_not_divide_by_zero():
     p = PlayerProjection(name="Y", team="CIN", pos="WR", source="t", source_year=2026,
                          games=0, stats=dict(rec_yds=0), raw_name="Y")

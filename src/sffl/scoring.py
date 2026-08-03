@@ -1,16 +1,35 @@
 """Apply SFFL banded scoring to a single game stat line.
 
-Bands are inclusive on both ends. A value outside every band scores 0, which is
-how the league's hard floors work: under 50 receiving yards is worth nothing.
+Band tables are written with integer edges, [(low, high, points), ...] in
+ascending order. The league's hard floor is the FIRST band's low: under 50
+receiving yards is worth nothing. Above that floor a band's `high` is a
+ceiling, not half of a closed interval - see `band_points`.
 """
 
 
 def band_points(table, value):
-    """Return the points for `value` in a [(low, high, points), ...] table."""
+    """Return the points for `value` in a [(low, high, points), ...] table.
+
+    Semantics are "first band whose high >= value", with the first band's low
+    as a hard floor. Below the floor is 0; above every high is the last band's
+    points.
+
+    The tables are integer-edged but the values are not: `score_season`
+    divides season totals by games and hands us fractional per-game rates.
+    Treating each band as a closed integer interval left gaps between them -
+    a receiver averaging 6.18 catches per game fell through every rec_ct band
+    ([5,6], [7,8], ...) to 0, so 105 catches scored 34 FEWER season points
+    than 102 catches. Scoring is now monotonic in the value: more production
+    can never score less.
+    """
+    if not table:
+        return 0
+    if value < table[0][0]:
+        return 0
     for low, high, pts in table:
-        if low <= value <= high:
+        if value <= high:
             return pts
-    return 0
+    return table[-1][2]
 
 
 def sack_points(rule, n):

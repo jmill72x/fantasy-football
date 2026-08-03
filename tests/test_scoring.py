@@ -31,6 +31,51 @@ def test_reception_floor(lg):
     assert band_points(t, 13) == 7
 
 
+def test_fractional_values_between_integer_band_edges(lg):
+    """Per-game rates are fractional; the integer band edges must not gap.
+
+    rec_ct bands are [5,6], [7,8], [9,10], [11,12], [13,99]. A rate of 6.18
+    catches per game sits between the first two bands. It must score the
+    first band whose high clears it, not fall through to the floor.
+    """
+    t = lg.bands["rec_ct"]
+    assert band_points(t, 4.9) == 0     # still below the hard floor
+    assert band_points(t, 5.0) == 2
+    assert band_points(t, 6.18) == 3    # was 0: fell between [5,6] and [7,8]
+    assert band_points(t, 8.5) == 4
+    assert band_points(t, 10.9) == 6
+    assert band_points(t, 12.1) == 7
+    assert band_points(t, 150) == 7     # above every high
+
+
+def test_band_points_has_no_gaps_above_the_floor(lg):
+    """No value at or above a table's floor may fall through to 0.
+
+    Every band table is swept at tenth-of-a-unit resolution - the resolution
+    per-game rates actually arrive at. Above the floor the result must always
+    be a value the table declares, and must move monotonically in whatever
+    direction that table's points run (offensive tables reward more; def_pa
+    and def_ya penalize more).
+    """
+    for key, table in lg.bands.items():
+        declared = [pts for _, _, pts in table]
+        ascending = declared[-1] >= declared[0]
+        low, top = table[0][0], table[-1][1]
+        prev = None
+        v = low
+        while v <= min(top, low + 600):
+            pts = band_points(table, v)
+            assert pts in declared, "%s: %s fell outside every band" % (key, v)
+            if prev is not None:
+                if ascending:
+                    assert pts >= prev, "%s went backwards at %s" % (key, v)
+                else:
+                    assert pts <= prev, "%s went forwards at %s" % (key, v)
+            prev = pts
+            v = round(v + 0.1, 1)
+        assert band_points(table, top + 1000) == declared[-1]
+
+
 def test_sack_rule(lg):
     r = lg.sack_rule
     assert sack_points(r, 0) == 0
