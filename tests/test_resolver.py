@@ -14,9 +14,19 @@ def make():
     return r
 
 
-def test_exact_match_after_normalization():
+def test_exact_hit_short_circuits():
     r = make()
     assert r.resolve("Ja'Marr Chase", "CIN", "WR") == player_key("Ja'Marr Chase", "CIN", "WR")
+
+
+def test_exact_match_after_normalization():
+    r = make()
+    # Registered as "Ja'Marr Chase"; resolved with different case and extra
+    # whitespace. This must still hit the registered key, which only holds if
+    # normalize_name() actually folds those differences away rather than
+    # normalize_name being a no-op.
+    got = r.resolve("JA'MARR  CHASE", "CIN", "WR")
+    assert got == player_key("Ja'Marr Chase", "CIN", "WR")
 
 
 def test_alias_file_resolves_cam_ward():
