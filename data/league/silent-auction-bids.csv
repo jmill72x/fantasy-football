@@ -1,0 +1,61 @@
+year,rank,franchise,bid,bump,cap_cost,player,note
+2021,1,Italian Style Partiers,44,0,44,McCaffrey,
+2021,2,Stupid Mutants,41,1,41,Cook,
+2021,3,Sgt Hulka's Big Toes,40,2,42,Henry,won tie vs Sawyer on bump
+2021,4,Sawyer's Psychos,40,1,40,Kamara,lost tie on bump
+2021,5,The Cruisers,38,1,38,Chubb,
+2021,6,Winger's Ringers,37,1,37,Elliott,
+2021,7,Ox's Mudders OR Razzle Dazzle,35,4,39,Mahomes,bump tie -> live auction; winner unresolved in source
+2021,8,Razzle Dazzle OR Ox's Mudders,35,4,35,Hill,bump tie -> live auction; loser unresolved in source
+2021,9,Lean Mean Fighting Machine,32,0,32,Adams,
+2021,10,EM 50s,30,1,30,Taylor,
+2021,11,Aggressive Gamblers,26,2,28,A. Jones,won tie vs Bravo on bump
+2021,12,Bravo Co,26,0,26,Diggs,lost tie on bump
+2022,1,Razzle Dazzle,45,1,45,,
+2022,2,Stupid Mutants,42,1,42,,
+2022,3,Winger's Ringers,39,1,39,,
+2022,4,The Cruisers,38,2,40,,won tie vs ISP on bump
+2022,5,Italian Style Partiers,38,1,38,,lost tie on bump
+2022,6,Lean Mean Fighting Machine,35,0,35,,
+2022,7,Sawyer's Psychos,33,1,33,,
+2022,8,EM 50s,30,1,31,,won tie vs Sgt Hulka on bump
+2022,9,Sgt Hulka's Big Toes,30,0,30,,lost tie on bump
+2022,10,Aggressive Gamblers,27,2,27,,
+2022,11,Bravo Co OR Ox's Mudders,26,0,26,,bump tie at 0; order unresolved in source
+2022,12,Ox's Mudders OR Bravo Co,26,0,26,,bump tie at 0; order unresolved in source
+2023,1,Sgt Hulka's Big Toes,39,1,42,,4-way tie at 39 -> live auction
+2023,2,Winger's Ringers,39,1,41,,4-way tie at 39 -> live auction
+2023,3,Stupid Mutants,39,1,40,,4-way tie at 39 -> live auction
+2023,4,Italian Style Partiers,39,0,39,,4-way tie at 39; no bump
+2023,5,Lean Mean Fighting Machine,38,2,38,,
+2023,6,Ox's Mudders,35,0,35,,
+2023,7,Sawyer's Psychos,33,0,33,,
+2023,8,Razzle Dazzle,31,2,31,,
+2023,9,The Cruisers,30,3,33,,won tie vs EM 50s on bump
+2023,10,EM 50s,30,1,30,,lost tie on bump
+2023,11,Aggressive Gamblers,26,2,28,,won tie vs Bravo on bump
+2023,12,Bravo Co,26,1,26,,lost tie on bump
+2024,1,Stupid Mutants,41,1,42,,won tie vs ISP on bump
+2024,2,Italian Style Partiers,41,0,41,,lost tie on bump
+2024,3,Winger's Ringers,40,0,40,,
+2024,4,Sgt Hulka's Big Toes,39,2,39,,no tie; bump not charged
+2024,5,Lean Mean Fighting Machine,35,0,35,,
+2024,6,The Cruisers,34,3,34,,
+2024,7,Sawyer's Psychos,33,1,33,,
+2024,8,Razzle Dazzle,31,2,33,,won tie vs EM 50s on bump
+2024,9,EM 50s,31,1,31,,lost tie on bump
+2024,10,Ox's Mudders,30,0,30,,
+2024,11,Aggressive Gamblers,26,2,28,,won tie vs Bravo on bump
+2024,12,Bravo Company,26,0,26,,lost tie on bump
+2025,1,Sgt Hulka's Big Toes,,,43,Ja'Marr Chase,cap from roster sheet; bid/bump pending from commissioner
+2025,2,Stupid Mutants,,,41,Bijan Robinson,cap from roster sheet; bid/bump pending
+2025,3,Italian Style Partiers,,,40,Jahmyr Gibbs,cap from roster sheet; bid/bump pending
+2025,4,The Cruisers,,,39,Derrick Henry,cap from roster sheet; bid/bump pending
+2025,5,Winger's Ringers,,,38,Saquon Barkley,cap from roster sheet; bid/bump pending
+2025,6,Lean Mean Fighting Machine,,,37,CeeDee Lamb,cap from roster sheet; bid/bump pending
+2025,7,EM 50s,,,34,Christian McCaffrey,cap from roster sheet; bid/bump pending
+2025,8,Sawyer's Psychos,,,33,Ashton Jeanty,cap from roster sheet; bid/bump pending
+2025,9,Ox's Mud Wrestlers,,,30,Justin Jefferson,cap from roster sheet; bid/bump pending
+2025,10,Razzle Dazzle,,,27,Amon-Ra St. Brown,cap from roster sheet; tie at 27; bid/bump pending
+2025,11,Aggressive Gamblers,,,27,Malik Nabers,cap from roster sheet; tie at 27; bid/bump pending
+2025,12,Bravo Company,,,26,Nico Collins,cap from roster sheet; bid/bump pending
