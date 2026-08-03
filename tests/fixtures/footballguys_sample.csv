@@ -1,0 +1,6 @@
+id,name,pos,team,set-id,set-name,ssn-gms,pass-2pt,pass-att,pass-cmp,pass-int,pass-td,pass-yds,rush-2pt,rush-car,rush-td,rush-yds,rec-2pt,rec-rec,rec-tgt,rec-td,rec-yds,kck-xpc,kck-fgc,tmd-fmr,tmd-int,tmd-pa,tmd-sck,tmd-saf,tmd-td,tmd-ya
+AlleJo00,Josh Allen,qb,BUF,66513,Consensus,16.1,1.2,520.0,349.0,10.1,29.0,4010.0,0.4,120.0,10.2,610.0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+AlleJo00,Josh Allen,qb,BUF,66483,Dan Hindery,16.5,1.0,533.0,360.0,9.4,31.0,4180.0,0.5,128.0,11.1,690.0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+WardCa00,Cam Ward,qb,TEN,66513,Consensus,16.0,0.8,540.0,338.0,13.0,22.0,3800.0,0.2,60.0,2.0,230.0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+ChasJa00,Ja'Marr Chase,wr,CIN,66513,Consensus,16.4,0.6,0,0,0,0,0,0.1,4.0,0.2,26.0,0.7,120.0,175.0,9.0,1550.0,0,0,0,0,0,0,0,0,0
+EaglPh00,Eagles,td,PHI,66513,Consensus,17.0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,9.0,14.0,318.0,44.0,1.0,3.0,5010.0

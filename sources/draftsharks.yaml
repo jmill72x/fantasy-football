@@ -1,0 +1,47 @@
+name: draftsharks
+files: ["rankings*.csv"]
+by_index: true          # header names repeat across stat groups
+skip_rows: 1
+columns:
+  team: 1
+  name: 2
+  pos: 3
+  games: 4
+  pass_cmp: 8
+  pass_yds: 9
+  pass_td: 10
+  pass_int: 11
+  rush_yds: 13
+  rush_td: 14
+  rec_ct: 16
+  rec_yds: 17
+  rec_td: 18
+  xp_made: 24
+  fg_u30: 25
+  fg_30_39: 26
+  fg_40_49: 27
+  fg_50_59: 28
+  fg_60: 29
+  def_pa: 31
+  def_ya: 32
+  def_sack: 33
+  def_int: 34
+  def_fum_rec: 35
+  def_td: 36
+filters:
+  # This export's header carries individual-defensive-player columns (Solo,
+  # Assists, Pass Defended, Forced Fumble) even though today's file has no
+  # rows in those positions - see the "Fantasy Position" distinct-value
+  # check run against data/extracts/Draft Sharks/2026/rankings (1).csv
+  # (553 rows: DEF 32, K 37, QB 42, RB 130, TE 108, WR 204 - no IDP rows).
+  # This league drafts QB/RB/WR/TE/K/DST only; a future export that does
+  # populate those IDP columns must not let individual defensive players
+  # silently enter the scored pool as draftable units. QB stays in the
+  # filter because build_tqb still needs individual QB rows to construct
+  # the Team QB unit before build_pool drops them from the final pool.
+  pos: ["QB", "RB", "WR", "TE", "K", "DEF"]
+capabilities:
+  provides_fg_distance_bands: true
+  provides_two_point: false
+  provides_def_safety: false
+  multi_set: false

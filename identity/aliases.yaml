@@ -1,0 +1,20 @@
+# Hand-maintained player name aliases. Grows every year; this file is the asset.
+# Left side is the vendor's spelling, right side the canonical spelling.
+# Team and position are matched separately, so only the name goes here.
+players:
+  "Cam Ward": "Cameron Ward"
+  "Jamaar Chase": "Ja'Marr Chase"
+  "Jaamyr Gibbs": "Jahmyr Gibbs"
+  "Tyreke Hill": "Tyreek Hill"
+  "Tua Tagovioloa": "Tua Tagovailoa"
+  "Marvin Harrson Jr": "Marvin Harrison Jr."
+  "TJ Hochenson": "T.J. Hockenson"
+  "Cam Skatebo": "Cam Skattebo"
+  "Aaron Rogers": "Aaron Rodgers"
+  "Jokobi Meyers": "Jakobi Meyers"
+  "Tyler Algier": "Tyler Allgeier"
+  "Marvin Mimms Jr": "Marvin Mims Jr."
+  "Chase Maclaughlin": "Chase McLaughlin"
+  "Davon Achane": "De'Von Achane"
+  "Terry Maclaurin": "Terry McLaurin"
+  "Brandonaiyuk": "Brandon Aiyuk"
