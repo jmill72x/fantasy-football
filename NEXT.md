@@ -11,8 +11,8 @@ Auction cheatsheet pipeline for the STRIPES Fantasy Football League (CBS). Four 
 |---|---|
 | **Plan 1 — scoring foundation & ingest** | ✅ merged, 64 tests green |
 | **Plan 2 — value engine (VORP → dollars)** | 📋 written, not started |
-| Plan 3 — Excel + PDF renderers | not written |
-| Plan 4 — silent auction planner | not written |
+| **Plan 3 — Excel + PDF renderers** | not written — write after plan 2 lands |
+| **Plan 4 — silent auction planner** | not written — consumes plan 2 values |
 
 Verify state in one command:
 
@@ -57,6 +57,11 @@ pressure.
 
 ## TODO A — execute plan 2: the value engine
 
+*(TODO A and TODO B are the next two things to DO. They are not plans 3 and 4 — the
+numbered plans are the implementation roadmap above. TODO A executes plan 2; TODO B is
+a data-collection chore that produces no code.)*
+
+
 **Plan:** `docs/superpowers/plans/2026-08-03-value-engine.md` — 8 tasks, 44 steps, all
 with real code.
 
@@ -72,7 +77,7 @@ Execute with `superpowers:subagent-driven-development`, on a feature branch crea
 **in place** rather than a worktree — `data/extracts/` is gitignored and the real-data
 verification steps need it.
 
-## TODO B — widen the weekly collection
+## TODO B — widen the weekly collection (a data chore, NOT a plan)
 
 **Full detail is in the spec** under *"TODO: Widen the Weekly Collection"* — target,
 method, the JS that works, the trap that wasted three attempts, and the integrity check.
