@@ -30,17 +30,39 @@ PYTHONPATH=src ./.venv/bin/python -m sffl.cli ingest \
 
 Turns any vendor extract into a scored, league-correct pool — 543 players, TQB=32.
 
+## GOAL THIS WEEK — a full dry run
+
+Produce **real Excel and PDF cheatsheets from today's archived extracts**, end to end,
+before 2026-08-10. Everything must work on current data so the week of 08-23 is a pure
+data refresh with no code changes and no surprises.
+
+Done means: `sffl` reads an extract, values the pool, and writes both artifacts — and
+Jeff has marked up the PDF on the iPad and printed the Excel.
+
+### Current position
+
+Update this block at the end of every session so the next one can resume blind.
+
+- [x] Plan 1 — scoring foundation & ingest (merged, 64 tests)
+- [ ] TODO A — execute plan 2, the value engine
+- [ ] Write plan 3 (renderers), then execute it
+- [ ] Write plan 4 (silent auction planner), then execute it
+- [ ] TODO B — widen the weekly collection to ~120 players
+- [ ] Full dry run: generate both artifacts, review on the iPad
+
+Work top to bottom. Each unchecked box is the next thing to do.
+
 ## Timeline — hard deadline
 
 | Date | What |
 |---|---|
 | 2026-08-03 | Plan 1 merged. Extracts archived to iCloud as insurance. |
+| **by 2026-08-10** | **Full dry run complete** — plans 2-4 built and both artifacts generated from today's data. |
 | **week of 2026-08-23** | **Re-pull fresh extracts** from Draft Sharks and Footballguys for final rankings. Confirm Draft Sharks still reads **AUCTION**, not Snake — every sync imports as Snake and a reverted setting yields a plausible file with a worthless value column. |
 | **2026-08-26** | **AUCTION.** Excel and PDF must be generated and printed/loaded before this. |
 
-Working backwards: plans 2, 3 and 4 all need to land before the week of 08-23 so the
-final refresh is just new numbers through a finished pipeline, not new code under time
-pressure.
+The dry run exists so the 08-23 refresh is a data swap. Do not leave the renderers
+until after the refresh — build them against today's archived extracts.
 
 ## Facts a fresh session must NOT re-derive
 
