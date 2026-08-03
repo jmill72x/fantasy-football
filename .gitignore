@@ -17,3 +17,6 @@ __pycache__/
 
 # macOS
 .DS_Store
+
+# Weekly stat lines collected from CBS
+data/weekly/
