@@ -1,0 +1,36 @@
+name: draftsharks
+files: ["rankings*.csv"]
+by_index: true          # header names repeat across stat groups
+skip_rows: 1
+columns:
+  team: 1
+  name: 2
+  pos: 3
+  games: 4
+  pass_att: 7
+  pass_cmp: 8
+  pass_yds: 9
+  pass_td: 10
+  pass_int: 11
+  rush_yds: 13
+  rush_td: 14
+  rec_ct: 16
+  rec_yds: 17
+  rec_td: 18
+  xp_made: 24
+  fg_u30: 25
+  fg_30_39: 26
+  fg_40_49: 27
+  fg_50_59: 28
+  fg_60: 29
+  def_pa: 31
+  def_ya: 32
+  def_sack: 33
+  def_int: 34
+  def_fum_rec: 35
+  def_td: 36
+capabilities:
+  provides_fg_distance_bands: true
+  provides_two_point: false
+  provides_def_safety: false
+  multi_set: false
