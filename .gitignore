@@ -1,6 +1,7 @@
 # Licensed subscription data — Draft Sharks / Footballguys / FantasyPros
 # exports are paid content. Never commit them to a public repo.
-data/
+data/extracts/
+# league-owned history lives in data/league/ and IS tracked
 raw/
 exports/
 
