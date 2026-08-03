@@ -6,6 +6,9 @@ matching with a review queue. This module is layer one.
 
 import re
 
+import yaml
+from rapidfuzz import fuzz, process
+
 SUFFIXES = ("jr", "sr", "ii", "iii", "iv", "v")
 
 # Canonical team codes. Sources disagree; this picks a winner.
@@ -59,3 +62,61 @@ def player_key(name, team, pos):
     if p in ("PK",):
         p = "K"
     return "%s|%s|%s" % (normalize_name(name), normalize_team(team), p)
+
+
+FUZZY_ACCEPT = 92.0   # rapidfuzz WRatio; below this we ask rather than guess
+
+
+class Resolver(object):
+    """Resolve a vendor's spelling to a canonical player key.
+
+    Order: exact (after normalization) -> alias file -> fuzzy match within the
+    same team and position. Anything left over lands in `unresolved` with its
+    best candidates, so a human confirms once and the alias file absorbs it.
+    """
+
+    def __init__(self, alias_path=None):
+        self.aliases = {}
+        if alias_path:
+            with open(alias_path) as fh:
+                raw = yaml.safe_load(fh) or {}
+            for vendor, canonical in (raw.get("players") or {}).items():
+                self.aliases[normalize_name(vendor)] = normalize_name(canonical)
+        self.known = set()
+        self.unresolved = []
+
+    def register(self, keys):
+        for k in keys:
+            self.known.add(k)
+
+    def _candidates(self, team, pos):
+        suffix = "|%s|%s" % (normalize_team(team), player_key("", "", pos).split("|")[2])
+        return [k for k in self.known if k.endswith(suffix)]
+
+    def resolve(self, name, team, pos):
+        key = player_key(name, team, pos)
+        if key in self.known:
+            return key
+
+        aliased = self.aliases.get(normalize_name(name))
+        if aliased:
+            key2 = player_key(aliased, team, pos)
+            if key2 in self.known:
+                return key2
+
+        pool = self._candidates(team, pos)
+        if pool:
+            target = normalize_name(name)
+            best = process.extractOne(
+                target, [p.split("|")[0] for p in pool], scorer=fuzz.WRatio
+            )
+            if best and best[1] >= FUZZY_ACCEPT:
+                return pool[best[2]]
+            scored = [(pool[i], s) for _, s, i in
+                      process.extract(target, [p.split("|")[0] for p in pool],
+                                      scorer=fuzz.WRatio, limit=3)]
+        else:
+            scored = []
+
+        self.unresolved.append((name, team, pos, scored))
+        return None
