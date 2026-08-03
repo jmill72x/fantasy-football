@@ -437,3 +437,84 @@ the two being the same position under league rules. Most likely a bad extract or
 TE premium in that season's sync config. Not worth debugging against data that will be
 replaced — but the first 2026 extract must be checked for this before any value output
 is trusted.
+
+## Carried Into the Value-Engine Plan
+
+Residual items from the scoring-and-ingest branch, parked deliberately rather than fixed:
+
+1. **`pass_att` is no longer ingested.** Both source profiles dropped it to satisfy the
+   new stat-vocabulary validation, while `tqb.py`'s `PASSING_STATS` still lists it, so it
+   is always absent. Nothing consumes it today. If the value engine wants attempt volume,
+   add it to `STAT_KEYS` and restore the mapping rather than re-adding it to the profiles
+   alone.
+2. **`leagues/sffl/2026.yaml` header comment is stale.** It says "inclusive both ends.
+   Outside all bands = 0", which stopped being accurate when band lookup changed to
+   "first band whose high >= value" (values above the top band now take the top band's
+   points; the floor still returns 0). This is the file the league owner edits by hand.
+3. **Footballguys cannot serve kickers.** That vendor supplies only total field goals, not
+   the by-distance split the scoring requires, so `pk` is excluded from its position
+   filter. Kickers must come from Draft Sharks.
+4. **DST season scoring is knowingly wrong.** Averaging puts every defense below the
+   3-sack per-game threshold, so ~42 projected sacks contribute zero of a ~92-point total.
+   Pinned by `test_known_limitation_season_path_zeroes_all_dst_sacks`. The weekly
+   distribution model must change this deliberately.
+5. **`Resolver` is built and tested but wired to nothing.** Cross-vendor player merging is
+   the value engine's job; until then no pipeline code drains `unresolved`.
+6. **WR/TE are not yet merged into one pool.** Deliberate — valuation is the next plan.
+
+## Scoring Validation Against Live CBS Output (2026-08-03)
+
+The scoring engine was validated against roughly 250 real 2025 weekly stat lines
+pulled from the live league site via browser automation, each compared to the fantasy
+points CBS itself awarded. Scripts live in `poc/validate_*.py`.
+
+**Band coverage: 44 of 45.**
+
+| table | proven | outstanding |
+|---|---|---|
+| pass_yds | 4/4 | — |
+| pass_cmp | 6/6 | — |
+| rec_yds | 7/7 | — |
+| rec_ct | 5/5 | — |
+| def_pa | 7/7 | — |
+| def_ya | 7/7 | — |
+| rush_yds | 8/9 | `250+` |
+
+Kicking: 6 of 7 rules proven (17/17 weeks exact). Only the sub-50 missed-FG penalty
+is unproven — the sampled kicker missed none inside 50 all season.
+
+`rush_yds 250+` is **unprovable from 2025**, not wrong: the season high was Jonathan
+Taylor's 244 yards, six short of the boundary.
+
+### Rules discovered that the settings page does not state
+
+- **No fumble-lost penalty.** Multiple games with a lost fumble scored exactly base.
+- **No penalty for a missed extra point** (4-of-5 and 0-of-2 XP weeks both exact).
+- **No penalty for a missed 50+ field goal** (0-of-2 from 50+, still exact).
+
+### Findings
+
+- **One CBS data error.** Barkley 2025 wk16 (132 rush yds, 1 TD, 12 pts) fits no legal
+  touchdown value. Two independent games — Henderson's 147 and 148, Henry's clean
+  126-yard/no-TD 5 — confirm the `125-149 = 5` band the anomaly appeared to contradict.
+- **TQB logs display the primary passer but score the whole quarterback room.**
+  Unexplained weeks track quarterback usage exactly: Philadelphia 0 of 18, Denver 1 of
+  19, Dallas 3 of 17. This confirms `build_tqb`'s aggregation is correct, and means TQB
+  weeks cannot be fully verified from the visible log.
+- **2024 is a different rulebook.** Barkley's 2024 season mismatches in 3 of 20 weeks,
+  two of which contain zero touchdowns. Prior seasons must never be used to validate
+  current bands. This is why `leagues/sffl/<year>.yaml` is versioned per season.
+
+### Validated touchdown asymmetry
+
+| distance | rushing | receiving |
+|---|---|---|
+| 1-2 yds | 3 | 5 |
+| 3-35 yds | 5 | 5 |
+| 36-74 yds | 8 | 6 |
+| 75+ yds | 8 | 8 |
+
+Short and long tiers are equal; the middle tiers are not. A goal-line rushing TD scores
+3 where a 5-yard receiving TD scores 5, and a 36-74 yard rushing TD scores 2 more than
+the equivalent reception. Deliberate per the commissioner. The value engine must not
+assume touchdown parity across positions.
