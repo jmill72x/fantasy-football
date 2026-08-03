@@ -6,6 +6,7 @@ on an NFL franchise. No vendor models this slot, so we construct it.
 
 from collections import defaultdict
 
+from sffl.identity import NFL_TEAMS
 from sffl.schema import PlayerProjection
 
 PASSING_STATS = ("pass_att", "pass_cmp", "pass_yds", "pass_td", "pass_int",
@@ -42,6 +43,11 @@ def build_tqb(lg, players, set_name=None):
         if p.pos != "QB":
             continue
         if set_name is not None and p.set_name != set_name:
+            continue
+        if p.team not in NFL_TEAMS:
+            # Not a real franchise - e.g. "FA" for a free agent/unrostered QB
+            # in the vendor's projection set. A phantom 33rd TQB here would
+            # shift every real franchise's ordinal rank downstream.
             continue
         by_team[p.team].append(p)
 

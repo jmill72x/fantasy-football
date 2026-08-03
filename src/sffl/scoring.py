@@ -24,8 +24,19 @@ def sack_points(rule, n):
     return rule["threshold_points"] + (n - rule["threshold"]) * rule["per_sack_after"]
 
 
-def score_game(lg, stats):
-    """Total SFFL points for one game's stat line."""
+def score_game(lg, stats, pos=None):
+    """Total SFFL points for one game's stat line.
+
+    `pos` gates the defense block. Real ingest output is dense: every profile
+    maps def_pa/def_ya onto every row regardless of position, defaulting to
+    0.0 for non-defenses. 0 sits inside the top band for both def_pa and
+    def_ya, so testing key presence (`"def_pa" in stats`) alone would award
+    every skill-position player phantom defense points on a dense stat dict.
+    When `pos` is given, the defense block only runs for pos == "DST". When
+    `pos` is None (the historical call signature, used by hand-built sparse
+    stat dicts such as the golden DST tests below), we fall back to key
+    presence so those callers are unaffected.
+    """
     g = stats.get
     p = lg.points
     total = 0.0
@@ -53,7 +64,8 @@ def score_game(lg, stats):
     total += g("fg_60", 0) * p["fg_60_plus"]
     total += g("fg_missed", 0) * p["fg_missed"]
 
-    if "def_pa" in stats or "def_ya" in stats:
+    is_defense = pos == "DST" if pos is not None else ("def_pa" in stats or "def_ya" in stats)
+    if is_defense:
         total += band_points(lg.bands["def_pa"], g("def_pa", 0))
         total += band_points(lg.bands["def_ya"], g("def_ya", 0))
         total += sack_points(lg.sack_rule, g("def_sack", 0))

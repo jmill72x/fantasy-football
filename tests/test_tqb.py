@@ -99,6 +99,21 @@ def test_multi_set_data_raises_without_set_name():
     assert "Dan Hindery" in str(exc_info.value)
 
 
+def test_non_franchise_team_code_is_excluded():
+    """A vendor's "FA" (free agent) QB must not become a phantom 33rd TQB.
+
+    A downstream component ranks TQB units 1-32 to find replacement level; a
+    phantom franchise shifts every real team's ordinal rank wherever it
+    outscores them.
+    """
+    out = build_tqb(LG, [
+        qb("Joe Burrow", "CIN", 17, 4690, 428, 37, 145),
+        qb("Some Journeyman", "FA", 8, 1500, 130, 8, 40),
+    ])
+    assert len(out) == 1
+    assert [t.team for t in out] == ["CIN"]
+
+
 def test_single_set_data_works_with_set_name_none():
     """Single-set source (all set_name=None) works with set_name=None."""
     players = [

@@ -22,7 +22,7 @@ def score_season(lg, player):
         if field.startswith("_"):
             continue
         per_game[field] = total / player.games
-    return score_game(lg, per_game) * player.games
+    return score_game(lg, per_game, pos=player.pos) * player.games
 
 
 def build_pool(lg, profile_path, csv_path, year, set_name=None):

@@ -4,6 +4,7 @@ Three layers, in order: deterministic normalization, an alias file, then fuzzy
 matching with a review queue. This module is layer one.
 """
 
+import html
 import re
 
 import yaml
@@ -30,11 +31,23 @@ TEAM_ALIASES = {
     "SFO": "SF",
 }
 
+# The 32 real NFL franchises, in canonical form (post-TEAM_ALIASES). Used to
+# reject non-franchise team codes - free agents ("FA"), unrostered/retired
+# placeholders, and similar vendor bookkeeping - from anything that must map
+# one-to-one onto a real team, such as Team QB units.
+NFL_TEAMS = frozenset({
+    "ARI", "ATL", "BAL", "BUF", "CAR", "CHI", "CIN", "CLE", "DAL", "DEN",
+    "DET", "GB", "HOU", "IND", "JAC", "KC", "LAC", "LAR", "LV", "MIA",
+    "MIN", "NE", "NO", "NYG", "NYJ", "PHI", "PIT", "SEA", "SF", "TB",
+    "TEN", "WAS",
+})
+
 
 def normalize_name(s):
     """Lowercase, strip punctuation and generational suffixes, collapse spaces."""
     if s is None:
         return ""
+    s = html.unescape(s)
     s = s.strip().lower()
     s = s.replace("'", "").replace("'", "")
     s = re.sub(r"[\-_]", " ", s)
