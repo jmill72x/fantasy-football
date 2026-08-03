@@ -360,6 +360,46 @@ rather than 200 players of scrolling:
 3. **Auction management** — budget tracker, roster slots, 12-team spend grid, silent
    auction planner
 
+#### Settled layout constants (reviewed on the real iPad, 2026-08-02)
+
+`poc/render_poc.py` is the reference implementation. Plan 3 wires the value engine into
+this layout; it does not redesign it.
+
+| Constant | Value | Why |
+|---|---|---|
+| Page | 454.9 x 660 pt portrait | iPad Pro 11" M4 is 1668x2420 @ 264ppi; aspect 1.451 fills the screen exactly |
+| Margin / gutter | 12 / 9 pt | |
+| Row height | **16 pt** | Confirmed writable with Apple Pencil. 37 rows/column, 74/page |
+| Column width | ~211 pt, two-up | |
+| PAID write-in box | **33 pt wide** | 10pt was tried and rejected as unusable |
+| Colour chip | 5 pt on the row's left edge | A fill fights Pencil ink; an edge bar does not |
+| Output | 10 pages, 6 PDF outline bookmarks | |
+
+**Validated palette** — checked with a colourblind-separation validator as *two* sets,
+because the six colours never co-occur: the overall board carries TQB/RB/WR/TE, while
+K and DST appear only together on their own page.
+
+| Group | Hex | |
+|---|---|---|
+| TQB | `#D9A441` | gold |
+| RB | `#C0392B` | red — the most-scanned distinction |
+| WR | `#1B6CA8` | blue, dark end |
+| TE | `#5BAEE8` | blue, light end — same pool as WR, so a gradient of one hue |
+| K | `#00968F` | teal |
+| DST | `#8E5FBF` | purple |
+
+TQB is gold rather than green: red-green measures dE 5.7 under deuteranopia, and purple
+was worse still against blue at dE 1.1 under protanopia. Worst adjacent pair in the
+shipped set is 18.9 dE protan / 20.8 normal.
+
+**Page structure as shipped:** overall board (deepest, two-up), Team QB (all 32),
+Running Backs, Receivers (WR+TE merged), **Kickers and Team Defense side by side on one
+page** — each column with its own labelled chip in the same header band the page key
+uses elsewhere — then Auction Management.
+
+**Excel is unchanged and out of scope for redesign.** Two sheets, dense, two-sided
+print, flipped by hand during the auction. It works; do not re-solve it.
+
 ### 5. Silent auction planner
 
 A pre-draft worksheet, not a cheatsheet page. For each candidate: your value, the bid
