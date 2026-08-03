@@ -399,15 +399,36 @@ was lost and the slot fell to 9th.
 
 ## Open Questions
 
-1. Does Draft Sharks' 2026 CBS sync still emit TQB rows? Verified present in the 2024
-   export (32 rows with projections and TQB-specific ADP); this most affects the
-   subscription decision.
-2. **Replacement-level policy.** Starter-based (61st flex) gives only 72 players
+1. **Replacement-level policy.** Starter-based (61st flex) gives only 72 players
    positive VORP, concentrating the $1,164 surplus so the top player reaches 48% of
    budget. Draftable-pool-based (156th, the last player actually rostered) spreads
    dollars wider and caps the top nearer $30–35. Starter-based is textbook VORP;
    draftable-pool is more common for auctions. One-line change, materially different
    board. Decide before the engine is built.
+
+## Vendor Confirmation (2026-08-02)
+
+Draft Sharks supports TQB, confirmed three independent ways: 32 TQB rows in the 2024
+export, `TQB Team Quarterback` in their web sync configurator, and `Team Quarterback: 1`
+under Advanced Positions in the live 2026 iPad app with this league synced.
+
+The app also reports the league as `12 TEAM · REDRAFT · AUCTION · 13 ROUNDS` with
+`RB/WR/TE: 3` pure-flex — 8 starters total, matching CBS.
+
+**Draft type is a manual override that must be re-applied and verified.** CBS reports
+the league as a Snake draft — the offline auction is invisible to it — so every Draft
+Sharks sync imports as Snake and has to be changed to Auction by hand.
+
+This is the likely cause of the unusable auction values in the 2024 export, whose ADP
+column uses round.pick snake notation (`5.01`, `7.07`, `3.06`) and whose `Auction $`
+column reads `$-11` on every row. Snake configuration, meaningless auction prices.
+
+**Checklist item before every extract:** confirm draft type is AUCTION. In particular,
+confirm it *after* using "Re-sync League", which may reset the override. A silently
+reverted setting produces a plausible-looking file with a worthless value column.
+
+Remaining vendor question is **banded scoring**, not TQB: can Draft Sharks express
+`50-74 ReYds = 1, 75-99 = 2, ...`? This is what disqualified FantasyPros.
 
 ## Validation Deferred to First Real Extract
 
