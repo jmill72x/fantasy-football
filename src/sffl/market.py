@@ -16,6 +16,10 @@ in log space makes it an ordinary least-squares line.
 
 FITTED ON 2025 PRICES, APPLIED TO 2026 PROJECTIONS. That is the best evidence
 available, but it assumes the room bids next year the way it bid last year.
+
+One curve is fit globally and applied to every position alike; it cannot
+correct a position-specific bias such as TQB's (mae $8.98, worst of any pool -
+see NEXT.md), only the board-wide top-heavy/bottom-light shape.
 """
 
 import math
@@ -23,7 +27,11 @@ from typing import Dict
 
 from sffl.value import _pool_of
 
-MIN_OBSERVATIONS = 3
+# Below this, an OLS fit of a two-parameter curve (a, b) has too few residual
+# degrees of freedom to trust - it is barely more than interpolation, and one
+# misjoined price can swing both parameters through the exponent. Production
+# has 154 real prices available, so this costs nothing operationally.
+MIN_OBSERVATIONS = 8
 
 
 def fit_price_curve(pairs):
@@ -59,6 +67,19 @@ def fit_price_curve(pairs):
             "fitted exponent %.4f is not monotonic increasing; a better player "
             "would cost less, which no real auction does. Check the observed "
             "prices joined to the right players." % b)
+
+    # dollars is always >= 1 and the curve is increasing (b > 0), so the
+    # lowest raw value the curve ever produces, across its whole domain of
+    # application, is at dollars == 1: a * 1**b == a. An intercept below $1
+    # would clamp every player near the low end to an identical floored raw
+    # value of exactly $1, silently destroying strict ordering among them.
+    if a < 1.0:
+        raise ValueError(
+            "fitted intercept a=%.4f is below the $1 floor: the curve's "
+            "lowest raw value (at dollars=1) would already clamp to the "
+            "floor, collapsing distinct low-dollar players to an identical "
+            "estimate. Check the observed prices for a bid near $1 that is "
+            "pulling the intercept down." % a)
     return (a, b)
 
 
@@ -96,7 +117,14 @@ def assign_expected_prices(lg, pool, curve):
 
     top = sorted(raw.values(), reverse=True)[:lg.total_spots()]
     surplus_raw = sum(v - 1.0 for v in top)
-    k = (lg.surplus() / surplus_raw) if surplus_raw > 0 else 0.0
+    if surplus_raw <= 0:
+        raise ValueError(
+            "the top %d raw estimates sum to no surplus above the $1 floor "
+            "(surplus_raw=%.4f); the board cannot be renormalised to "
+            "total_capital() because there is nothing above the floor to "
+            "scale. Check the curve and the pool's _dollars values."
+            % (lg.total_spots(), surplus_raw))
+    k = lg.surplus() / surplus_raw
 
     for p in pool:
         flat = lg.flat_priced_pools.get(_pool_of(p.pos))
