@@ -7,6 +7,10 @@ Each merged record includes: consensus values (means), _spread_<stat> for popula
 stdev, _n_<stat> for the count of sources that reported that specific stat, and
 _n_sources for the total number of sources covering the player. The distinction matters:
 _n_sources is record-level member count, _n_<stat> is per-stat source count.
+
+Reserved key: _n_sources would collide with the per-stat _n_<stat> key if a
+stat were ever literally named "sources" - no such stat exists in
+scoring.STAT_KEYS today, but a future one must avoid that name.
 """
 
 from collections import defaultdict
