@@ -18,3 +18,33 @@ players:
   "Davon Achane": "De'Von Achane"
   "Terry Maclaurin": "Terry McLaurin"
   "Brandonaiyuk": "Brandon Aiyuk"
+
+  # --- 2025 roster-sheet defense spellings. The sheet writes a city or
+  # nickname plus " D"; the pool carries full franchise names.
+  "Arizona D": "Arizona Cardinals"
+  "Baltimore D": "Baltimore Ravens"
+  "Buffalo D": "Buffalo Bills"
+  "Denver D": "Denver Broncos"
+  "Detroit D": "Detroit Lions"
+  "Green Bay D": "Green Bay Packers"
+  "Houston D": "Houston Texans"
+  "KC D": "Kansas City Chiefs"
+  "Minnesota D": "Minnesota Vikings"
+  "Philly D": "Philadelphia Eagles"
+  "Pittsburgh D": "Pittsburgh Steelers"
+  "Seattle D": "Seattle Seahawks"
+
+  # --- 2025 roster-sheet skill-player misspellings, hand typed at the auction.
+  "Bhaysul Tuten": "Bhayshul Tuten"
+  "Bill Croskey Merritt": "Jacory Croskey-Merritt"
+  "Brealon Allen": "Braelon Allen"
+  "Cam Dicker": "Cameron Dicker"
+  "Cam Skattebo": "Cameron Skattebo"
+  "Evan Macpherson": "Evan McPherson"
+  "Javonta Williams": "Javonte Williams"
+  "Jaxon S N": "Jaxon Smith-Njigba"
+  "Juan Jennings": "Jauan Jennings"
+  "Tet McMillian": "Tetairoa McMillan"
+  "Treyveon Henderson": "TreVeyon Henderson"
+  "Tyrone Tracey": "Tyrone Tracy"
+  "Will Lutz": "Wil Lutz"
