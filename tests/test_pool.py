@@ -2,7 +2,7 @@ import pytest
 
 from sffl import pool as pool_module
 from sffl.league import load_league
-from sffl.pool import build_pool, score_season
+from sffl.pool import build_pool, score_season, score_season_calibrated
 from sffl.schema import PlayerProjection
 
 LG = load_league("leagues/sffl/2026.yaml")
@@ -158,3 +158,59 @@ def test_unrelated_value_error_from_build_tqb_is_not_masked(monkeypatch):
     msg = str(exc_info.value)
     assert "unrelated failure: bad franchise code XYZ" in msg
     assert "--set" not in msg
+
+
+def test_calibrated_scoring_recovers_value_the_naive_path_zeroes():
+    # A quarterback averaging 35 rushing yards per game scores ZERO rushing under
+    # the naive path, because band(35) == 0. A curve built from a player who
+    # alternated 0 and 70 yards says the true expectation is 1.0 per game.
+    lg = LG
+    curves = {"rush_yds": [(35.0, 1.0)]}
+    p = PlayerProjection(name="QB", team="BUF", pos="TQB", source="t",
+                         source_year=2026, games=17,
+                         stats=dict(rush_yds=595.0), raw_name="QB")
+    naive = score_season(lg, p)
+    cal = score_season_calibrated(lg, p, curves)
+    assert naive == 0.0
+    assert cal == pytest.approx(17.0)
+
+
+def test_calibrated_leaves_linear_categories_untouched():
+    lg = LG
+    curves = {}
+    p = PlayerProjection(name="K", team="DAL", pos="K", source="t",
+                         source_year=2026, games=17,
+                         stats=dict(xp_made=34.0, fg_40_49=17.0), raw_name="K")
+    # 34 XP at 1 + 17 FG at 4 = 102, and no banded stat is involved
+    assert score_season_calibrated(lg, p, curves) == pytest.approx(102.0)
+
+
+def test_calibrated_equals_naive_when_curve_matches_the_band():
+    lg = LG
+    curves = {"rec_yds": [(100.0, 3.0)]}
+    p = PlayerProjection(name="WR", team="CIN", pos="WR", source="t",
+                         source_year=2026, games=17,
+                         stats=dict(rec_yds=1700.0), raw_name="WR")
+    assert score_season_calibrated(lg, p, curves) == pytest.approx(score_season(lg, p))
+
+
+def test_calibrated_non_dst_player_gets_zero_defense_points_from_populated_curve():
+    """Regression for the brief's reference-implementation defect.
+
+    A non-DST player's per-game stats never include def_pa/def_ya, so their
+    mean defaults to 0.0. Both def_pa and def_ya band 0 at their MAXIMUM
+    points ([[0,2,6],...] and [[0,150,6],...]), so any implementation that
+    loops over every stat in lg.bands regardless of position - rather than
+    gating on player.pos == "DST" the way score_game does - pays a receiver
+    phantom defense points for a shutout they never played.
+
+    This is a real regression test: it FAILS against the brief's Step 3
+    reference implementation, which loops `for stat in lg.bands` unconditionally.
+    """
+    lg = LG
+    curves = {"def_pa": [(0.0, 6.0)], "def_ya": [(0.0, 6.0)]}
+    p = PlayerProjection(name="WR", team="CIN", pos="WR", source="t",
+                         source_year=2026, games=17,
+                         stats=dict(rec_yds=850.0), raw_name="WR")
+    # 850 / 17 = 50/game -> rec_yds band [50,74] = 1 point/game * 17 = 17
+    assert score_season_calibrated(lg, p, curves) == pytest.approx(17.0)
