@@ -13,7 +13,7 @@ def player(name, pos, pts):
                             stats={"_season_points": float(pts)}, raw_name=name)
 
 
-def build_pool():
+def build_pool_fixture():
     pool = []
     # 100 flex players scoring 200 down to 3
     for i in range(100):
@@ -29,7 +29,7 @@ def build_pool():
 
 
 def test_starter_policy_uses_starting_demand():
-    lv = replacement_levels(LG, build_pool(), "starter")
+    lv = replacement_levels(LG, build_pool_fixture(), "starter")
     # 12 teams start one TQB each, so replacement is the 13th best TQB
     assert lv["TQB"] == pytest.approx(300 - 5 * 12)
     # 12 teams * 5 flex slots = 60 starters, so replacement is the 61st best
@@ -37,8 +37,8 @@ def test_starter_policy_uses_starting_demand():
 
 
 def test_draftable_policy_reaches_deeper_than_starter():
-    starter = replacement_levels(LG, build_pool(), "starter")
-    draftable = replacement_levels(LG, build_pool(), "draftable")
+    starter = replacement_levels(LG, build_pool_fixture(), "starter")
+    draftable = replacement_levels(LG, build_pool_fixture(), "draftable")
     assert draftable["FLEX"] < starter["FLEX"]
 
 
@@ -51,7 +51,7 @@ def test_wr_and_te_share_one_flex_pool():
 
 
 def test_vorp_is_points_above_replacement_and_never_negative():
-    pool = build_pool()
+    pool = build_pool_fixture()
     lv = replacement_levels(LG, pool, "starter")
     assign_vorp(LG, pool, lv)
     top = max(pool, key=lambda p: p.stats["_vorp"])
@@ -61,7 +61,7 @@ def test_vorp_is_points_above_replacement_and_never_negative():
 
 def test_unknown_policy_raises():
     with pytest.raises(ValueError):
-        replacement_levels(LG, build_pool(), "vibes")
+        replacement_levels(LG, build_pool_fixture(), "vibes")
 
 
 def test_empty_pool_raises():
@@ -141,7 +141,7 @@ def test_assign_vorp_raises_for_missing_pool():
 
 
 def test_dollars_exhaust_the_league_budget():
-    pool = build_pool()
+    pool = build_pool_fixture()
     lv = replacement_levels(LG, pool, "starter")
     assign_vorp(LG, pool, lv)
     assign_dollars(LG, pool)
@@ -151,7 +151,7 @@ def test_dollars_exhaust_the_league_budget():
 
 
 def test_zero_vorp_players_cost_one_dollar():
-    pool = build_pool()
+    pool = build_pool_fixture()
     lv = replacement_levels(LG, pool, "starter")
     assign_vorp(LG, pool, lv)
     assign_dollars(LG, pool)
@@ -161,7 +161,7 @@ def test_zero_vorp_players_cost_one_dollar():
 
 
 def test_rate_is_positive_and_returned():
-    pool = build_pool()
+    pool = build_pool_fixture()
     lv = replacement_levels(LG, pool, "starter")
     assign_vorp(LG, pool, lv)
     rate = assign_dollars(LG, pool)
@@ -183,7 +183,7 @@ def test_replacement_levels_raises_for_unscored_pool_members():
     default 0.0 - which would make every replacement level 0.0 and every
     player's dollar value $1.00 with no exception anywhere.
     """
-    pool = build_pool()
+    pool = build_pool_fixture()
     del pool[0].stats["_season_points"]
     with pytest.raises(ValueError, match="_season_points"):
         replacement_levels(LG, pool, "starter")
@@ -194,9 +194,55 @@ def test_assign_dollars_raises_for_unvalued_pool_members():
     treating every missing _vorp as 0.0 (which would flatten dollars to $1
     for players who may well be above replacement).
     """
-    pool = build_pool()
+    pool = build_pool_fixture()
     lv = replacement_levels(LG, pool, "starter")
     assign_vorp(LG, pool, lv)
     del pool[0].stats["_vorp"]
     with pytest.raises(ValueError, match="_vorp"):
         assign_dollars(LG, pool)
+
+
+def test_flat_priced_pools_are_configured():
+    assert LG.flat_priced_pools == {"K": 1.0, "DST": 1.0}
+
+
+def test_kickers_and_defenses_cost_their_flat_price():
+    pool = build_pool_fixture()
+    lv = replacement_levels(LG, pool, "starter")
+    assign_vorp(LG, pool, lv)
+    assign_dollars(LG, pool)
+    for p in pool:
+        if p.pos in ("K", "DST"):
+            assert p.stats["_dollars"] == pytest.approx(1.0), p.name
+            assert p.stats["_vorp"] == pytest.approx(0.0), p.name
+
+
+def test_the_best_kicker_is_not_worth_more_than_the_worst():
+    pool = build_pool_fixture()
+    lv = replacement_levels(LG, pool, "starter")
+    assign_vorp(LG, pool, lv)
+    assign_dollars(LG, pool)
+    ks = [p.stats["_dollars"] for p in pool if p.pos == "K"]
+    assert max(ks) == pytest.approx(min(ks))
+
+
+def test_flat_pools_free_surplus_for_skill_players():
+    # With K and DST removed from the VORP pool, the dollars-per-VORP rate rises,
+    # so the top skill player is worth strictly more than he was before.
+    pool = build_pool_fixture()
+    lv = replacement_levels(LG, pool, "starter")
+    assign_vorp(LG, pool, lv)
+    rate = assign_dollars(LG, pool)
+    assert rate > 0
+    flex_top = max(p.stats["_dollars"] for p in pool if p.pos in ("RB", "WR", "TE"))
+    assert flex_top > 1.0
+
+
+def test_budget_still_exhausts_with_flat_priced_pools():
+    pool = build_pool_fixture()
+    lv = replacement_levels(LG, pool, "starter")
+    assign_vorp(LG, pool, lv)
+    assign_dollars(LG, pool)
+    spent = sum(sorted((p.stats["_dollars"] for p in pool),
+                       reverse=True)[:LG.total_spots()])
+    assert spent == pytest.approx(LG.total_capital(), abs=1.0)

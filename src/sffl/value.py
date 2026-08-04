@@ -114,6 +114,11 @@ def assign_vorp(lg, pool, levels):
     for p in pool:
         pool_name = _pool_of(p.pos)
         base = levels[pool_name]  # Safe: we verified above.
+        if pool_name in lg.flat_priced_pools:
+            # Fungible by league convention - see flat_priced_pools in the
+            # league YAML. Zero VORP keeps them out of the surplus split.
+            p.stats["_vorp"] = 0.0
+            continue
         p.stats["_vorp"] = max(0.0, p.stats.get("_season_points", 0.0) - base)
 
 
@@ -133,5 +138,9 @@ def assign_dollars(lg, pool):
     total_vorp = sum(p.stats["_vorp"] for p in pool)
     rate = (lg.surplus() / total_vorp) if total_vorp > 0 else 0.0
     for p in pool:
-        p.stats["_dollars"] = 1.0 + p.stats["_vorp"] * rate
+        flat = lg.flat_priced_pools.get(_pool_of(p.pos))
+        if flat is not None:
+            p.stats["_dollars"] = float(flat)
+        else:
+            p.stats["_dollars"] = 1.0 + p.stats["_vorp"] * rate
     return rate

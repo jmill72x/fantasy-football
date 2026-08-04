@@ -24,6 +24,9 @@ class LeagueProfile(object):
         self.bands = {}  # type: Dict[str, List[Tuple[int, int, int]]]
         for key, rows in raw["bands"].items():
             self.bands[key] = [(int(a), int(b), int(c)) for a, b, c in rows]
+        self.flat_priced_pools = {}  # type: Dict[str, float]
+        for pool_name, price in (raw.get("flat_priced_pools") or {}).items():
+            self.flat_priced_pools[str(pool_name).strip().upper()] = float(price)
 
     def total_capital(self):
         return self.teams * self.budget
