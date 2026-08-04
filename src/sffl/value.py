@@ -14,7 +14,7 @@ def _pool_of(pos):
 
 
 def _sorted_points(pool, name):
-    vals = [p.stats.get("_season_points", 0.0) for p in pool if _pool_of(p.pos) == name]
+    vals = [p.stats["_season_points"] for p in pool if _pool_of(p.pos) == name]
     return sorted(vals, reverse=True)
 
 
@@ -61,6 +61,13 @@ def replacement_levels(lg, pool, policy):
     if policy not in ("starter", "draftable"):
         raise ValueError(
             "unknown replacement policy %r; expected 'starter' or 'draftable'" % policy)
+
+    unscored = [p.name for p in pool if "_season_points" not in p.stats]
+    if unscored:
+        raise ValueError(
+            "%d pool player(s) have no _season_points (e.g. %r); the pool has "
+            "not been scored. Call build_pool or score_season_calibrated first."
+            % (len(unscored), unscored[0]))
 
     starters = _starter_counts(lg)
     if policy == "starter":
@@ -117,8 +124,14 @@ def assign_dollars(lg, pool):
     committed before anything else. What remains is allocated by VORP share.
     Returns the dollars-per-VORP-point rate.
     """
-    total_vorp = sum(p.stats.get("_vorp", 0.0) for p in pool)
+    unvalued = [p.name for p in pool if "_vorp" not in p.stats]
+    if unvalued:
+        raise ValueError(
+            "%d pool player(s) have no _vorp (e.g. %r); call assign_vorp "
+            "before assign_dollars." % (len(unvalued), unvalued[0]))
+
+    total_vorp = sum(p.stats["_vorp"] for p in pool)
     rate = (lg.surplus() / total_vorp) if total_vorp > 0 else 0.0
     for p in pool:
-        p.stats["_dollars"] = 1.0 + p.stats.get("_vorp", 0.0) * rate
+        p.stats["_dollars"] = 1.0 + p.stats["_vorp"] * rate
     return rate

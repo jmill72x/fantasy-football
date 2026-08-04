@@ -116,7 +116,10 @@ def test_draftable_depths_sum_to_roster_size():
     # DST:  156*12/96 = 19.5 -> floor=19, frac=0.5
     # sum of floors = 154, leftover = 2
     # Remainders all 0.5; tie-break by (-starters[name], name):
-    # FLEX (60 starters) wins both leftover units.
+    # FLEX (60 starters, the most fundamental) wins the first leftover unit.
+    # The second goes to the next-sorted pool among the three tied at 12
+    # starters each (K, DST, TQB alphabetically) - DST, being alphabetically
+    # first, wins it.
     assert depths == {"TQB": 19, "FLEX": 98, "K": 19, "DST": 20}
 
     # Test 3: order-independence
@@ -171,3 +174,29 @@ def test_a_pool_with_no_vorp_does_not_divide_by_zero():
     rate = assign_dollars(LG, pool)
     assert rate == 0.0
     assert pool[0].stats["_dollars"] == pytest.approx(1.0)
+
+
+def test_replacement_levels_raises_for_unscored_pool_members():
+    """A pool that never went through build_pool/score_season_calibrated
+    (e.g. straight out of sffl.consensus.merge, which never writes
+    _season_points) must raise rather than silently price everyone at the
+    default 0.0 - which would make every replacement level 0.0 and every
+    player's dollar value $1.00 with no exception anywhere.
+    """
+    pool = build_pool()
+    del pool[0].stats["_season_points"]
+    with pytest.raises(ValueError, match="_season_points"):
+        replacement_levels(LG, pool, "starter")
+
+
+def test_assign_dollars_raises_for_unvalued_pool_members():
+    """A pool that skipped assign_vorp must raise rather than silently
+    treating every missing _vorp as 0.0 (which would flatten dollars to $1
+    for players who may well be above replacement).
+    """
+    pool = build_pool()
+    lv = replacement_levels(LG, pool, "starter")
+    assign_vorp(LG, pool, lv)
+    del pool[0].stats["_vorp"]
+    with pytest.raises(ValueError, match="_vorp"):
+        assign_dollars(LG, pool)
