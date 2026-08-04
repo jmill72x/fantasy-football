@@ -54,16 +54,39 @@ Update this block at the end of every session so the next one can resume blind.
 - [x] Valuation corrections — K/DST flat at $1, TQB + DST markets joined to the fit
 - [x] Lineup floors — 1 RB and 1 WR/TE enforced at flex replacement
 - [x] Market calibration — EST$ (what the room pays) beside MY$ (what he's worth), 165 tests
-- [ ] **Write plan 3 (renderers), then execute it** — all four design decisions settled
-      (columns, byes, THEIR$ dropped, floors). First task: install `reportlab` +
-      `openpyxl`, pin a `requirements.txt`. Then PDF (settled iPad layout, reference
-      implementation in `poc/render_poc.py`), then Excel (template measured, see below).
+- [x] Plan 3 written — `docs/superpowers/plans/2026-08-04-renderers.md`, 3 tasks
+- [x] `reportlab` 5.0.0 + `openpyxl` 3.1.5 installed, `requirements.txt` pinned
+- [ ] **Plan 3 IN FLIGHT on branch `renderers`** — see "Renderers: live status" below
 - [ ] Write plan 4 (silent auction planner), then execute it
 - [ ] TODO B — widen the weekly collection to ~120 players (needs `claude --chrome`)
 - [ ] Full dry run: generate both artifacts, review on the iPad
 - [ ] Clean licensed values out of the two tracked fixtures (see FOLLOW-UP below)
 
 Work top to bottom. Each unchecked box is the next thing to do.
+
+### Renderers: live status (branch `renderers`, not yet merged)
+
+**Check this branch, not `main`, for renderer progress.** `git log --oneline main..renderers`.
+
+| Task | State |
+|---|---|
+| 1 — render rows, tiers, byes (`src/sffl/render/rows.py`) | ✅ done, reviewed, 179 tests |
+| 2 — PDF (`src/sffl/render/pdf.py`) | ⚠️ built (185 tests) — review found **one Critical**, fix in flight |
+| 3 — Excel + `render` CLI command | not started |
+
+**Task 2's open Critical:** the Overall Board was including K and DST. The spec is explicit
+that it carries TQB/RB/WR/TE only, and that K/DST appear together on their own page — the
+validated colour palette depends on it, having been checked as *two disjoint sets* because
+those six colours were never supposed to co-occur. One-line filter; being fixed.
+
+**Real-data render works:** 18 pages, every section populated (TQB 32, RB 122, WR 194,
+TE 105, K 35, DST 32). Drops to 17 once the Critical is fixed.
+
+**Found during the real run — 23 of 543 players carry placeholder team codes** (`UNS` ×22
+unsigned free agents, `RK` ×1). They have no NFL team, so no bye week, and `build_rows`
+correctly raises rather than rendering a blank. All sit below replacement, so they affect
+no dollar value. Task 3 filters them at render time and reports the count — dropping them
+silently would be the wrong shape of fix.
 
 **Carry into plan 3 — the caveats that must survive onto the printed page:**
 EST$ is a *floor* at the very top, not a point estimate. Spread is unmeasured, so render
