@@ -34,3 +34,27 @@ def test_value_writes_a_csv(tmp_path):
         header = fh.readline()
     assert "dollars" in header
     assert "spread" in header
+
+
+PRICES = "tests/fixtures/prices_sample.csv"
+
+
+def test_fit_policy_prints_the_match_denominator(capsys):
+    # The bug this whole branch exists to fix was "108 of 156 prices joined,
+    # and nothing said so" - the printed n must carry a denominator and the
+    # shortfall, not just a bare match count.
+    rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
+               "--policy", "fit", "--prices", PRICES])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "of 5 prices" in out
+    assert "unmatched" in out
+
+
+def test_tqb_starters_flag_is_accepted_and_overridable(capsys):
+    # A future season's roster sheet needs its own starter map; the flag
+    # must be plumbed through to load_prices rather than hardcoded.
+    rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
+               "--policy", "fit", "--prices", PRICES,
+               "--tqb-starters", "identity/tqb-2025-starters.yaml"])
+    assert rc == 0

@@ -9,7 +9,7 @@ import csv
 import sys
 
 from sffl.calibrate import load_curves
-from sffl.fit import choose_policy, load_prices
+from sffl.fit import DEFAULT_TQB_STARTERS, choose_policy, load_prices
 from sffl.league import load_league
 from sffl.pool import build_pool, score_season_calibrated
 from sffl.value import assign_dollars, assign_vorp, replacement_levels
@@ -57,11 +57,14 @@ def cmd_value(args):
         if not args.prices:
             print("error: --policy fit requires --prices with observed auction prices")
             return 1
-        prices = load_prices(args.prices)
+        prices = load_prices(args.prices, tqb_starters_path=args.tqb_starters)
         policy, reports = choose_policy(lg, pool, prices)
+        total_prices = prices.total_rows
         for r in reports:
-            print("  %-10s n=%-4d mae=$%.2f rmse=$%.2f top10_mae=$%.2f"
-                  % (r["policy"], r["n"], r["mae"], r["rmse"], r["top10_mae"]))
+            unmatched = total_prices - r["n"]
+            print("  %-10s n=%d of %d prices (%d unmatched)  mae=$%.2f rmse=$%.2f top10_mae=$%.2f"
+                  % (r["policy"], r["n"], total_prices, unmatched,
+                     r["mae"], r["rmse"], r["top10_mae"]))
         print("  chosen: %s\n" % policy)
 
         chosen_report = [r for r in reports if r["policy"] == policy][0]
@@ -69,7 +72,9 @@ def cmd_value(args):
         for name in sorted(chosen_report["by_pool"]):
             stats = chosen_report["by_pool"][name]
             if stats["n"]:
-                print("    %-5s n=%-3d mae=$%.2f" % (name, stats["n"], stats["mae"]))
+                flat = (" (flat $%g)" % lg.flat_priced_pools[name]
+                        if name in lg.flat_priced_pools else "")
+                print("    %-5s n=%-3d mae=$%.2f%s" % (name, stats["n"], stats["mae"], flat))
 
     levels = replacement_levels(lg, pool, policy)
     assign_vorp(lg, pool, levels)
@@ -155,6 +160,10 @@ def main(argv=None):
                       choices=["starter", "draftable", "fit"])
     val.add_argument("--prices", default=None,
                       help="observed auction prices CSV; required with --policy fit")
+    val.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
+                      help="year-bound map of starting QB name -> franchise code, "
+                           "used to join --prices' Team QB rows to the pool "
+                           "(default: the 2025 map; a new season needs its own file)")
     val.add_argument("--out", default=None)
     val.set_defaults(func=cmd_value)
 
