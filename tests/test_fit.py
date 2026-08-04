@@ -30,8 +30,11 @@ def filler_players():
 
 def test_load_prices_normalizes_hand_typed_names():
     prices = load_prices(PRICES)
-    # the roster sheet misspells Ja'Marr Chase as "JAMAAR CHASE"
-    assert any("chase" in k for k in prices)
+    # the roster sheet misspells Ja'Marr Chase as "JAMAAR CHASE"; assert the
+    # alias actually landed on the canonical key, not merely that some key
+    # somewhere contains "chase" (which "chase brown" would satisfy on its
+    # own, alias or no alias, making that assertion vacuous)
+    assert "jamarr chase" in prices
     assert len(prices) == 5
 
 
@@ -42,7 +45,7 @@ def test_score_fit_reports_error_metrics():
     assert rep["policy"] == "starter"
     assert rep["n"] >= 1
     assert rep["mae"] >= 0
-    assert rep["rmse"] >= rep["mae"] * 0.0
+    assert rep["rmse"] >= rep["mae"]
 
 
 def test_score_fit_rejects_an_unknown_policy():
