@@ -108,3 +108,17 @@ def assign_vorp(lg, pool, levels):
         pool_name = _pool_of(p.pos)
         base = levels[pool_name]  # Safe: we verified above.
         p.stats["_vorp"] = max(0.0, p.stats.get("_season_points", 0.0) - base)
+
+
+def assign_dollars(lg, pool):
+    """Distribute the league's surplus in proportion to VORP.
+
+    Every roster spot costs at least $1, so teams * roster_size dollars are
+    committed before anything else. What remains is allocated by VORP share.
+    Returns the dollars-per-VORP-point rate.
+    """
+    total_vorp = sum(p.stats.get("_vorp", 0.0) for p in pool)
+    rate = (lg.surplus() / total_vorp) if total_vorp > 0 else 0.0
+    for p in pool:
+        p.stats["_dollars"] = 1.0 + p.stats.get("_vorp", 0.0) * rate
+    return rate
