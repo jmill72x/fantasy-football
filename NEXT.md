@@ -5,13 +5,14 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 ## Where things stand
 
 Auction cheatsheet pipeline for the STRIPES Fantasy Football League (CBS). Four plans;
-**plan 1 is merged and done**.
+**plans 1 and 2 are merged and done.** The valuation is finished and validated against
+real prices. What remains is rendering it onto paper and an iPad.
 
 | | Status |
 |---|---|
-| **Plan 1 — scoring foundation & ingest** | ✅ merged, 64 tests green |
-| **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus corrections + calibration — 165 tests green |
-| **Plan 3 — Excel + PDF renderers** | not written — write next |
+| **Plan 1 — scoring foundation & ingest** | ✅ merged, 64 tests |
+| **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections, lineup floors and market calibration — 165 tests |
+| **Plan 3 — Excel + PDF renderers** | ⬅️ **NEXT.** Not written. Every design decision is settled (see below); first task is installing `reportlab`/`openpyxl` and pinning a `requirements.txt` |
 | **Plan 4 — silent auction planner** | not written — consumes plan 2 values |
 
 Verify state in one command:
@@ -20,15 +21,20 @@ Verify state in one command:
 cd ~/Projects/fantasy-football && ./.venv/bin/pytest -q && git log --oneline -3
 ```
 
-What works today:
+**What works today — this is the production command.** It reads an extract, scores it
+against league rules, values the pool, fits both the replacement policy and the market
+price curve against 154 real 2025 prices, and writes a priced board:
 
 ```bash
-PYTHONPATH=src ./.venv/bin/python -m sffl.cli ingest \
+PYTHONPATH=src ./.venv/bin/python -m sffl.cli value \
   --source sources/draftsharks.yaml \
-  --file "data/extracts/Draft Sharks/2026/rankings (1).csv" --year 2026
+  --file "data/extracts/Draft Sharks/2026/rankings (1).csv" --year 2026 \
+  --policy fit --prices data/league/auction-rosters-2025.csv \
+  --curves calibration/2025.yaml --out board.csv
 ```
 
-Turns any vendor extract into a scored, league-correct pool — 543 players, TQB=32.
+543 players, TQB=32. Every row carries **MY$** (worth against replacement) and **EST$**
+(what the room will pay). Nothing renders it yet — that is plan 3.
 
 ## GOAL THIS WEEK — a full dry run
 
@@ -48,12 +54,21 @@ Update this block at the end of every session so the next one can resume blind.
 - [x] Valuation corrections — K/DST flat at $1, TQB + DST markets joined to the fit
 - [x] Lineup floors — 1 RB and 1 WR/TE enforced at flex replacement
 - [x] Market calibration — EST$ (what the room pays) beside MY$ (what he's worth), 165 tests
-- [ ] Write plan 3 (renderers), then execute it — decisions settled, see below
+- [ ] **Write plan 3 (renderers), then execute it** — all four design decisions settled
+      (columns, byes, THEIR$ dropped, floors). First task: install `reportlab` +
+      `openpyxl`, pin a `requirements.txt`. Then PDF (settled iPad layout, reference
+      implementation in `poc/render_poc.py`), then Excel (template measured, see below).
 - [ ] Write plan 4 (silent auction planner), then execute it
-- [ ] TODO B — widen the weekly collection to ~120 players
+- [ ] TODO B — widen the weekly collection to ~120 players (needs `claude --chrome`)
 - [ ] Full dry run: generate both artifacts, review on the iPad
+- [ ] Clean licensed values out of the two tracked fixtures (see FOLLOW-UP below)
 
 Work top to bottom. Each unchecked box is the next thing to do.
+
+**Carry into plan 3 — the caveats that must survive onto the printed page:**
+EST$ is a *floor* at the very top, not a point estimate. Spread is unmeasured, so render
+it blank and never `$0`. Both are explained below; the person bidding reads the board,
+not the source.
 
 ## Timeline — hard deadline
 
