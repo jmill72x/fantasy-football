@@ -14,7 +14,7 @@ from sffl.identity import normalize_name
 from sffl.league import load_league
 from sffl.market import assign_expected_prices, fit_price_curve
 from sffl.pool import build_pool, score_season_calibrated
-from sffl.value import assign_dollars, assign_vorp, replacement_levels
+from sffl.value import _pool_of, assign_dollars, assign_vorp, replacement_levels
 
 DEFAULT_LEAGUE = "leagues/sffl/2026.yaml"
 
@@ -94,21 +94,31 @@ def cmd_value(args):
     # supplied, under any policy - fit the curve against whichever players
     # join. A small run can legitimately have too few joined observations to
     # fit a trustworthy curve (fit_price_curve enforces a minimum); that is a
-    # property of this run's data, not a crash, so it is reported and _dollars
-    # /_est_price stay exactly as they were - never a fabricated estimate.
+    # property of this run's data, not a crash, so it is reported (loudly, not
+    # silently) and _dollars/_est_price stay exactly as they were - never a
+    # fabricated estimate.
+    #
+    # Flat-priced pools (K, DST) are excluded from the fit input on purpose:
+    # their _dollars is pinned to the league's flat price by policy, not
+    # derived from the model, so every one of them contributes a point at
+    # x = log(1) = 0 that would anchor the curve's cheap end with data that
+    # isn't evidence about how the market responds to value. Their displayed
+    # _est_price is unaffected either way - assign_expected_prices applies
+    # the same flat override to them regardless of what curve was fit.
     curve = None
     if prices is not None:
         priced = [(p.stats["_dollars"], prices[normalize_name(p.name)])
-                  for p in pool if normalize_name(p.name) in prices]
+                  for p in pool if normalize_name(p.name) in prices
+                  and _pool_of(p.pos) not in lg.flat_priced_pools]
         try:
             curve = fit_price_curve(priced)
         except ValueError as e:
-            print("  market curve: not fitted (%s)\n" % e)
+            print("  WARNING: market curve not fitted (%s)\n" % e)
         else:
             assign_expected_prices(lg, pool, curve)
             print("  market curve: price = %.3f * value^%.3f  "
-                  "(fitted on %d observed 2025 prices)\n"
-                  % (curve[0], curve[1], len(priced)))
+                  "(fitted on %d observed 2025 prices, excluding flat-priced "
+                  "K/DST)\n" % (curve[0], curve[1], len(priced)))
 
     print("replacement level (%s policy):" % policy)
     for name in sorted(levels):
@@ -127,7 +137,11 @@ def cmd_value(args):
     consensus_ran = any(any(k.startswith("_spread_") for k in p.stats) for p in pool)
 
     pool.sort(key=lambda p: -p.stats["_dollars"])
-    print("top 25 by value:  MY$ = worth against replacement, EST$ = what the room will pay")
+    if curve is not None:
+        print("top 25 by value:  $ = MY$, worth against replacement; "
+              "est $ = EST$, what the room will pay")
+    else:
+        print("top 25 by value:")
     if not consensus_ran:
         print("  (consensus not wired for this run - spread unavailable, single source only)")
     for i, p in enumerate(pool[:25], 1):
