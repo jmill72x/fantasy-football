@@ -15,7 +15,7 @@ from typing import Dict
 
 import yaml
 
-from sffl.identity import Resolver, normalize_name
+from sffl.identity import NFL_TEAMS, Resolver, normalize_name
 from sffl.value import POOLS, _pool_of, assign_dollars, assign_vorp, replacement_levels
 
 POLICIES = ("starter", "draftable")
@@ -24,13 +24,36 @@ DEFAULT_ALIASES = "identity/aliases.yaml"
 DEFAULT_TQB_STARTERS = "identity/tqb-2025-starters.yaml"
 
 
+class PriceMap(dict):
+    """dict[canonical name -> price] that also remembers how many rows the
+    source CSV held, so a caller can report "n matched of N loaded" instead
+    of a bare match count with no denominator. Behaves exactly like a plain
+    dict everywhere else (iteration, `in`, `.get`, `len`, equality with a
+    plain dict) - only `.total_rows` is new.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super(PriceMap, self).__init__(*args, **kwargs)
+        self.total_rows = 0
+
+
 def _load_tqb_starters(path):
-    """Map normalized quarterback name -> franchise code for one season."""
+    """Map normalized quarterback name -> franchise code for one season.
+
+    Raises ValueError on any right-hand side that is not a real NFL franchise
+    code (per `sffl.identity.NFL_TEAMS`) - a typo like "PHIL" would otherwise
+    join nothing and silently drop a TQB price from the fit with no signal.
+    """
     with open(path) as fh:
         raw = yaml.safe_load(fh) or {}
     out = {}
     for qb, team in (raw.get("starters") or {}).items():
-        out[normalize_name(qb)] = str(team).strip().upper()
+        code = str(team).strip().upper()
+        if code not in NFL_TEAMS:
+            raise ValueError(
+                "%s maps %r to %r, which is not a real NFL franchise code; "
+                "expected one of %s" % (path, qb, team, sorted(NFL_TEAMS)))
+        out[normalize_name(qb)] = code
     return out
 
 
@@ -47,15 +70,25 @@ def load_prices(path, alias_path=DEFAULT_ALIASES,
     A franchise may appear twice when one roster carried a backup Team QB. The
     higher price wins: it is the one that reflects the unit's market value, and
     silently keeping whichever came last would depend on file order.
+
+    `tqb_starters_path` defaults to the 2025 map and MUST be overridden with a
+    season-matched map for any other season's prices file - see the
+    `--tqb-starters` CLI flag. Applying the 2025 map to a later roster sheet
+    would silently mis-join or silently drop every Team QB price.
+
+    Returns a `PriceMap` (a `dict` subclass); `.total_rows` on the result is
+    the number of priced rows read from `path`, independent of how many of
+    them ended up matching a pool player.
     """
     aliases = Resolver(alias_path).aliases
     starters = _load_tqb_starters(tqb_starters_path)
-    out = {}  # type: Dict[str, float]
+    out = PriceMap()
     with open(path, newline="") as fh:
         for row in csv.DictReader(fh):
             name = normalize_name(row["player_as_written"])
             if not name:
                 continue
+            out.total_rows += 1
             name = aliases.get(name, name)
             if name in aliases:
                 raise ValueError("alias chain in %s: %r -> %r (chains prevent non-transitive lookup; resolve to final spelling instead)" % (alias_path, row["player_as_written"], name))

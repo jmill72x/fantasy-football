@@ -2,7 +2,8 @@
 # Two distinct quarterback names deliberately point at the same franchise so
 # the test can exercise load_prices' collision-resolution branch, which the
 # real 2025 data never triggers (all 21 real starters land on distinct
-# franchises).
+# franchises). Uses a real NFL franchise code (JAC) rather than a synthetic
+# one so it passes the same NFL_TEAMS validation as production starter maps.
 starters:
-  "Quarterback A": "ZZZ"
-  "Quarterback B": "ZZZ"
+  "Quarterback A": "JAC"
+  "Quarterback B": "JAC"
