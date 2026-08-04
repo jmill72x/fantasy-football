@@ -1,8 +1,12 @@
+import copy
+
 import pytest
 
 from sffl.league import load_league
 from sffl.schema import PlayerProjection
-from sffl.value import replacement_levels, assign_vorp, assign_dollars, _largest_remainder_allocation, _starter_counts
+from sffl.value import (replacement_levels, assign_vorp, assign_dollars,
+                        _largest_remainder_allocation, _starter_counts,
+                        _select_flex_starters, _sorted_flex_records)
 
 LG = load_league("leagues/sffl/2026.yaml")
 
@@ -257,3 +261,175 @@ def test_flat_pools_free_surplus_for_skill_players():
 
     assert rate_flat > rate_unflat
     assert flex_top_flat > flex_top_unflat
+
+
+# --- Lineup floors: 1 RB and 1 WR/TE per team, hard requirements at flex ---
+#
+# NOTE on direction: forcing extra RB (or WR/TE) into the starting set can
+# only ever raise the FLEX replacement level relative to the naive
+# position-blind top-`depth` cut, never lower it. Reserving a floor slot
+# for a player who was NOT going to make the naive cut necessarily bumps a
+# player who WAS going to make it (their points must be >= the naive
+# replacement's, by definition of "naive top-depth cut"), so the new best
+# excluded player can only be worth the same or more. Every test below that
+# exercises a binding floor is written and independently hand-verified
+# against that direction.
+
+def build_rb_floor_binds_pool():
+    """50 WR/TE outscore all 15 RB, so the natural top 60 holds only 10 RB -
+    below the 12-team floor - even though 15 RB exist overall (>=12, so the
+    floor is satisfiable, not a data failure)."""
+    pool = []
+    for i in range(50):
+        pool.append(player("wr%d" % i, "WR", 200 - i))
+    for i in range(15):
+        pool.append(player("rb%d" % i, "RB", 149 - i))
+    pool.append(player("tqb", "TQB", 300))
+    pool.append(player("k", "K", 50))
+    pool.append(player("d", "DST", 40))
+    return pool
+
+
+def build_wrte_floor_binds_pool():
+    """Mirror of build_rb_floor_binds_pool: 50 RB outscore 15 WR/TE (split
+    across both positions), so the natural top 60 holds only 10 WR/TE."""
+    pool = []
+    for i in range(50):
+        pool.append(player("rb%d" % i, "RB", 200 - i))
+    for i in range(15):
+        pos = "WR" if i % 2 == 0 else "TE"
+        pool.append(player("wt%d" % i, pos, 149 - i))
+    pool.append(player("tqb", "TQB", 300))
+    pool.append(player("k", "K", 50))
+    pool.append(player("d", "DST", 40))
+    return pool
+
+
+def test_rb_floor_binds():
+    """Natural top-60 flex holds only 10 RB; the floor forces 12 in.
+
+    Hand-verified: reserving the top 12 RB (149..138) and top 12 WR
+    (200..189), then filling the remaining 36 slots with the best
+    unselected players regardless of position, yields a selected set of
+    RB1-12 + WR1-48. The best player left out is WR49 at 152 points - NOT
+    the naive top-60 cut, which is RB11 at 139 points (the 61st-best player
+    overall). This assertion would fail against the pre-floor code, which
+    returns 139.0.
+    """
+    pool = build_rb_floor_binds_pool()
+    recs = _sorted_flex_records(pool)
+    selected = _select_flex_starters(LG, recs, 60)
+    rb_selected = sum(1 for i in selected if recs[i].pos == "RB")
+    assert rb_selected == LG.teams == 12
+
+    lv = replacement_levels(LG, pool, "starter")
+    naive_cut = sorted((p.stats["_season_points"] for p in pool
+                        if p.pos in ("RB", "WR", "TE")), reverse=True)[60]
+    assert naive_cut == pytest.approx(139.0)
+    assert lv["FLEX"] == pytest.approx(152.0)
+    assert lv["FLEX"] > naive_cut
+
+
+def test_wrte_floor_binds():
+    """Mirror of test_rb_floor_binds: natural top-60 holds only 10 WR/TE."""
+    pool = build_wrte_floor_binds_pool()
+    recs = _sorted_flex_records(pool)
+    selected = _select_flex_starters(LG, recs, 60)
+    wrte_selected = sum(1 for i in selected if recs[i].pos in ("WR", "TE"))
+    assert wrte_selected == LG.teams == 12
+
+    lv = replacement_levels(LG, pool, "starter")
+    naive_cut = sorted((p.stats["_season_points"] for p in pool
+                        if p.pos in ("RB", "WR", "TE")), reverse=True)[60]
+    assert naive_cut == pytest.approx(139.0)
+    assert lv["FLEX"] == pytest.approx(152.0)
+    assert lv["FLEX"] > naive_cut
+
+
+def test_neither_floor_binds_matches_naive_cut():
+    """When the natural top-depth already clears both floors, the floored
+    selection must be a no-op: same replacement level as the naive
+    position-blind top-`depth` cut. This pins the "inert on today's board"
+    property - the 2026 Draft Sharks extract's top 60 flex is 19 RB / 41
+    WR/TE, comfortably above 12/12, so this is the real-world case.
+    """
+    pool = []
+    for i in range(65):
+        pool.append(player("flex%d" % i, "RB" if i % 2 else "WR", 200 - 2 * i))
+    pool.append(player("tqb", "TQB", 300))
+    pool.append(player("k", "K", 50))
+    pool.append(player("d", "DST", 40))
+
+    lv = replacement_levels(LG, pool, "starter")
+    naive_cut = sorted((p.stats["_season_points"] for p in pool
+                        if p.pos in ("RB", "WR", "TE")), reverse=True)[60]
+    assert lv["FLEX"] == pytest.approx(naive_cut)
+
+
+def test_wr_and_te_share_one_floor_not_one_each():
+    """12 WR and zero TE must satisfy the single shared WR/TE floor - the
+    code must not demand 12 of each position separately."""
+    pool = []
+    for i in range(60):
+        pool.append(player("rb%d" % i, "RB", 200 - i))
+    for i in range(12):
+        pool.append(player("wr%d" % i, "WR", 140 - i))
+    pool.append(player("tqb", "TQB", 300))
+    pool.append(player("k", "K", 50))
+    pool.append(player("d", "DST", 40))
+
+    recs = _sorted_flex_records(pool)
+    selected = _select_flex_starters(LG, recs, 60)
+    wr_selected = sum(1 for i in selected if recs[i].pos == "WR")
+    te_selected = sum(1 for i in selected if recs[i].pos == "TE")
+    assert wr_selected == 12
+    assert te_selected == 0
+
+    # Must not raise even though TE is entirely absent.
+    lv = replacement_levels(LG, pool, "starter")
+    assert "FLEX" in lv
+
+
+def test_flex_pool_raises_for_too_few_rb():
+    pool = []
+    for i in range(5):
+        pool.append(player("rb%d" % i, "RB", 200 - i))
+    for i in range(60):
+        pool.append(player("wr%d" % i, "WR", 190 - i))
+    pool.append(player("tqb", "TQB", 300))
+    pool.append(player("k", "K", 50))
+    pool.append(player("d", "DST", 40))
+
+    with pytest.raises(ValueError, match=r"only 5 RB.*requires 12"):
+        replacement_levels(LG, pool, "starter")
+
+
+def test_flex_pool_raises_for_too_few_wrte():
+    pool = []
+    for i in range(60):
+        pool.append(player("rb%d" % i, "RB", 200 - i))
+    for i in range(5):
+        pool.append(player("wr%d" % i, "WR", 140 - i))
+    pool.append(player("tqb", "TQB", 300))
+    pool.append(player("k", "K", 50))
+    pool.append(player("d", "DST", 40))
+
+    with pytest.raises(ValueError, match=r"only 5 WR/TE.*requires 12"):
+        replacement_levels(LG, pool, "starter")
+
+
+def test_flex_depth_below_twice_teams_raises():
+    """A league config where flex_slots is too small for the floors to fit
+    (depth < 2 * teams) must raise, naming the depth and the requirement."""
+    lg_tiny_flex = copy.copy(LG)
+    lg_tiny_flex.flex_slots = 1  # depth = teams * 1 = 12, needs >= 24
+
+    pool = []
+    for i in range(20):
+        pool.append(player("flex%d" % i, "RB" if i % 2 else "WR", 100 - i))
+    pool.append(player("tqb", "TQB", 300))
+    pool.append(player("k", "K", 50))
+    pool.append(player("d", "DST", 40))
+
+    with pytest.raises(ValueError, match=r"depth 12 is less than 2 \* lg\.teams \(24\)"):
+        replacement_levels(lg_tiny_flex, pool, "starter")
