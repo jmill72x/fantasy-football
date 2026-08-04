@@ -73,16 +73,29 @@ def cmd_value(args):
         print("  %-5s %8.1f pts" % (name, levels[name]))
     print("  $%.4f per VORP point\n" % rate)
 
+    # _spread_rec_yds / _spread_rush_yds / _n_sources are only populated when
+    # the pool came through sffl.consensus.merge (multi-source agreement
+    # spread). Nothing currently wires build_pool's output through merge, so
+    # detect it empirically instead of assuming: if not one single record in
+    # the pool carries any "_spread_" key, consensus was never run, and the
+    # spread column has not been measured - it is not "measured as zero."
+    # Printing 0.0/1 in that case reads as "the analysts agree" when the
+    # truth is "nobody asked a second analyst," so we say so explicitly and
+    # print an empty field instead of a fabricated zero.
+    consensus_ran = any(any(k.startswith("_spread_") for k in p.stats) for p in pool)
+
     pool.sort(key=lambda p: -p.stats["_dollars"])
     print("top 25 by value:")
+    if not consensus_ran:
+        print("  (consensus not wired for this run - spread unavailable, single source only)")
     for i, p in enumerate(pool[:25], 1):
-        # _spread_rec_yds / _spread_rush_yds are only populated when the pool
-        # came through sffl.consensus.merge (multi-source agreement spread).
-        # This command builds a single-source pool, so spread is always 0.0
-        # here today - it is not a measured "no disagreement" signal.
-        spread = p.stats.get("_spread_rec_yds", 0.0) + p.stats.get("_spread_rush_yds", 0.0)
-        print("  %2d. $%5.1f  %-4s %-24s vorp %6.1f  spread %5.1f"
-              % (i, p.stats["_dollars"], p.pos, p.name[:24], p.stats["_vorp"], spread))
+        if consensus_ran:
+            spread = p.stats.get("_spread_rec_yds", 0.0) + p.stats.get("_spread_rush_yds", 0.0)
+            print("  %2d. $%5.1f  %-4s %-24s vorp %6.1f  spread %5.1f"
+                  % (i, p.stats["_dollars"], p.pos, p.name[:24], p.stats["_vorp"], spread))
+        else:
+            print("  %2d. $%5.1f  %-4s %-24s vorp %6.1f"
+                  % (i, p.stats["_dollars"], p.pos, p.name[:24], p.stats["_vorp"]))
 
     if args.out:
         with open(args.out, "w", newline="") as fh:
@@ -90,16 +103,22 @@ def cmd_value(args):
             w.writerow(["name", "team", "pos", "games", "season_points",
                         "vorp", "dollars", "spread", "n_sources"])
             for p in pool:
-                # See note above: spread is 0.0 for every row until this
-                # command is wired up to consensus.merge.
-                spread = (p.stats.get("_spread_rec_yds", 0.0)
-                          + p.stats.get("_spread_rush_yds", 0.0))
+                if consensus_ran:
+                    spread = round(p.stats.get("_spread_rec_yds", 0.0)
+                                   + p.stats.get("_spread_rush_yds", 0.0), 2)
+                    n_sources = int(p.stats.get("_n_sources", 1))
+                else:
+                    # Empty, not 0.0/1: this run never measured a spread, so
+                    # writing zeros would claim "measured as zero agreement"
+                    # instead of "not measured."
+                    spread = ""
+                    n_sources = ""
                 w.writerow([p.name, p.team, p.pos, p.games,
                             round(p.stats.get("_season_points", 0.0), 2),
                             round(p.stats.get("_vorp", 0.0), 2),
                             round(p.stats.get("_dollars", 0.0), 2),
-                            round(spread, 2),
-                            int(p.stats.get("_n_sources", 1))])
+                            spread,
+                            n_sources])
         print("\nwrote %s" % args.out)
     return 0
 
