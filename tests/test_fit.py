@@ -125,9 +125,13 @@ def test_skill_misspellings_resolve():
 
 def test_players_genuinely_absent_from_the_extract_stay_unresolved():
     # Joe Mixon and Ricky Pearsall are not in the 2026 Draft Sharks extract.
-    # They must NOT be force-matched onto a similarly spelled player.
+    # They must NOT be force-matched onto a similarly spelled player. Jordan
+    # Mason was genuinely bought for $2 (his own real price, not Joe Mixon's
+    # $1); pin the exact value so an aliasing bug that landed Mixon's $1 on
+    # Mason - which Task 2's max() collision rule would silently accept as
+    # max(2.0, 1.0) == 2.0 - cannot hide behind a "!= 1.0" check.
     prices = load_prices(REAL_PRICES)
-    assert "jordan mason" not in prices or prices.get("jordan mason") != 1.0
+    assert prices["jordan mason"] == 2.0
     assert "erick all" not in prices or prices.get("erick all") != 13.0
 
 
@@ -186,17 +190,25 @@ TQB_COLLISION_STARTERS = "tests/fixtures/tqb_starters_collision.yaml"
 
 def test_a_franchise_with_two_colliding_tqb_prices_keeps_the_higher_price():
     # Two distinct quarterback names ("Quarterback A", "Quarterback B") are
-    # mapped to the same synthetic franchise "ZZZ" by a fixture starter map,
-    # so both rows collapse onto the same output key regardless of the real
-    # 2025 data, which never collides. Checked in both file orders so the
-    # test would fail under "last write wins" as well as "first write wins" -
-    # only max() passes both.
+    # mapped to the same franchise "JAC" by a fixture starter map, so both
+    # rows collapse onto the same output key regardless of the real 2025
+    # data, which never collides. Checked in both file orders so the test
+    # would fail under "last write wins" as well as "first write wins" - only
+    # max() passes both.
     higher_first = load_prices("tests/fixtures/prices_tqb_collision_high_first.csv",
                                 tqb_starters_path=TQB_COLLISION_STARTERS)
     lower_first = load_prices("tests/fixtures/prices_tqb_collision_low_first.csv",
                                tqb_starters_path=TQB_COLLISION_STARTERS)
-    assert higher_first.get("zzz") == 30.0
-    assert lower_first.get("zzz") == 30.0
+    assert higher_first.get("jac") == 30.0
+    assert lower_first.get("jac") == 30.0
+
+
+def test_tqb_starters_rejects_an_unknown_franchise_code():
+    # "PHIL" (should be "PHI") would otherwise join nothing and silently drop
+    # a TQB price from the fit with no signal anywhere.
+    with pytest.raises(ValueError, match="PHIL"):
+        load_prices(REAL_PRICES,
+                    tqb_starters_path="tests/fixtures/tqb_starters_bad_code.yaml")
 
 
 def test_fit_reports_error_per_pool():
