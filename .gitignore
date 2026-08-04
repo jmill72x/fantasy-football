@@ -20,3 +20,6 @@ __pycache__/
 
 # Weekly stat lines collected from CBS
 data/weekly/
+
+# Subagent-driven-development scratch workspace
+.superpowers/
