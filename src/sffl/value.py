@@ -3,6 +3,12 @@
 RB, WR and TE form ONE pool - they are the same position in this league and
 compete for the same five flexible lineup slots. TQB, K and DST each have exactly
 one starting slot per team.
+
+Any pool named in the league YAML's `flat_priced_pools` (see `LeagueProfile.
+flat_priced_pools` in `sffl.league`) is priced at a fixed dollar amount instead
+of by VORP: `assign_vorp` silently zeroes `_vorp` for its members and
+`assign_dollars` writes the configured price directly, excluding them from the
+surplus split entirely.
 """
 
 FLEX = ("RB", "WR", "TE")
