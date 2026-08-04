@@ -101,3 +101,23 @@ def test_missing_dollars_raises():
     with pytest.raises(ValueError) as e:
         build_rows(LG, [p], load_byes(BYES))
     assert "_dollars" in str(e.value)
+
+
+def test_a_small_group_tied_on_dollars_shares_a_tier():
+    # fewer members than n_tiers, but all flat-priced - must not each get
+    # their own tier just because the early-return path indexes by position
+    pool = [player("k%d" % i, "K", "GB", 1.0) for i in range(3)]
+    assign_tiers(pool, n_tiers=6)
+    assert [p.stats["_tier"] for p in pool] == [1, 1, 1]
+
+
+def test_rows_break_dollar_ties_by_season_points_then_name():
+    # equal _dollars (as K/DST always are) must not fall back to whatever
+    # order the pool happened to be built in
+    pool = [
+        player("charlie", "K", "GB", 1.0, pts=50.0),
+        player("alice", "K", "KC", 1.0, pts=80.0),
+        player("bob", "K", "NO", 1.0, pts=80.0),
+    ]
+    rows = build_rows(LG, pool, load_byes(BYES))
+    assert [r.name for r in rows] == ["alice", "bob", "charlie"]
