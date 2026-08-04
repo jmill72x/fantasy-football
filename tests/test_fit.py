@@ -67,3 +67,25 @@ def test_players_with_no_observed_price_are_excluded_from_the_fit():
     pool += filler_players()
     rep = score_fit(LG, pool, load_prices(PRICES), "starter")
     assert rep["n"] == 1
+
+
+def test_score_fit_reports_zero_matches_without_raising():
+    # None of these names appear in prices_sample.csv. score_fit must report the
+    # zero-match fit honestly rather than raise, so a caller inspecting `n` can see it.
+    pool = [player("Totally Unknown Player", "WR", 200)]
+    pool += filler_players()
+    rep = score_fit(LG, pool, load_prices(PRICES), "starter")
+    assert rep["n"] == 0
+    assert rep["mae"] == float("inf")
+    assert rep["rmse"] == float("inf")
+    assert rep["top10_mae"] == float("inf")
+
+
+def test_choose_policy_raises_when_no_player_matches_any_price():
+    # Both policies see zero matches here, so there is no evidence to pick a
+    # winner on. choose_policy must raise rather than arbitrarily return
+    # "starter" because Python's min() ties on (inf, inf).
+    pool = [player("Totally Unknown Player", "WR", 200)]
+    pool += filler_players()
+    with pytest.raises(ValueError, match="identity/aliases.yaml"):
+        choose_policy(LG, pool, load_prices(PRICES))
