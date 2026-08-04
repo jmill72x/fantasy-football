@@ -131,6 +131,10 @@ class Sheet:
         c.rect(x + 176, y + 1.5, 33, ROW_H - 3, stroke=1, fill=1)
 
     def board(self, title, subtitle, players, key, bookmark):
+        if not players:
+            raise ValueError(
+                "render_pdf: no rows for section %r; a page/bookmark would "
+                "silently vanish rather than render" % title)
         per_col = self.rows_per_col()
         per_page = per_col * 2
         first = True
@@ -312,7 +316,13 @@ def render_pdf(lg, rows, path, subtitle=""):
     if not rows:
         raise ValueError("render_pdf: rows is empty; nothing to render")
 
-    overall = sorted(rows, key=lambda r: -r.my_dollars)
+    # Overall board is TQB/RB/WR/TE only - K and DST are flat-priced $1
+    # fillers that appear only together on their own page. Mixing them in
+    # here would also put all six palette colours on one page, a
+    # combination the colourblind validation (see COLORS above) never
+    # covered - it was deliberately validated as two disjoint sets.
+    overall = sorted([r for r in rows if r.pos in ("TQB", "RB", "WR", "TE")],
+                      key=lambda r: -r.my_dollars)
     tqb = sorted([r for r in rows if r.pos == "TQB"], key=lambda r: -r.my_dollars)
     rb = sorted([r for r in rows if r.pos == "RB"], key=lambda r: -r.my_dollars)
     wrte = sorted([r for r in rows if r.pos in ("WR", "TE")], key=lambda r: -r.my_dollars)
