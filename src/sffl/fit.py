@@ -16,7 +16,7 @@ from typing import Dict
 import yaml
 
 from sffl.identity import Resolver, normalize_name
-from sffl.value import assign_dollars, assign_vorp, replacement_levels
+from sffl.value import POOLS, _pool_of, assign_dollars, assign_vorp, replacement_levels
 
 POLICIES = ("starter", "draftable")
 
@@ -80,14 +80,26 @@ def score_fit(lg, pool, prices, policy):
     assign_dollars(lg, pool)
 
     pairs = []
+    by_pool_pairs = dict((name, []) for name in POOLS)
     for p in pool:
         key = normalize_name(p.name)
         if key in prices:
             pairs.append((p.stats["_dollars"], prices[key]))
+            by_pool_pairs[_pool_of(p.pos)].append(
+                (p.stats["_dollars"], prices[key]))
+
+    by_pool = {}
+    for name, pool_pairs in by_pool_pairs.items():
+        if not pool_pairs:
+            by_pool[name] = {"n": 0, "mae": 0.0}
+            continue
+        errs = [abs(model - actual) for model, actual in pool_pairs]
+        by_pool[name] = {"n": len(pool_pairs), "mae": sum(errs) / len(errs)}
 
     if not pairs:
         return {"policy": policy, "n": 0, "mae": float("inf"),
-                "rmse": float("inf"), "top10_mae": float("inf")}
+                "rmse": float("inf"), "top10_mae": float("inf"),
+                "by_pool": by_pool}
 
     errs = [abs(model - actual) for model, actual in pairs]
     sq = [(model - actual) ** 2 for model, actual in pairs]
@@ -100,6 +112,7 @@ def score_fit(lg, pool, prices, policy):
         "mae": sum(errs) / len(errs),
         "rmse": (sum(sq) / len(sq)) ** 0.5,
         "top10_mae": sum(top_errs) / len(top_errs),
+        "by_pool": by_pool,
     }
 
 
