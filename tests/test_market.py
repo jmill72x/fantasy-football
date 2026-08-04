@@ -3,6 +3,7 @@ import pytest
 from sffl.league import load_league
 from sffl.market import assign_expected_prices, expected_price, fit_price_curve
 from sffl.schema import PlayerProjection
+from sffl.value import _pool_of, _starter_counts
 
 LG = load_league("leagues/sffl/2026.yaml")
 
@@ -83,9 +84,15 @@ def test_intercept_below_one_dollar_raises():
 
 
 def build_board():
-    """156 rostered spots' worth of players, plus filler below replacement."""
+    """Well past total_spots() (156) worth of players - most of the FLEX
+    pool is genuine filler priced at the $1 replacement floor, like a real
+    extract where hundreds of players are valued but only total_spots() get
+    rostered. 200 FLEX + 12 TQB + 12 K + 12 DST = 236 records, 80 wide of
+    total_spots()."""
     pool = [player("flex%d" % i, "RB" if i % 2 else "WR", 50.0 - 0.3 * i)
             for i in range(120)]
+    pool += [player("filler%d" % i, "RB" if i % 2 else "WR", 1.0)
+             for i in range(80)]
     pool += [player("tqb%d" % i, "TQB", 40.0 - 1.0 * i) for i in range(12)]
     pool += [player("k%d" % i, "K", 1.0) for i in range(12)]
     pool += [player("d%d" % i, "DST", 1.0) for i in range(12)]
@@ -93,12 +100,26 @@ def build_board():
 
 
 def test_expected_prices_exhaust_the_league_capital():
+    # The rostered set is NOT "top total_spots() by _est_price": the curve
+    # floors every non-flat raw estimate above $1 (fit_price_curve rejects
+    # a < 1), so flat players (pinned to exactly $1) are never tied with,
+    # let alone ranked above, a non-flat player and a naive top-total_spots()
+    # selection would never include a single K or DST. The rostered set is
+    # the flat spots the league actually fills (one K + one DST per team) at
+    # their flat price, plus the top total_spots() - flat_spots NON-FLAT
+    # estimates - see assign_expected_prices' docstring.
     pool = build_board()
     curve = fit_price_curve(COMPRESSION_PAIRS)
     assign_expected_prices(LG, pool, curve)
-    spent = sum(sorted((p.stats["_est_price"] for p in pool),
-                       reverse=True)[:LG.total_spots()])
-    assert spent == pytest.approx(LG.total_capital(), abs=1.0)
+
+    flat_spots = sum(_starter_counts(LG)[name] for name in LG.flat_priced_pools)
+    surplus_spots = LG.total_spots() - flat_spots
+    non_flat = [p for p in pool if _pool_of(p.pos) not in LG.flat_priced_pools]
+    top_non_flat = sorted((p.stats["_est_price"] for p in non_flat),
+                          reverse=True)[:surplus_spots]
+
+    rostered = sum(top_non_flat) + flat_spots * 1.0
+    assert rostered == pytest.approx(LG.total_capital(), abs=1.0)
 
 
 def test_flat_priced_pools_keep_their_flat_price():
@@ -139,13 +160,18 @@ def test_missing_dollars_raises_rather_than_defaulting():
 class _AllFlatLeague(object):
     """Degenerate league stub where every pool is flat-priced.
 
-    Exists only to force every top-`total_spots()` raw estimate to exactly
-    $1 (so surplus_raw == 0) without depending on floating-point-exact
-    equality out of an OLS fit. `assign_expected_prices` only needs
-    `flat_priced_pools`, `total_capital()`, `total_spots()` and `surplus()`
-    - see the "Interfaces you depend on" contract in the task brief.
+    Exists only to force the non-flat raw pool to be empty (so surplus_raw
+    == 0 with no floating-point-exact equality needed out of an OLS fit).
+    `assign_expected_prices` needs `flat_priced_pools`, `total_capital()`,
+    `total_spots()`, `surplus()`, plus - since the flat_spots fix - `teams`
+    and `flex_slots` for `sffl.value._starter_counts`. Since every pool here
+    is flat, the exact starter-count numbers don't matter for this test:
+    with no non-flat players at all, the non-flat raw pool is empty and
+    `top` is `[]` regardless of `surplus_spots`.
     """
     flat_priced_pools = {"TQB": 1.0, "FLEX": 1.0, "K": 1.0, "DST": 1.0}
+    teams = 5
+    flex_slots = 1
 
     def total_capital(self):
         return 30.0
