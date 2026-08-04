@@ -4,6 +4,8 @@ from typing import Dict, List, Tuple
 
 import yaml
 
+from sffl.value import POOLS
+
 
 class LeagueProfile(object):
     def __init__(self, raw):
@@ -24,6 +26,30 @@ class LeagueProfile(object):
         self.bands = {}  # type: Dict[str, List[Tuple[int, int, int]]]
         for key, rows in raw["bands"].items():
             self.bands[key] = [(int(a), int(b), int(c)) for a, b, c in rows]
+        self.flat_priced_pools = {}  # type: Dict[str, float]
+        for pool_name, price in (raw.get("flat_priced_pools") or {}).items():
+            name = str(pool_name).strip().upper()
+            if name not in POOLS:
+                raise ValueError(
+                    "flat_priced_pools names %r, which is not a valid pool; "
+                    "expected one of %s" % (pool_name, sorted(POOLS)))
+            price = float(price)
+            # surplus() assumes every roster spot costs exactly $1 before the
+            # VORP-proportional split; a flat price other than $1 would
+            # silently overspend (or underspend) the league budget by
+            # teams * roster_size * (price - 1) with no error anywhere. Raise
+            # rather than teach surplus() to account for it, since every
+            # flat-priced pool this league has ever used is $1 and a future
+            # non-$1 price is exactly the kind of change that deserves a
+            # deliberate code change, not silent acceptance.
+            if price != 1.0:
+                raise ValueError(
+                    "flat_priced_pools[%r] = %r, but only a flat price of "
+                    "exactly 1 is supported - surplus() assumes every roster "
+                    "spot costs $1 before the VORP split, so any other flat "
+                    "price would silently overspend or underspend the "
+                    "league budget" % (pool_name, price))
+            self.flat_priced_pools[name] = price
 
     def total_capital(self):
         return self.teams * self.budget

@@ -1,0 +1,6 @@
+# Deliberately invalid starter map for tests/test_fit.py's franchise-code
+# validation test. "PHIL" is not a real NFL franchise code (the correct code
+# is "PHI") - this fixture exists to prove a typo like this is caught at
+# load time instead of silently joining nothing and dropping a TQB price.
+starters:
+  "Jalen Hurts": "PHIL"

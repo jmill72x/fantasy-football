@@ -1,6 +1,16 @@
-from sffl.league import load_league
+import copy
+
+import pytest
+import yaml
+
+from sffl.league import LeagueProfile, load_league
 
 PROFILE = "leagues/sffl/2026.yaml"
+
+
+def _raw():
+    with open(PROFILE) as fh:
+        return yaml.safe_load(fh)
 
 
 def test_loads_structure():
@@ -31,3 +41,26 @@ def test_sack_rule_present():
     assert lg.sack_rule["threshold"] == 3
     assert lg.sack_rule["threshold_points"] == 3
     assert lg.sack_rule["per_sack_after"] == 1
+
+
+def test_flat_priced_pools_loads_configured_value():
+    lg = load_league(PROFILE)
+    assert lg.flat_priced_pools == {"K": 1.0, "DST": 1.0}
+
+
+def test_flat_priced_pools_rejects_an_unknown_pool_name():
+    # A typo like "KK" for "K" must not silently revert kickers to real
+    # pricing with no error - it must be caught at load time.
+    raw = copy.deepcopy(_raw())
+    raw["flat_priced_pools"] = {"KK": 1}
+    with pytest.raises(ValueError, match="KK"):
+        LeagueProfile(raw)
+
+
+def test_flat_priced_pools_rejects_a_non_dollar_price():
+    # A flat price other than $1 would silently overspend the league budget,
+    # because surplus() assumes every roster spot costs exactly $1.
+    raw = copy.deepcopy(_raw())
+    raw["flat_priced_pools"] = {"K": 3, "DST": 3}
+    with pytest.raises(ValueError, match="only a flat price of exactly 1"):
+        LeagueProfile(raw)
