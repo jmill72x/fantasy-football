@@ -214,3 +214,43 @@ def test_calibrated_non_dst_player_gets_zero_defense_points_from_populated_curve
                          stats=dict(rec_yds=850.0), raw_name="WR")
     # 850 / 17 = 50/game -> rec_yds band [50,74] = 1 point/game * 17 = 17
     assert score_season_calibrated(lg, p, curves) == pytest.approx(17.0)
+
+
+def test_calibrated_kicker_gets_zero_phantom_pass_points_from_qb_curve():
+    """Regression for CRITICAL 1: expected_points CLAMPS below its lowest
+    anchor, band_points FLOORS to 0. A kicker's per-game mean for pass_yds
+    and pass_cmp is always 0.0 (the stat is absent from a kicker's line).
+    Feeding that 0.0 into a pass_yds/pass_cmp curve built only from TQB
+    weeks - whose lowest observed anchor sits well above zero - must NOT
+    clamp to that anchor and pay the kicker phantom season points.
+
+    Measured before the fix: a pure kicker worth 102 real points scored
+    174.00 (+72.00) through score_season_calibrated with curves whose
+    lowest pass_yds/pass_cmp anchors were (205.765, 2.0) and (18.706, 2.235).
+    """
+    lg = LG
+    curves = {
+        "pass_yds": [(205.765, 2.0), (400.0, 4.0)],
+        "pass_cmp": [(18.706, 2.235), (30.0, 3.0)],
+    }
+    p = PlayerProjection(name="K", team="DAL", pos="K", source="t",
+                         source_year=2026, games=17,
+                         stats=dict(xp_made=34.0, fg_40_49=17.0), raw_name="K")
+    # 34 XP at 1 + 17 FG at 4 = 102, unaffected by a curve for a stat a
+    # kicker never records.
+    assert score_season_calibrated(lg, p, curves) == pytest.approx(102.0)
+
+
+def test_calibrated_kicker_scores_correctly_against_a_fully_populated_curve_set():
+    """Coverage gap: every other calibrated test exercises the curve path
+    with only the single stat under test populated. Here every banded stat
+    sffl.league declares has a non-trivial (non-zero-anchored) curve, and
+    the player (a kicker) produces none of the banded stats at all - only
+    linear categories (XP, FG). Nothing but the linear total should survive.
+    """
+    lg = LG
+    curves = {stat: [(50.0, 5.0), (100.0, 8.0)] for stat in lg.bands}
+    p = PlayerProjection(name="K", team="DAL", pos="K", source="t",
+                         source_year=2026, games=17,
+                         stats=dict(xp_made=34.0, fg_40_49=17.0), raw_name="K")
+    assert score_season_calibrated(lg, p, curves) == pytest.approx(102.0)
