@@ -92,3 +92,28 @@ def test_choose_policy_raises_when_no_player_matches_any_price():
     pool += filler_players()
     with pytest.raises(ValueError, match="identity/aliases.yaml"):
         choose_policy(LG, pool, load_prices(PRICES))
+
+
+REAL_PRICES = "data/league/auction-rosters-2025.csv"
+
+
+def test_defense_roster_spellings_resolve_to_franchise_names():
+    prices = load_prices(REAL_PRICES)
+    for franchise in ("philadelphia eagles", "pittsburgh steelers",
+                      "minnesota vikings", "houston texans"):
+        assert franchise in prices, franchise
+
+
+def test_skill_misspellings_resolve():
+    prices = load_prices(REAL_PRICES)
+    for name in ("evan mcpherson", "tetairoa mcmillan", "treveyon henderson",
+                 "jaxon smith njigba", "jauan jennings", "wil lutz"):
+        assert name in prices, name
+
+
+def test_players_genuinely_absent_from_the_extract_stay_unresolved():
+    # Joe Mixon and Ricky Pearsall are not in the 2026 Draft Sharks extract.
+    # They must NOT be force-matched onto a similarly spelled player.
+    prices = load_prices(REAL_PRICES)
+    assert "jordan mason" not in prices or prices.get("jordan mason") != 1.0
+    assert "erick all" not in prices or prices.get("erick all") != 13.0
