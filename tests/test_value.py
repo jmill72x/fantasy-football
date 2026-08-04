@@ -2,7 +2,7 @@ import pytest
 
 from sffl.league import load_league
 from sffl.schema import PlayerProjection
-from sffl.value import replacement_levels, assign_vorp, _largest_remainder_allocation, _starter_counts
+from sffl.value import replacement_levels, assign_vorp, assign_dollars, _largest_remainder_allocation, _starter_counts
 
 LG = load_league("leagues/sffl/2026.yaml")
 
@@ -135,3 +135,39 @@ def test_assign_vorp_raises_for_missing_pool():
     levels = {"FLEX": 50.0}
     with pytest.raises(ValueError, match="has players but is missing from replacement levels"):
         assign_vorp(LG, pool, levels)
+
+
+def test_dollars_exhaust_the_league_budget():
+    pool = build_pool()
+    lv = replacement_levels(LG, pool, "starter")
+    assign_vorp(LG, pool, lv)
+    assign_dollars(LG, pool)
+    # every roster spot costs at least $1, and the surplus is fully distributed
+    spent = sum(sorted((p.stats["_dollars"] for p in pool), reverse=True)[:LG.total_spots()])
+    assert spent == pytest.approx(LG.total_capital(), abs=1.0)
+
+
+def test_zero_vorp_players_cost_one_dollar():
+    pool = build_pool()
+    lv = replacement_levels(LG, pool, "starter")
+    assign_vorp(LG, pool, lv)
+    assign_dollars(LG, pool)
+    replacement = [p for p in pool if p.stats["_vorp"] == 0.0]
+    assert replacement, "expected some players at or below replacement"
+    assert all(p.stats["_dollars"] == pytest.approx(1.0) for p in replacement)
+
+
+def test_rate_is_positive_and_returned():
+    pool = build_pool()
+    lv = replacement_levels(LG, pool, "starter")
+    assign_vorp(LG, pool, lv)
+    rate = assign_dollars(LG, pool)
+    assert rate > 0
+
+
+def test_a_pool_with_no_vorp_does_not_divide_by_zero():
+    pool = [player("x", "RB", 0)]
+    assign_vorp(LG, pool, {"FLEX": 0.0})
+    rate = assign_dollars(LG, pool)
+    assert rate == 0.0
+    assert pool[0].stats["_dollars"] == pytest.approx(1.0)
