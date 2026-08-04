@@ -58,3 +58,27 @@ def test_tqb_starters_flag_is_accepted_and_overridable(capsys):
                "--policy", "fit", "--prices", PRICES,
                "--tqb-starters", "identity/tqb-2025-starters.yaml"])
     assert rc == 0
+
+
+def test_est_price_column_appears_when_prices_are_supplied(tmp_path):
+    path = str(tmp_path / "board.csv")
+    rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
+               "--policy", "starter", "--prices", PRICES, "--out", path])
+    assert rc == 0
+    with open(path) as fh:
+        header = fh.readline()
+    assert "est_price" in header
+
+
+def test_est_price_is_blank_without_prices(tmp_path):
+    path = str(tmp_path / "board.csv")
+    rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
+               "--policy", "starter", "--out", path])
+    assert rc == 0
+    with open(path) as fh:
+        lines = fh.read().splitlines()
+    header = lines[0].split(",")
+    idx = header.index("est_price")
+    # every data row leaves it empty rather than reporting a fabricated 0 or a
+    # copy of dollars
+    assert all(row.split(",")[idx] == "" for row in lines[1:])
