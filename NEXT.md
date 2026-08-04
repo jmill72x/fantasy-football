@@ -10,8 +10,8 @@ Auction cheatsheet pipeline for the STRIPES Fantasy Football League (CBS). Four 
 | | Status |
 |---|---|
 | **Plan 1 — scoring foundation & ingest** | ✅ merged, 64 tests green |
-| **Plan 2 — value engine (VORP → dollars)** | 📋 written, not started |
-| **Plan 3 — Excel + PDF renderers** | not written — write after plan 2 lands |
+| **Plan 2 — value engine (VORP → dollars)** | ✅ complete, 120 tests green |
+| **Plan 3 — Excel + PDF renderers** | not written — write next |
 | **Plan 4 — silent auction planner** | not written — consumes plan 2 values |
 
 Verify state in one command:
@@ -44,7 +44,7 @@ Jeff has marked up the PDF on the iPad and printed the Excel.
 Update this block at the end of every session so the next one can resume blind.
 
 - [x] Plan 1 — scoring foundation & ingest (merged, 64 tests)
-- [ ] TODO A — execute plan 2, the value engine
+- [x] TODO A — execute plan 2, the value engine (all 8 tasks, 120 tests)
 - [ ] Write plan 3 (renderers), then execute it
 - [ ] Write plan 4 (silent auction planner), then execute it
 - [ ] TODO B — widen the weekly collection to ~120 players
@@ -57,6 +57,7 @@ Work top to bottom. Each unchecked box is the next thing to do.
 | Date | What |
 |---|---|
 | 2026-08-03 | Plan 1 merged. Extracts archived to iCloud as insurance. |
+| 2026-08-04 | Plan 2 complete — real priced board generated from archived extracts. |
 | **by 2026-08-10** | **Full dry run complete** — plans 2-4 built and both artifacts generated from today's data. |
 | **week of 2026-08-23** | **Re-pull fresh extracts** from Draft Sharks and Footballguys for final rankings. Confirm Draft Sharks still reads **AUCTION**, not Snake — every sync imports as Snake and a reverted setting yields a plausible file with a worthless value column. |
 | **2026-08-26** | **AUCTION.** Excel and PDF must be generated and printed/loaded before this. |
@@ -76,28 +77,74 @@ until after the refresh — build them against today's archived extracts.
 - **The repo is public.** `data/extracts/` and `data/weekly/` are gitignored because they
   hold licensed vendor and CBS data. Never commit from either.
 - **Python 3.9.6 only.** No `match`, no `int | None`. Use the venv at `.venv/`.
+- **A zero is not a no-op for `def_pa` and `def_ya`.** Both band the value `0` at their
+  MAXIMUM (6 points). Any code that loops over `lg.bands` for every player pays a phantom
+  shutout to every receiver and kicker. `score_game` gates its defense block on
+  `pos == "DST"` for exactly this reason, and the same trap was caught twice more during
+  plan 2 — once in `build_curves`, once in `score_season_calibrated`. Both are now gated
+  by `calibrate.STAT_POSITIONS`. Do not "simplify" those gates away.
+- **`band_points` floors, `expected_points` clamps.** Below the first band, `band_points`
+  returns 0; `expected_points` returns the curve's lowest anchor. Swapping one for the
+  other without a position gate paid every non-passer 72 phantom season points. Producer
+  and consumer must agree on `STAT_POSITIONS`.
+- **Replacement level is `starter`, fitted, not chosen.** See the table above.
 
-## TODO A — execute plan 2: the value engine
+## TODO A — DONE. Plan 2 results (2026-08-04)
 
-*(TODO A and TODO B are the next two things to DO. They are not plans 3 and 4 — the
-numbered plans are the implementation roadmap above. TODO A executes plan 2; TODO B is
-a data-collection chore that produces no code.)*
+*(TODO B below is a data-collection chore that produces no code. The numbered plans are
+the implementation roadmap above.)*
 
+The value engine is built and works on real data. What you can run today:
 
-**Plan:** `docs/superpowers/plans/2026-08-03-value-engine.md` — 8 tasks, 44 steps, all
-with real code.
+```bash
+PYTHONPATH=src ./.venv/bin/python -m sffl.cli value \
+  --source sources/draftsharks.yaml \
+  --file "data/extracts/Draft Sharks/2026/rankings (1).csv" --year 2026 \
+  --policy fit --prices data/league/auction-rosters-2025.csv \
+  --curves calibration/2025.yaml --out board.csv
+```
 
-Builds: empirical calibration curves replacing the banding approximation, multi-source
-consensus with the spread preserved, replacement level **fitted against 156 real 2025
-prices** rather than chosen, VORP-to-dollars, and a `value` CLI command.
+**The replacement-level open question is now answered empirically.** Fitted against 108
+matched 2025 prices:
 
-Ready to run now. `data/weekly/2025/` already holds a starter sample (regenerate with
-`./.venv/bin/python poc/seed_weekly.py` — 18 players, 301 player-weeks). Tasks 4-8 do
-not need weekly data at all.
+| policy | mae | rmse | top10_mae |
+|---|---|---|---|
+| **starter** (chosen) | $5.92 | $9.12 | **$11.68** |
+| draftable | $5.88 | $8.38 | $18.21 |
 
-Execute with `superpowers:subagent-driven-development`, on a feature branch created
-**in place** rather than a worktree — `data/extracts/` is gitignored and the real-data
-verification steps need it.
+`draftable` wins slightly on overall error but is far worse at the top of the board, and
+the top is where a mispriced board costs real money — so `choose_policy` tiebreaks on
+`top10_mae` and picks **starter**. Do not re-litigate this without new price data.
+
+Replacement levels under starter: DST 63.9, FLEX 63.8, K 141.1, TQB 239.9 pts, at
+**$0.6465 per VORP point**.
+
+New modules: `weekly.py`, `calibrate.py`, `consensus.py`, `value.py`, `fit.py`, plus
+`score_season_calibrated` in `pool.py` and the `value` CLI command.
+`calibration/2025.yaml` is committed derived data (aggregate curve points only, no
+player data) generated by `poc/build_calibration.py`.
+
+### Things plan 3 must know
+
+- **`_dollars` is the number to render.** Also on each record: `_season_points`, `_vorp`.
+- **`_spread_<stat>` and `_n_sources` are NOT populated yet.** Only `consensus.merge`
+  writes them and nothing calls it — see the wiring gap below. The CLI now writes an
+  **empty string**, not `0.0`, for those columns so a zero can never be mistaken for a
+  measurement. Plan 3 must handle empty.
+- **A kicker still lands in the top 25 by dollar value** (~$20). No DST does anymore.
+  Worth a human sanity-check against real market pricing before the auction — it may be
+  correct (this league pays kickers well) or it may mean K replacement level is too low.
+
+### Known gaps carried forward
+
+1. **`consensus.py` is written, tested, and wired to nothing.** The `value` command reads
+   one extract. Merging Draft Sharks + Footballguys into a consensus with the spread
+   preserved is the single biggest remaining edge and is not yet reachable from the CLI.
+2. **The calibration curves rest on 18 players** (301 player-weeks) — that is TODO B.
+   `expected_points` clamps silently outside the observed range, and `rec_yds` currently
+   interpolates a straight line across a 66-yard gap with no observations in it, which is
+   where most of the board lives.
+3. Sacks are still uncorrected (see Open questions).
 
 ## TODO B — widen the weekly collection (a data chore, NOT a plan)
 
@@ -123,3 +170,5 @@ curves come from 18 players or 120, and widening later changes no code.
    a season. Pinned by a characterization test. Needs a threshold-aware curve.
 3. Which subscription to buy. Draft Sharks and Footballguys both export per-stat
    projections and are already ingested. See `docs/research/2026-service-evaluation.md`.
+4. Whether a kicker belongs in the top 25 by dollar value. The fitted board puts one
+   there at ~$20. Needs a human read against real market pricing, not more code.
