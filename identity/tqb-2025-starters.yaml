@@ -1,0 +1,39 @@
+# Which quarterback the 2025 auction roster sheet used to name each franchise's
+# Team QB unit. This league drafts TEAM quarterbacks, but the sheet was hand
+# written with the starter's name, so "JOSH ALLEN, $23" is the Buffalo TQB unit.
+#
+# YEAR-BOUND ON PURPOSE. These are 2025 assignments and must not be rebuilt from
+# a later extract - Kyler Murray was ARI in 2025 and shows a different team in
+# the 2026 Draft Sharks file. A 2026 sheet needs its own map.
+#
+# Left side is the quarterback as written; right side is the franchise code the
+# pool uses to name the Team QB unit.
+#
+# INVARIANT: load_prices applies identity/aliases.yaml before this map, and
+# raises if an alias-resolved name is itself an alias key (chain detection).
+# If aliases.yaml ever gains an entry whose KEY equals one of the 21 names
+# below, that check fires first and rejects a legitimate TQB join as if it
+# were an alias chain. No overlap exists today - keep it that way, or teach
+# load_prices to tell the two cases apart before adding one.
+starters:
+  "Aaron Rodgers": "PIT"
+  "Baker Mayfield": "TB"
+  "Bo Nix": "DEN"
+  "Brock Purdy": "SF"
+  "Cameron Ward": "TEN"
+  "CJ Stroud": "HOU"
+  "Dak Prescott": "DAL"
+  "Drake Maye": "NE"
+  "Geno Smith": "LV"
+  "Jalen Hurts": "PHI"
+  "Jared Goff": "DET"
+  "Jayden Daniels": "WAS"
+  "JJ McCarthy": "MIN"
+  "Joe Burrow": "CIN"
+  "Jordan Love": "GB"
+  "Josh Allen": "BUF"
+  "Justin Herbert": "LAC"
+  "Kyler Murray": "ARI"
+  "Lamar Jackson": "BAL"
+  "Patrick Mahomes": "KC"
+  "Tua Tagovailoa": "MIA"

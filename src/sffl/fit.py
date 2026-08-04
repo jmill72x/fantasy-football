@@ -13,30 +13,93 @@ ever compare already-canonical names and need no resolver of their own.
 import csv
 from typing import Dict
 
-from sffl.identity import Resolver, normalize_name
-from sffl.value import assign_dollars, assign_vorp, replacement_levels
+import yaml
+
+from sffl.identity import NFL_TEAMS, Resolver, normalize_name
+from sffl.value import POOLS, _pool_of, assign_dollars, assign_vorp, replacement_levels
 
 POLICIES = ("starter", "draftable")
 
 DEFAULT_ALIASES = "identity/aliases.yaml"
+DEFAULT_TQB_STARTERS = "identity/tqb-2025-starters.yaml"
 
 
-def load_prices(path, alias_path=DEFAULT_ALIASES):
-    """Map canonicalized player name -> price paid.
+class PriceMap(dict):
+    """dict[canonical name -> price] that also remembers how many rows the
+    source CSV held, so a caller can report "n matched of N loaded" instead
+    of a bare match count with no denominator. Behaves exactly like a plain
+    dict everywhere else (iteration, `in`, `.get`, `len`, equality with a
+    plain dict) - only `.total_rows` is new.
+    """
 
-    The roster sheet is hand-typed and misspells names (e.g. "JAMAAR CHASE"
-    for Ja'Marr Chase). Each name is normalized, then passed through the
-    alias table so it lands on the same key the pool's canonical spelling
-    normalizes to.
+    def __init__(self, *args, **kwargs):
+        super(PriceMap, self).__init__(*args, **kwargs)
+        self.total_rows = 0
+
+
+def _load_tqb_starters(path):
+    """Map normalized quarterback name -> franchise code for one season.
+
+    Raises ValueError on any right-hand side that is not a real NFL franchise
+    code (per `sffl.identity.NFL_TEAMS`) - a typo like "PHIL" would otherwise
+    join nothing and silently drop a TQB price from the fit with no signal.
+    """
+    with open(path) as fh:
+        raw = yaml.safe_load(fh) or {}
+    out = {}
+    for qb, team in (raw.get("starters") or {}).items():
+        code = str(team).strip().upper()
+        if code not in NFL_TEAMS:
+            raise ValueError(
+                "%s maps %r to %r, which is not a real NFL franchise code; "
+                "expected one of %s" % (path, qb, team, sorted(NFL_TEAMS)))
+        out[normalize_name(qb)] = code
+    return out
+
+
+def load_prices(path, alias_path=DEFAULT_ALIASES,
+                tqb_starters_path=DEFAULT_TQB_STARTERS):
+    """Map canonical player key -> price paid.
+
+    Three reconciliations, in order, because the roster sheet is hand typed:
+      1. normalize spelling
+      2. apply identity/aliases.yaml - fixes misspellings and the "PHILLY D" form
+      3. apply the season's TQB starter map - the sheet names a Team QB unit by
+         whoever started for that franchise, but the pool names it by franchise
+
+    A franchise may appear twice when one roster carried a backup Team QB. The
+    higher price wins: it is the one that reflects the unit's market value, and
+    silently keeping whichever came last would depend on file order.
+
+    `tqb_starters_path` defaults to the 2025 map and MUST be overridden with a
+    season-matched map for any other season's prices file - see the
+    `--tqb-starters` CLI flag. Applying the 2025 map to a later roster sheet
+    would silently mis-join or silently drop every Team QB price.
+
+    Returns a `PriceMap` (a `dict` subclass); `.total_rows` on the result is
+    the number of priced rows read from `path`, independent of how many of
+    them ended up matching a pool player.
     """
     aliases = Resolver(alias_path).aliases
-    out = {}  # type: Dict[str, float]
+    starters = _load_tqb_starters(tqb_starters_path)
+    out = PriceMap()
     with open(path, newline="") as fh:
         for row in csv.DictReader(fh):
-            normalized = normalize_name(row["player_as_written"])
-            if normalized:
-                name = aliases.get(normalized, normalized)
-                out[name] = float(row["price"])
+            name = normalize_name(row["player_as_written"])
+            if not name:
+                continue
+            out.total_rows += 1
+            name = aliases.get(name, name)
+            if name in aliases:
+                raise ValueError("alias chain in %s: %r -> %r (chains prevent non-transitive lookup; resolve to final spelling instead)" % (alias_path, row["player_as_written"], name))
+            team = starters.get(name)
+            if team is not None:
+                name = normalize_name(team)
+            price = float(row["price"])
+            if name in out:
+                out[name] = max(out[name], price)
+            else:
+                out[name] = price
     return out
 
 
@@ -50,14 +113,26 @@ def score_fit(lg, pool, prices, policy):
     assign_dollars(lg, pool)
 
     pairs = []
+    by_pool_pairs = dict((name, []) for name in POOLS)
     for p in pool:
         key = normalize_name(p.name)
         if key in prices:
             pairs.append((p.stats["_dollars"], prices[key]))
+            by_pool_pairs[_pool_of(p.pos)].append(
+                (p.stats["_dollars"], prices[key]))
+
+    by_pool = {}
+    for name, pool_pairs in by_pool_pairs.items():
+        if not pool_pairs:
+            by_pool[name] = {"n": 0, "mae": 0.0}
+            continue
+        errs = [abs(model - actual) for model, actual in pool_pairs]
+        by_pool[name] = {"n": len(pool_pairs), "mae": sum(errs) / len(errs)}
 
     if not pairs:
         return {"policy": policy, "n": 0, "mae": float("inf"),
-                "rmse": float("inf"), "top10_mae": float("inf")}
+                "rmse": float("inf"), "top10_mae": float("inf"),
+                "by_pool": by_pool}
 
     errs = [abs(model - actual) for model, actual in pairs]
     sq = [(model - actual) ** 2 for model, actual in pairs]
@@ -70,6 +145,7 @@ def score_fit(lg, pool, prices, policy):
         "mae": sum(errs) / len(errs),
         "rmse": (sum(sq) / len(sq)) ** 0.5,
         "top10_mae": sum(top_errs) / len(top_errs),
+        "by_pool": by_pool,
     }
 
 

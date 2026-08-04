@@ -12,6 +12,15 @@ silent_auction:
   bid_floor: 26
   bump_charged_only_on_winning_tie: true
 
+# Kickers and defenses are fungible $1 fillers in this league. Twenty-one real
+# 2025 prices, none above $3, seven of nine kickers at exactly $1. Their
+# projected point spreads are real but carry no predictive power, so paying for
+# them is a mistake the board must not encourage. Members contribute no VORP,
+# which returns the surplus to the pools that actually absorb it.
+flat_priced_pools:
+  K: 1
+  DST: 1
+
 bands:
   pass_yds:  [[150, 250, 2], [251, 350, 4], [351, 450, 5], [451, 9999, 7]]
   pass_cmp:  [[15, 19, 2], [20, 24, 3], [25, 29, 4], [30, 34, 5], [35, 39, 6], [40, 99, 7]]

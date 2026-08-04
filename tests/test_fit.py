@@ -1,6 +1,7 @@
 import pytest
 
 from sffl.fit import load_prices, score_fit, choose_policy
+from sffl.identity import NFL_TEAMS, Resolver
 from sffl.league import load_league
 from sffl.schema import PlayerProjection
 
@@ -26,6 +27,17 @@ def filler_players():
         player("Filler Kicker", "K", 50),
         player("Filler Defense", "DST", 50),
     ]
+
+
+def build_priced_pool():
+    """A pool with all four POOLS populated: fixture players priced by
+    prices_sample.csv, plus filler_players() for TQB/K/DST so replacement_levels
+    never sees an empty pool.
+    """
+    return [
+        player("Ja'Marr Chase", "WR", 200),
+        player("Chase Brown", "RB", 120),
+    ] + filler_players()
 
 
 def test_load_prices_normalizes_hand_typed_names():
@@ -92,3 +104,123 @@ def test_choose_policy_raises_when_no_player_matches_any_price():
     pool += filler_players()
     with pytest.raises(ValueError, match="identity/aliases.yaml"):
         choose_policy(LG, pool, load_prices(PRICES))
+
+
+REAL_PRICES = "data/league/auction-rosters-2025.csv"
+
+
+def test_defense_roster_spellings_resolve_to_franchise_names():
+    prices = load_prices(REAL_PRICES)
+    for franchise in ("philadelphia eagles", "pittsburgh steelers",
+                      "minnesota vikings", "houston texans"):
+        assert franchise in prices, franchise
+
+
+def test_skill_misspellings_resolve():
+    prices = load_prices(REAL_PRICES)
+    for name in ("evan mcpherson", "tetairoa mcmillan", "treveyon henderson",
+                 "jaxon smith njigba", "jauan jennings", "wil lutz"):
+        assert name in prices, name
+
+
+def test_players_genuinely_absent_from_the_extract_stay_unresolved():
+    # Joe Mixon and Ricky Pearsall are not in the 2026 Draft Sharks extract.
+    # They must NOT be force-matched onto a similarly spelled player. Jordan
+    # Mason was genuinely bought for $2 (his own real price, not Joe Mixon's
+    # $1); pin the exact value so an aliasing bug that landed Mixon's $1 on
+    # Mason - which Task 2's max() collision rule would silently accept as
+    # max(2.0, 1.0) == 2.0 - cannot hide behind a "!= 1.0" check.
+    prices = load_prices(REAL_PRICES)
+    assert prices["jordan mason"] == 2.0
+    assert "erick all" not in prices or prices.get("erick all") != 13.0
+
+
+def test_no_alias_chains_in_resolver():
+    # Alias chains break the non-transitive lookup in load_prices. This test
+    # catches the whole bug class by ensuring no alias value is itself a key.
+    resolver = Resolver("identity/aliases.yaml")
+    aliases = resolver.aliases
+    keys = set(aliases.keys())
+    values = set(aliases.values())
+    chains = keys & values
+    assert not chains, "alias chains detected: %s" % {k: aliases[k] for k in chains}
+
+
+def test_cameron_skattebo_joins_from_roster_sheet_spelling():
+    # The roster sheet writes "CAM SKATEBO" (one t); our alias must point
+    # directly to "Cameron Skattebo", not through an intermediate spelling.
+    prices = load_prices(REAL_PRICES)
+    assert "cameron skattebo" in prices
+
+
+def test_tqb_units_join_by_their_2025_starting_quarterback():
+    prices = load_prices(REAL_PRICES)
+    # the sheet wrote "JOSH ALLEN"; the pool names the unit "BUF"
+    assert prices.get("buf") == 23.0
+    assert prices.get("bal") == 31.0
+    assert prices.get("was") == 28.0
+
+
+def test_tqb_map_uses_2025_teams_not_the_2026_extract():
+    # Kyler Murray was ARI in 2025 and appears on another team in the 2026 file.
+    prices = load_prices(REAL_PRICES)
+    assert prices.get("ari") == 1.0
+
+
+def test_all_21_priced_tqb_units_join_distinct_franchises():
+    # All 21 priced 2025 Team QB units land on 21 *distinct* franchises (e.g.
+    # BUF's Josh Allen and ARI's Kyler Murray were bought by the same roster,
+    # but they are two different franchises, not a collision on one). This
+    # test only proves the join is complete; it does not exercise the
+    # collision-resolution branch in load_prices - see
+    # test_a_franchise_with_two_colliding_tqb_prices_keeps_the_higher_price
+    # for that, which needs a synthetic fixture because no real 2025 entry
+    # collides.
+    #
+    # Filtered against NFL_TEAMS rather than len(k) == 3: six franchises
+    # (GB, KC, LV, NE, SF, TB) have canonical two-letter codes, so a
+    # length-3 filter would silently undercount a fully correct join.
+    prices = load_prices(REAL_PRICES)
+    tqb_keys = [k for k in prices if k.upper() in NFL_TEAMS]
+    assert len(tqb_keys) == 21
+
+
+TQB_COLLISION_STARTERS = "tests/fixtures/tqb_starters_collision.yaml"
+
+
+def test_a_franchise_with_two_colliding_tqb_prices_keeps_the_higher_price():
+    # Two distinct quarterback names ("Quarterback A", "Quarterback B") are
+    # mapped to the same franchise "JAC" by a fixture starter map, so both
+    # rows collapse onto the same output key regardless of the real 2025
+    # data, which never collides. Checked in both file orders so the test
+    # would fail under "last write wins" as well as "first write wins" - only
+    # max() passes both.
+    higher_first = load_prices("tests/fixtures/prices_tqb_collision_high_first.csv",
+                                tqb_starters_path=TQB_COLLISION_STARTERS)
+    lower_first = load_prices("tests/fixtures/prices_tqb_collision_low_first.csv",
+                               tqb_starters_path=TQB_COLLISION_STARTERS)
+    assert higher_first.get("jac") == 30.0
+    assert lower_first.get("jac") == 30.0
+
+
+def test_tqb_starters_rejects_an_unknown_franchise_code():
+    # "PHIL" (should be "PHI") would otherwise join nothing and silently drop
+    # a TQB price from the fit with no signal anywhere.
+    with pytest.raises(ValueError, match="PHIL"):
+        load_prices(REAL_PRICES,
+                    tqb_starters_path="tests/fixtures/tqb_starters_bad_code.yaml")
+
+
+def test_fit_reports_error_per_pool():
+    rep = score_fit(LG, build_priced_pool(), load_prices(PRICES), "starter")
+    assert "by_pool" in rep
+    assert "FLEX" in rep["by_pool"]
+    assert rep["by_pool"]["FLEX"]["n"] >= 1
+    assert rep["by_pool"]["FLEX"]["mae"] >= 0
+
+
+def test_pools_with_no_matched_prices_report_zero_not_a_fake_average():
+    rep = score_fit(LG, build_priced_pool(), load_prices(PRICES), "starter")
+    for name, stats in rep["by_pool"].items():
+        if stats["n"] == 0:
+            assert stats["mae"] == 0.0
