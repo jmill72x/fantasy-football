@@ -10,7 +10,7 @@ Auction cheatsheet pipeline for the STRIPES Fantasy Football League (CBS). Four 
 | | Status |
 |---|---|
 | **Plan 1 — scoring foundation & ingest** | ✅ merged, 64 tests green |
-| **Plan 2 — value engine (VORP → dollars)** | ✅ complete, 120 tests green |
+| **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections — 141 tests green |
 | **Plan 3 — Excel + PDF renderers** | not written — write next |
 | **Plan 4 — silent auction planner** | not written — consumes plan 2 values |
 
@@ -44,8 +44,9 @@ Jeff has marked up the PDF on the iPad and printed the Excel.
 Update this block at the end of every session so the next one can resume blind.
 
 - [x] Plan 1 — scoring foundation & ingest (merged, 64 tests)
-- [x] TODO A — execute plan 2, the value engine (all 8 tasks, 120 tests)
-- [ ] Write plan 3 (renderers), then execute it — **blocked on 4 decisions, below**
+- [x] TODO A — execute plan 2, the value engine (all 8 tasks)
+- [x] Valuation corrections — K/DST flat at $1, TQB + DST markets joined to the fit (141 tests)
+- [ ] Write plan 3 (renderers), then execute it — **blocked, see below**
 - [ ] Write plan 4 (silent auction planner), then execute it
 - [ ] TODO B — widen the weekly collection to ~120 players
 - [ ] Full dry run: generate both artifacts, review on the iPad
@@ -57,7 +58,7 @@ Work top to bottom. Each unchecked box is the next thing to do.
 | Date | What |
 |---|---|
 | 2026-08-03 | Plan 1 merged. Extracts archived to iCloud as insurance. |
-| 2026-08-04 | Plan 2 complete — real priced board generated from archived extracts. |
+| 2026-08-04 | Plan 2 merged. Valuation corrections merged — K/DST at $1, 154 of 156 prices joining. |
 | **by 2026-08-10** | **Full dry run complete** — plans 2-4 built and both artifacts generated from today's data. |
 | **week of 2026-08-23** | **Re-pull fresh extracts** from Draft Sharks and Footballguys for final rankings. Confirm Draft Sharks still reads **AUCTION**, not Snake — every sync imports as Snake and a reverted setting yields a plausible file with a worthless value column. |
 | **2026-08-26** | **AUCTION.** Excel and PDF must be generated and printed/loaded before this. |
@@ -204,10 +205,14 @@ Still open, and each changes the plan:
 4. **RB floor.** `poc/render_poc.py`'s `value_pool` enforces ≥1 RB per team when locating
    flex replacement; the shipped `value.py` does not. The league rule is "floor of 1 RB
    and 1 WR/TE." Fixing it changes every dollar value, so it belongs *before* the
-   renderers if it happens at all.
+   renderers if it happens at all. **This is now decidable by measurement rather than
+   taste:** the per-pool fit table reports FLEX at mae $6.28, so add the floor, re-run the
+   fit, and keep it only if FLEX mae drops. Do not adopt it on principle.
 
 **Also blocking execution:** `reportlab` and `openpyxl` are not installed in `.venv/`, and
-there is no `requirements.txt`. `poc/render_poc.py` cannot run today.
+there is no `requirements.txt`. `poc/render_poc.py` cannot run today. Installing them is
+the first task of plan 3; pin them in a `requirements.txt` at the same time, since the
+repo has no dependency manifest and the 08-23 refresh must not surprise anyone.
 
 ## TODO B — widen the weekly collection (a data chore, NOT a plan)
 
