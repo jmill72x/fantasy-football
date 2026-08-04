@@ -85,7 +85,18 @@ def choose_policy(lg, pool, prices):
     numbers regardless of which policy wins - do not read _vorp/_dollars off
     the pool after calling this and assume they belong to `best`. Re-run the
     valuation with the chosen policy if you need the pool's state to match it.
+
+    Raises ValueError if neither policy matched a single observed price. Both
+    reports would otherwise tie on (n=0, top10_mae=inf, mae=inf), and picking
+    a "winner" from that tie is picking with no evidence at all - the wrong
+    kind of silent failure for a pipeline whose whole point is not guessing.
     """
     reports = [score_fit(lg, pool, prices, p) for p in POLICIES]
+    if all(r["n"] == 0 for r in reports):
+        raise ValueError(
+            "no pool player matched any observed price (pool has %d players, "
+            "%d prices loaded); this policy choice has zero evidence behind it. "
+            "Check whether %s needs a new entry for a misspelled or renamed "
+            "player." % (len(pool), len(prices), DEFAULT_ALIASES))
     best = min(reports, key=lambda r: (r["top10_mae"], r["mae"]))
     return best["policy"], reports
