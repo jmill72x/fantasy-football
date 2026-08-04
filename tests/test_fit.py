@@ -29,6 +29,17 @@ def filler_players():
     ]
 
 
+def build_priced_pool():
+    """A pool with all four POOLS populated: fixture players priced by
+    prices_sample.csv, plus filler_players() for TQB/K/DST so replacement_levels
+    never sees an empty pool.
+    """
+    return [
+        player("Ja'Marr Chase", "WR", 200),
+        player("Chase Brown", "RB", 120),
+    ] + filler_players()
+
+
 def test_load_prices_normalizes_hand_typed_names():
     prices = load_prices(PRICES)
     # the roster sheet misspells Ja'Marr Chase as "JAMAAR CHASE"; assert the
@@ -186,3 +197,18 @@ def test_a_franchise_with_two_colliding_tqb_prices_keeps_the_higher_price():
                                tqb_starters_path=TQB_COLLISION_STARTERS)
     assert higher_first.get("zzz") == 30.0
     assert lower_first.get("zzz") == 30.0
+
+
+def test_fit_reports_error_per_pool():
+    rep = score_fit(LG, build_priced_pool(), load_prices(PRICES), "starter")
+    assert "by_pool" in rep
+    assert "FLEX" in rep["by_pool"]
+    assert rep["by_pool"]["FLEX"]["n"] >= 1
+    assert rep["by_pool"]["FLEX"]["mae"] >= 0
+
+
+def test_pools_with_no_matched_prices_report_zero_not_a_fake_average():
+    rep = score_fit(LG, build_priced_pool(), load_prices(PRICES), "starter")
+    for name, stats in rep["by_pool"].items():
+        if stats["n"] == 0:
+            assert stats["mae"] == 0.0

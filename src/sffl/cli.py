@@ -64,6 +64,13 @@ def cmd_value(args):
                   % (r["policy"], r["n"], r["mae"], r["rmse"], r["top10_mae"]))
         print("  chosen: %s\n" % policy)
 
+        chosen_report = [r for r in reports if r["policy"] == policy][0]
+        print("  fit by pool (chosen policy):")
+        for name in sorted(chosen_report["by_pool"]):
+            stats = chosen_report["by_pool"][name]
+            if stats["n"]:
+                print("    %-5s n=%-3d mae=$%.2f" % (name, stats["n"], stats["mae"]))
+
     levels = replacement_levels(lg, pool, policy)
     assign_vorp(lg, pool, levels)
     rate = assign_dollars(lg, pool)
