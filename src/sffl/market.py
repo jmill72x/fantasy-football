@@ -1,0 +1,107 @@
+"""Fit what this league actually pays, given what the model says a player is worth.
+
+`value.assign_dollars` distributes the surplus in proportion to VORP, which
+assumes points are fungible currency. A real auction is budget constrained -
+nobody spends $54 on one player and still fills thirteen roster spots - and
+every owner must fill a bench, so the top compresses and the $1 tail is bid up.
+
+Measured against 154 real 2025 prices the distortion is monotonic: the model
+overpays the $30+ band by $13.2 and underpays the $2-5 band by $4.3, while the
+board total stays exactly right. Monotonic means fittable. A power curve
+`price = a * dollars ** b` with b < 1 has precisely that shape, and fitting it
+in log space makes it an ordinary least-squares line.
+
+`_dollars` KEEPS its meaning - what a player is worth against replacement.
+`_est_price` is what the room will charge. The gap between them is the edge.
+
+FITTED ON 2025 PRICES, APPLIED TO 2026 PROJECTIONS. That is the best evidence
+available, but it assumes the room bids next year the way it bid last year.
+"""
+
+import math
+from typing import Dict
+
+from sffl.value import _pool_of
+
+MIN_OBSERVATIONS = 3
+
+
+def fit_price_curve(pairs):
+    """Least-squares fit of price = a * dollars**b, in log space.
+
+    `pairs` is [(model_dollars, observed_price), ...]. Both sides are always
+    >= 1 on real data, so no log of zero or a negative arises.
+    """
+    if len(pairs) < MIN_OBSERVATIONS:
+        raise ValueError(
+            "need at least %d observations to fit a price curve, got %d"
+            % (MIN_OBSERVATIONS, len(pairs)))
+
+    xs = [math.log(float(m)) for m, _ in pairs]
+    ys = [math.log(float(a)) for _, a in pairs]
+    n = float(len(pairs))
+    sx = sum(xs)
+    sy = sum(ys)
+    sxx = sum(x * x for x in xs)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+
+    denom = n * sxx - sx * sx
+    if abs(denom) < 1e-12:
+        raise ValueError(
+            "cannot fit a price curve: every observation has the same model "
+            "dollar value, so the curve's slope is undefined")
+
+    b = (n * sxy - sx * sy) / denom
+    a = math.exp((sy - b * sx) / n)
+
+    if b <= 0.0:
+        raise ValueError(
+            "fitted exponent %.4f is not monotonic increasing; a better player "
+            "would cost less, which no real auction does. Check the observed "
+            "prices joined to the right players." % b)
+    return (a, b)
+
+
+def expected_price(curve, dollars):
+    """Raw curve value for one model dollar figure, floored at $1."""
+    a, b = curve
+    return max(1.0, a * (float(dollars) ** b))
+
+
+def assign_expected_prices(lg, pool, curve):
+    """Write stats['_est_price'] on every record. Returns the scale factor.
+
+    The raw curve knows nothing about this league's capital, so only the
+    surplus above the $1 every roster spot costs is scaled:
+
+        est = 1 + k * (raw - 1)
+
+    with k chosen so the top `total_spots()` estimates sum to
+    `total_capital()`. The curve is monotone, so those are the same players as
+    the top `total_spots()` by `_dollars` and the selection is stable.
+    """
+    missing = [p.name for p in pool if "_dollars" not in p.stats]
+    if missing:
+        raise ValueError(
+            "%d player(s) have no '_dollars'; call value.assign_dollars first "
+            "(e.g. %s)" % (len(missing), ", ".join(sorted(missing)[:3])))
+
+    raw = {}  # type: Dict[int, float]
+    for p in pool:
+        flat = lg.flat_priced_pools.get(_pool_of(p.pos))
+        if flat is not None:
+            raw[id(p)] = float(flat)
+        else:
+            raw[id(p)] = expected_price(curve, p.stats["_dollars"])
+
+    top = sorted(raw.values(), reverse=True)[:lg.total_spots()]
+    surplus_raw = sum(v - 1.0 for v in top)
+    k = (lg.surplus() / surplus_raw) if surplus_raw > 0 else 0.0
+
+    for p in pool:
+        flat = lg.flat_priced_pools.get(_pool_of(p.pos))
+        if flat is not None:
+            p.stats["_est_price"] = float(flat)
+        else:
+            p.stats["_est_price"] = 1.0 + k * (raw[id(p)] - 1.0)
+    return k
