@@ -2,7 +2,7 @@ import pytest
 
 from sffl.league import load_league
 from sffl.schema import PlayerProjection
-from sffl.value import replacement_levels, assign_vorp
+from sffl.value import replacement_levels, assign_vorp, _largest_remainder_allocation, _starter_counts
 
 LG = load_league("leagues/sffl/2026.yaml")
 
@@ -94,22 +94,37 @@ def test_shallow_pool_uses_worst_available():
 
 
 def test_draftable_depths_sum_to_roster_size():
-    """Draftable policy depths must sum exactly to teams * roster_size."""
-    pool = build_pool()
-    lv = replacement_levels(LG, pool, "draftable")
-    # With teams=12, roster_size=13: total should be 156.
-    # This indirectly tests that _largest_remainder_allocation works correctly.
-    # Verify by checking that all four depths are reasonable.
-    # TQB: 156 * 12/96 ≈ 19.5 → should round to avoid sum > 156.
-    # FLEX: 156 * 60/96 ≈ 97.5
-    # K: 156 * 12/96 ≈ 19.5
-    # DST: 156 * 12/96 ≈ 19.5
-    # The exact allocations depend on tie-breaking, but sum must equal 156.
-    # Indirectly verify: no depth should be higher than available players.
-    assert lv["TQB"] <= 300.0  # Max TQB in pool
-    assert lv["FLEX"] <= 200.0  # Max FLEX in pool
-    assert lv["K"] <= 150.0  # Max K in pool
-    assert lv["DST"] <= 120.0  # Max DST in pool
+    """Draftable policy depths must sum exactly to teams * roster_size.
+
+    Directly tests _largest_remainder_allocation to ensure:
+    1. Depths sum to exactly 156 for the real league config.
+    2. Exact per-pool allocations are deterministic and match expected values.
+    3. Allocation is order-independent.
+    """
+    starters = _starter_counts(LG)
+
+    # Test 1: sum equals 156
+    depths = _largest_remainder_allocation(LG, starters)
+    assert sum(depths.values()) == LG.teams * LG.roster_size == 156
+
+    # Test 2: exact allocations pin the tie-break behavior
+    # With teams=12, roster_size=13, flex_slots=5:
+    # total_starters = 96, drafted = 156
+    # TQB:  156*12/96 = 19.5 -> floor=19, frac=0.5
+    # FLEX: 156*60/96 = 97.5 -> floor=97, frac=0.5
+    # K:    156*12/96 = 19.5 -> floor=19, frac=0.5
+    # DST:  156*12/96 = 19.5 -> floor=19, frac=0.5
+    # sum of floors = 154, leftover = 2
+    # Remainders all 0.5; tie-break by (-starters[name], name):
+    # FLEX (60 starters) wins both leftover units.
+    assert depths == {"TQB": 19, "FLEX": 98, "K": 19, "DST": 20}
+
+    # Test 3: order-independence
+    # Shuffle starters dict order; allocation should not depend on insertion order.
+    starters_shuffled = {"DST": starters["DST"], "K": starters["K"],
+                         "FLEX": starters["FLEX"], "TQB": starters["TQB"]}
+    depths_shuffled = _largest_remainder_allocation(LG, starters_shuffled)
+    assert depths_shuffled == depths
 
 
 def test_assign_vorp_raises_for_missing_pool():
