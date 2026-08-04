@@ -13,32 +13,60 @@ ever compare already-canonical names and need no resolver of their own.
 import csv
 from typing import Dict
 
+import yaml
+
 from sffl.identity import Resolver, normalize_name
 from sffl.value import assign_dollars, assign_vorp, replacement_levels
 
 POLICIES = ("starter", "draftable")
 
 DEFAULT_ALIASES = "identity/aliases.yaml"
+DEFAULT_TQB_STARTERS = "identity/tqb-2025-starters.yaml"
 
 
-def load_prices(path, alias_path=DEFAULT_ALIASES):
-    """Map canonicalized player name -> price paid.
+def _load_tqb_starters(path):
+    """Map normalized quarterback name -> franchise code for one season."""
+    with open(path) as fh:
+        raw = yaml.safe_load(fh) or {}
+    out = {}
+    for qb, team in (raw.get("starters") or {}).items():
+        out[normalize_name(qb)] = str(team).strip().upper()
+    return out
 
-    The roster sheet is hand-typed and misspells names (e.g. "JAMAAR CHASE"
-    for Ja'Marr Chase). Each name is normalized, then passed through the
-    alias table so it lands on the same key the pool's canonical spelling
-    normalizes to.
+
+def load_prices(path, alias_path=DEFAULT_ALIASES,
+                tqb_starters_path=DEFAULT_TQB_STARTERS):
+    """Map canonical player key -> price paid.
+
+    Three reconciliations, in order, because the roster sheet is hand typed:
+      1. normalize spelling
+      2. apply identity/aliases.yaml - fixes misspellings and the "PHILLY D" form
+      3. apply the season's TQB starter map - the sheet names a Team QB unit by
+         whoever started for that franchise, but the pool names it by franchise
+
+    A franchise may appear twice when one roster carried a backup Team QB. The
+    higher price wins: it is the one that reflects the unit's market value, and
+    silently keeping whichever came last would depend on file order.
     """
     aliases = Resolver(alias_path).aliases
+    starters = _load_tqb_starters(tqb_starters_path)
     out = {}  # type: Dict[str, float]
     with open(path, newline="") as fh:
         for row in csv.DictReader(fh):
-            normalized = normalize_name(row["player_as_written"])
-            if normalized:
-                name = aliases.get(normalized, normalized)
-                if name in aliases:
-                    raise ValueError("alias chain in %s: %r -> %r (chains prevent non-transitive lookup; resolve to final spelling instead)" % (alias_path, normalized, name))
-                out[name] = float(row["price"])
+            name = normalize_name(row["player_as_written"])
+            if not name:
+                continue
+            name = aliases.get(name, name)
+            if name in aliases:
+                raise ValueError("alias chain in %s: %r -> %r (chains prevent non-transitive lookup; resolve to final spelling instead)" % (alias_path, row["player_as_written"], name))
+            team = starters.get(name)
+            if team is not None:
+                name = normalize_name(team)
+            price = float(row["price"])
+            if name in out:
+                out[name] = max(out[name], price)
+            else:
+                out[name] = price
     return out
 
 

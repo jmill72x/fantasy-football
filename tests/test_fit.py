@@ -1,7 +1,7 @@
 import pytest
 
 from sffl.fit import load_prices, score_fit, choose_policy
-from sffl.identity import Resolver
+from sffl.identity import NFL_TEAMS, Resolver
 from sffl.league import load_league
 from sffl.schema import PlayerProjection
 
@@ -136,3 +136,29 @@ def test_cameron_skattebo_joins_from_roster_sheet_spelling():
     # directly to "Cameron Skattebo", not through an intermediate spelling.
     prices = load_prices(REAL_PRICES)
     assert "cameron skattebo" in prices
+
+
+def test_tqb_units_join_by_their_2025_starting_quarterback():
+    prices = load_prices(REAL_PRICES)
+    # the sheet wrote "JOSH ALLEN"; the pool names the unit "BUF"
+    assert prices.get("buf") == 23.0
+    assert prices.get("bal") == 31.0
+    assert prices.get("was") == 28.0
+
+
+def test_tqb_map_uses_2025_teams_not_the_2026_extract():
+    # Kyler Murray was ARI in 2025 and appears on another team in the 2026 file.
+    prices = load_prices(REAL_PRICES)
+    assert prices.get("ari") == 1.0
+
+
+def test_a_franchise_with_two_priced_quarterbacks_keeps_the_higher_price():
+    # One roster carried both a starter and a backup TQB unit. Whichever way
+    # collisions resolve, the mapping must not silently drop a price.
+    #
+    # Filtered against NFL_TEAMS rather than len(k) == 3: six franchises
+    # (GB, KC, LV, NE, SF, TB) have canonical two-letter codes, so a
+    # length-3 filter would silently undercount a fully correct join.
+    prices = load_prices(REAL_PRICES)
+    tqb_keys = [k for k in prices if k.upper() in NFL_TEAMS]
+    assert len(tqb_keys) >= 20
