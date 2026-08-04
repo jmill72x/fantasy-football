@@ -140,6 +140,9 @@ def cmd_value(args):
     if curve is not None:
         print("top 25 by value:  $ = MY$, worth against replacement; "
               "est $ = EST$, what the room will pay")
+        print("  (EST$ compresses hardest at the top of the board - for a "
+              "single specific top target, treat it as a floor on his "
+              "price, not a point estimate)")
     else:
         print("top 25 by value:")
     if not consensus_ran:
@@ -184,13 +187,21 @@ def cmd_value(args):
         print("\nwrote %s" % args.out)
 
     if curve is not None:
-        print("\nbias against observed prices, by model dollar band:")
+        # Restricted to the same non-flat population the curve was fit on
+        # (see `priced` above): flat-priced K/DST all land in the $1-2 band
+        # at exactly $1 MY$/EST$ regardless of what the curve does, so
+        # mixing them into this table would measure a different, easier
+        # population than the one the fit's bias is evidence about and
+        # flatter the $1-2 band's reported bias.
+        print("\nbias against observed prices, by model dollar band "
+              "(excludes flat-priced K/DST, matching the fitted population):")
         print("  %-10s %4s %9s %9s %9s" % ("band", "n", "MY$ bias", "EST$ bias", "actual"))
         bands = [(30, 1e9, "$30+"), (20, 30, "$20-30"), (10, 20, "$10-20"),
                  (5, 10, "$5-10"), (2, 5, "$2-5"), (0, 2, "$1-2")]
         for lo, hi, label in bands:
             rows = [p for p in pool
                     if normalize_name(p.name) in prices
+                    and _pool_of(p.pos) not in lg.flat_priced_pools
                     and lo <= p.stats["_dollars"] < hi]
             if not rows:
                 continue

@@ -49,6 +49,10 @@ def test_fit_policy_prints_the_match_denominator(capsys):
     assert rc == 0
     assert "of 5 prices" in out
     assert "unmatched" in out
+    # PRICES joins to exactly 1 observation, one short of fit_price_curve's
+    # 8-observation minimum, so the EST$ curve fit also takes the "not
+    # fitted" path on this run - confirm it says so out loud.
+    assert "WARNING" in out
 
 
 def test_tqb_starters_flag_is_accepted_and_overridable(capsys):
@@ -60,14 +64,20 @@ def test_tqb_starters_flag_is_accepted_and_overridable(capsys):
     assert rc == 0
 
 
-def test_est_price_column_appears_when_prices_are_supplied(tmp_path):
+def test_est_price_column_appears_when_prices_are_supplied(tmp_path, capsys):
     path = str(tmp_path / "board.csv")
     rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
                "--policy", "starter", "--prices", PRICES, "--out", path])
+    out = capsys.readouterr().out
     assert rc == 0
     with open(path) as fh:
         header = fh.readline()
     assert "est_price" in header
+    # PRICES joins to exactly 1 observation here (Ja'Marr Chase), one short
+    # of fit_price_curve's 8-observation minimum, so this run takes the
+    # "curve not fitted" path - assert the WARNING actually prints rather
+    # than degrading silently.
+    assert "WARNING" in out
 
 
 def test_est_price_is_blank_without_prices(tmp_path):
