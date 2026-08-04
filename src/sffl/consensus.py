@@ -2,6 +2,11 @@
 
 The spread is kept deliberately. Scoring bands are convex, so disagreement about
 a player carries information his mean does not - and no vendor publishes it.
+
+Each merged record includes: consensus values (means), _spread_<stat> for population
+stdev, _n_<stat> for the count of sources that reported that specific stat, and
+_n_sources for the total number of sources covering the player. The distinction matters:
+_n_sources is record-level member count, _n_<stat> is per-stat source count.
 """
 
 from collections import defaultdict
@@ -40,6 +45,7 @@ def merge(projections, resolver=None):
         for stat, vals in by_stat.items():
             stats[stat] = sum(vals) / len(vals)
             stats["_spread_" + stat] = _stdev(vals)
+            stats["_n_" + stat] = float(len(vals))
         stats["_n_sources"] = float(len(members))
 
         out.append(PlayerProjection(
