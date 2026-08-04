@@ -82,3 +82,38 @@ def test_est_price_is_blank_without_prices(tmp_path):
     # every data row leaves it empty rather than reporting a fabricated 0 or a
     # copy of dollars
     assert all(row.split(",")[idx] == "" for row in lines[1:])
+
+
+# The fixtures above join to exactly 1 matched price (Ja'Marr Chase), well
+# under fit_price_curve's 8-observation minimum, so every test using them
+# exercises only the "curve not fitted" path - none of them proves _est_price
+# is ever a real number, that EST$ ever prints on a board line, or that the
+# bias table ever appears. This dedicated fixture pair joins 8 invented FLEX
+# players (no real player names) with a monotonically increasing price, which
+# is enough for fit_price_curve to succeed and exercise all three.
+MARKET_FIT_FIXTURE = "tests/fixtures/draftsharks_market_fit_sample.csv"
+MARKET_FIT_PRICES = "tests/fixtures/prices_market_fit_sample.csv"
+
+
+def test_market_curve_fits_and_populates_est_price(tmp_path, capsys):
+    path = str(tmp_path / "board.csv")
+    rc = main(["value", "--source", DS, "--file", MARKET_FIT_FIXTURE, "--year", "2026",
+               "--policy", "starter", "--prices", MARKET_FIT_PRICES, "--out", path])
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    # the board line carries a real EST$ figure, not just the header
+    assert "est $" in out
+    # the bias table is the evidence the calibration worked, not just ran
+    assert "bias against observed prices" in out
+
+    with open(path) as fh:
+        lines = fh.read().splitlines()
+    header = lines[0].split(",")
+    idx = header.index("est_price")
+    values = [row.split(",")[idx] for row in lines[1:]]
+    # at least one row carries an actual fitted number, parseable as a float
+    assert any(v != "" for v in values)
+    numeric = [v for v in values if v != ""]
+    for v in numeric:
+        float(v)  # raises if it is not a real number

@@ -20,6 +20,37 @@ available, but it assumes the room bids next year the way it bid last year.
 One curve is fit globally and applied to every position alike; it cannot
 correct a position-specific bias such as TQB's (mae $8.98, worst of any pool -
 see NEXT.md), only the board-wide top-heavy/bottom-light shape.
+
+THE CURVE ALSO COMPRESSES THE TOP END'S RANGE, NOT JUST ITS LEVEL. b < 1 makes
+the fit concave, so a wide spread of input dollars maps to a narrower spread of
+output prices, and the compression is worst exactly where the inputs are most
+spread out - the top of the board. On the 2025 fit (a=2.248, b=0.551, fit on
+130 observations with flat-priced K/DST excluded - see below), the $30+ band's
+*average* bias is an excellent -$0.9, but the individual estimates inside that
+band span only ~$23-31 while 2025's actual top prices ranged roughly $28-43:
+the single most expensive player still comes in well under what a real top
+pick has fetched. Averaging over a band hides this - do not read "$30+ band
+bias is small" as "every player in it is well estimated."
+
+Two structural causes, both left as-is rather than fixed here:
+  1. The fit weights every observation equally in log space, and roughly 60%
+     of the real 2025 prices sit in the $1-2 band, so ordinary least squares
+     is dominated by getting the cheap end right, not the expensive end.
+  2. A single smooth monotone curve fundamentally cannot map a wide input
+     spread to an equally wide output spread while also being well-behaved
+     near the $1 floor; something has to give, and it is the top.
+Fixing either needs tail reweighting or a second curve segment for the top of
+the board - both are rewrites, not tweaks, and are out of scope here. A bidder
+budgeting for a single specific top target should treat EST$ as a floor on that
+player's price, not a point estimate.
+
+THE FIT'S INPUT EXCLUDES FLAT-PRICED POOLS (K, DST). Their `_dollars` is
+pinned to the league's flat price by policy (see `LeagueProfile.
+flat_priced_pools`), not derived from VORP, so every one of them would
+contribute a point at x = log(1) = 0 that looks like market evidence about
+cheap players but is really just the flat-pricing policy restated. Their
+`_est_price` is unaffected by this either way, since `assign_expected_prices`
+applies the same flat override to them regardless of which curve was fit.
 """
 
 import math
