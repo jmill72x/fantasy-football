@@ -1,0 +1,55 @@
+# 2026 NFL bye weeks, keyed by the canonical team code in sffl.identity.NFL_TEAMS.
+#
+# WHY THIS FILE EXISTS: neither vendor extract carries a bye column. Verified
+# against sources/draftsharks.yaml and the raw Draft Sharks header, and against
+# all 61 columns of the Footballguys export. The cheatsheet's Team/Bye column
+# has no other source.
+#
+# Keyed by TEAM, not by player - every player on a franchise shares its bye, so
+# the renderer joins on the team code it already has.
+#
+# PROVENANCE: fetched 2026-08-04 from two independent sources that agree on all
+# 32 teams - NFL.com's 2026 schedule-release bye list and SI.com's full list.
+# Cross-checked against the published per-week distribution: Weeks 5, 9 and 14
+# carry two teams each; Weeks 6, 7, 8, 10 and 13 carry four each; Week 11 carries
+# six; no team is on bye in Week 12 (Thanksgiving). Totals to 32.
+#
+# Keys are QUOTED deliberately: unquoted NO is parsed as boolean false under
+# YAML 1.1, which silently dropped New Orleans on the first pass here.
+#
+# SPOT-CHECK THIS BEFORE THE AUCTION. A wrong bye week is a plausible-looking
+# error that costs a real roster decision, and this is the one file here whose
+# contents came from outside the pipeline.
+byes:
+  "ARI": 14
+  "ATL": 11
+  "BAL": 13
+  "BUF": 7
+  "CAR": 5
+  "CHI": 10
+  "CIN": 6
+  "CLE": 11
+  "DAL": 14
+  "DEN": 10
+  "DET": 6
+  "GB": 11
+  "HOU": 8
+  "IND": 13
+  "JAC": 7
+  "KC": 5
+  "LAC": 7
+  "LAR": 11
+  "LV": 13
+  "MIA": 6
+  "MIN": 6
+  "NE": 11
+  "NO": 8
+  "NYG": 8
+  "NYJ": 13
+  "PHI": 10
+  "PIT": 9
+  "SEA": 11
+  "SF": 8
+  "TB": 10
+  "TEN": 9
+  "WAS": 7
