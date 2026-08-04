@@ -49,6 +49,10 @@ def test_fit_policy_prints_the_match_denominator(capsys):
     assert rc == 0
     assert "of 5 prices" in out
     assert "unmatched" in out
+    # PRICES joins to exactly 1 observation, one short of fit_price_curve's
+    # 8-observation minimum, so the EST$ curve fit also takes the "not
+    # fitted" path on this run - confirm it says so out loud.
+    assert "WARNING" in out
 
 
 def test_tqb_starters_flag_is_accepted_and_overridable(capsys):
@@ -58,3 +62,68 @@ def test_tqb_starters_flag_is_accepted_and_overridable(capsys):
                "--policy", "fit", "--prices", PRICES,
                "--tqb-starters", "identity/tqb-2025-starters.yaml"])
     assert rc == 0
+
+
+def test_est_price_column_appears_when_prices_are_supplied(tmp_path, capsys):
+    path = str(tmp_path / "board.csv")
+    rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
+               "--policy", "starter", "--prices", PRICES, "--out", path])
+    out = capsys.readouterr().out
+    assert rc == 0
+    with open(path) as fh:
+        header = fh.readline()
+    assert "est_price" in header
+    # PRICES joins to exactly 1 observation here (Ja'Marr Chase), one short
+    # of fit_price_curve's 8-observation minimum, so this run takes the
+    # "curve not fitted" path - assert the WARNING actually prints rather
+    # than degrading silently.
+    assert "WARNING" in out
+
+
+def test_est_price_is_blank_without_prices(tmp_path):
+    path = str(tmp_path / "board.csv")
+    rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
+               "--policy", "starter", "--out", path])
+    assert rc == 0
+    with open(path) as fh:
+        lines = fh.read().splitlines()
+    header = lines[0].split(",")
+    idx = header.index("est_price")
+    # every data row leaves it empty rather than reporting a fabricated 0 or a
+    # copy of dollars
+    assert all(row.split(",")[idx] == "" for row in lines[1:])
+
+
+# The fixtures above join to exactly 1 matched price (Ja'Marr Chase), well
+# under fit_price_curve's 8-observation minimum, so every test using them
+# exercises only the "curve not fitted" path - none of them proves _est_price
+# is ever a real number, that EST$ ever prints on a board line, or that the
+# bias table ever appears. This dedicated fixture pair joins 8 invented FLEX
+# players (no real player names) with a monotonically increasing price, which
+# is enough for fit_price_curve to succeed and exercise all three.
+MARKET_FIT_FIXTURE = "tests/fixtures/draftsharks_market_fit_sample.csv"
+MARKET_FIT_PRICES = "tests/fixtures/prices_market_fit_sample.csv"
+
+
+def test_market_curve_fits_and_populates_est_price(tmp_path, capsys):
+    path = str(tmp_path / "board.csv")
+    rc = main(["value", "--source", DS, "--file", MARKET_FIT_FIXTURE, "--year", "2026",
+               "--policy", "starter", "--prices", MARKET_FIT_PRICES, "--out", path])
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    # the board line carries a real EST$ figure, not just the header
+    assert "est $" in out
+    # the bias table is the evidence the calibration worked, not just ran
+    assert "bias against observed prices" in out
+
+    with open(path) as fh:
+        lines = fh.read().splitlines()
+    header = lines[0].split(",")
+    idx = header.index("est_price")
+    values = [row.split(",")[idx] for row in lines[1:]]
+    # at least one row carries an actual fitted number, parseable as a float
+    assert any(v != "" for v in values)
+    numeric = [v for v in values if v != ""]
+    for v in numeric:
+        float(v)  # raises if it is not a real number
