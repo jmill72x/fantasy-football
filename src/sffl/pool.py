@@ -1,8 +1,14 @@
 """Turn a vendor extract into a scored, league-correct player pool."""
 
+from sffl.calibrate import expected_points
 from sffl.ingest.profiles import load_profile, read_extract
-from sffl.scoring import score_game
+from sffl.scoring import band_points, score_game
 from sffl.tqb import MultipleAnalystSetsError, build_tqb
+
+# The banded stats score_game applies to EVERY position, regardless of pos.
+# def_pa/def_ya are intentionally excluded here - see the pos == "DST" gate
+# below and its explanation.
+_ALWAYS_BANDED = ("pass_yds", "pass_cmp", "rush_yds", "rec_yds", "rec_ct")
 
 
 def score_season(lg, player):
@@ -37,6 +43,66 @@ def score_season(lg, player):
             continue
         per_game[field] = total / player.games
     return score_game(lg, per_game, pos=player.pos) * player.games
+
+
+def score_season_calibrated(lg, player, curves):
+    """Season points using empirical expectation curves for banded stats.
+
+    Replaces band(per-game mean) with E[band(weekly)] measured from real data.
+    Linear categories - touchdowns, interceptions, extra points, field goals by
+    distance - are unaffected by averaging and pass through unchanged.
+
+    Only the banded portion of the score is swapped. Everything else -
+    including the position gate on the defense block - runs through the
+    validated `score_game` engine so nothing here can diverge from it.
+    Concretely: run `score_game` once on the per-game line to get the full
+    validated total, compute what it added for the banded stats that apply
+    to this position (`naive_banded`), subtract that back out, and add the
+    calibrated banded total in its place.
+
+    KNOWN LIMITATION: sacks use a threshold rule rather than a band table, so
+    they are not corrected here. A defense averaging 2.5 sacks per game still
+    scores zero sack points across the season. See the spec.
+    """
+    if not player.games:
+        return 0.0
+
+    per_game = {}
+    for field_name, total in player.stats.items():
+        if field_name.startswith("_"):
+            continue
+        per_game[field_name] = total / player.games
+
+    # def_pa/def_ya are banded stats, but score_game only ever applies them
+    # for pos == "DST" - see its docstring. def_pa/def_ya band the value 0
+    # at their MAXIMUM points ([[0,2,6],...], [[0,150,6],...]), and a non-DST
+    # player's per-game mean for them is always 0.0 (the stat is absent from
+    # their line). Dropping this gate would pay every skill player and
+    # kicker phantom points for a shutout they never played - the exact bug
+    # `score_game`'s docstring documents and fixed with this same gate. Keep
+    # it in lockstep with `score_game`'s gate; do not delete as "redundant".
+    applicable = _ALWAYS_BANDED
+    if player.pos == "DST":
+        applicable = _ALWAYS_BANDED + ("def_pa", "def_ya")
+
+    full = score_game(lg, per_game, pos=player.pos)
+
+    naive_banded = 0.0
+    for stat in applicable:
+        naive_banded += band_points(lg.bands[stat], per_game.get(stat, 0.0))
+
+    linear_total = full - naive_banded
+
+    calibrated_banded = 0.0
+    for stat in applicable:
+        mean = per_game.get(stat, 0.0)
+        curve = curves.get(stat)
+        if curve:
+            calibrated_banded += expected_points(curve, mean)
+        else:
+            calibrated_banded += band_points(lg.bands[stat], mean)
+
+    return (linear_total + calibrated_banded) * player.games
 
 
 def build_pool(lg, profile_path, csv_path, year, set_name=None):
