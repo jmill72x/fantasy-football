@@ -8,6 +8,13 @@
 #
 # Left side is the quarterback as written; right side is the franchise code the
 # pool uses to name the Team QB unit.
+#
+# INVARIANT: load_prices applies identity/aliases.yaml before this map, and
+# raises if an alias-resolved name is itself an alias key (chain detection).
+# If aliases.yaml ever gains an entry whose KEY equals one of the 21 names
+# below, that check fires first and rejects a legitimate TQB join as if it
+# were an alias chain. No overlap exists today - keep it that way, or teach
+# load_prices to tell the two cases apart before adding one.
 starters:
   "Aaron Rodgers": "PIT"
   "Baker Mayfield": "TB"
