@@ -1,6 +1,6 @@
 """Turn a vendor extract into a scored, league-correct player pool."""
 
-from sffl.calibrate import expected_points
+from sffl.calibrate import STAT_POSITIONS, expected_points
 from sffl.ingest.profiles import load_profile, read_extract
 from sffl.scoring import band_points, score_game
 from sffl.tqb import MultipleAnalystSetsError, build_tqb
@@ -81,6 +81,22 @@ def score_season_calibrated(lg, player, curves):
     # kicker phantom points for a shutout they never played - the exact bug
     # `score_game`'s docstring documents and fixed with this same gate. Keep
     # it in lockstep with `score_game`'s gate; do not delete as "redundant".
+    #
+    # A second, distinct reason the calibrated loop below ALSO needs a
+    # per-stat position gate (via STAT_POSITIONS), separate from this
+    # `applicable` list: `band_points` and `expected_points` disagree on what
+    # to return below the lowest observed value. `band_points` FLOORS to 0
+    # below the first band's low edge, but `expected_points` CLAMPS to the
+    # curve's lowest anchor. pass_yds/pass_cmp curves are built only from
+    # QB/TQB weeks, so their lowest anchor sits well above 0 (e.g. ~2 points
+    # at a 205 pass_yds mean). A kicker, defense, receiver or back has a
+    # per-game mean of 0.0 for pass_yds/pass_cmp - band_points(0.0) correctly
+    # returns 0, but expected_points(curve, 0.0) clamps to that non-zero
+    # anchor and pays every non-passer phantom season points. Gating the
+    # curve lookup on `player.pos in STAT_POSITIONS[stat]` keeps the
+    # calibrated path from ever asking a curve about a stat that position
+    # cannot produce, so producer (`build_curves`) and consumer agree on the
+    # one table instead of two independently-maintained gates drifting apart.
     applicable = _ALWAYS_BANDED
     if player.pos == "DST":
         applicable = _ALWAYS_BANDED + ("def_pa", "def_ya")
@@ -97,7 +113,7 @@ def score_season_calibrated(lg, player, curves):
     for stat in applicable:
         mean = per_game.get(stat, 0.0)
         curve = curves.get(stat)
-        if curve:
+        if curve and player.pos in STAT_POSITIONS[stat]:
             calibrated_banded += expected_points(curve, mean)
         else:
             calibrated_banded += band_points(lg.bands[stat], mean)
