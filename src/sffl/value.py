@@ -24,6 +24,70 @@ def _sorted_points(pool, name):
     return sorted(vals, reverse=True)
 
 
+def _sorted_flex_records(pool):
+    """FLEX pool player records (RB/WR/TE), sorted descending by points.
+
+    Unlike _sorted_points, this keeps the records (not just the point
+    values) because flex starter selection below has to know each player's
+    position to enforce the RB and WR/TE floors.
+    """
+    recs = [p for p in pool if _pool_of(p.pos) == "FLEX"]
+    return sorted(recs, key=lambda p: p.stats["_season_points"], reverse=True)
+
+
+def _select_flex_starters(lg, recs, depth):
+    """Select the depth-sized flex starting set, respecting the league's
+    lineup floors: each of lg.teams teams must start at least 1 RB and at
+    least 1 WR/TE (WR and TE are one position here and share a single
+    floor - never one floor each).
+
+    `recs` must already be sorted descending by points; `depth` must be
+    strictly less than len(recs) (the caller handles the shallow-pool case
+    separately). Returns the set of selected indices into `recs`. Indices
+    are used - not object identity - because two player records can
+    compare equal on points.
+
+    This same selection is used for both the "starter" and "draftable"
+    replacement policies (only `depth` differs between them): it is the
+    same "who is above replacement" question asked at two depths, and at
+    draftable's much greater depth the floors simply never bind.
+    """
+    teams = lg.teams
+    if depth < 2 * teams:
+        raise ValueError(
+            "flex starter depth %d is less than 2 * lg.teams (%d): the "
+            "league requires %d RB-floor slots plus %d WR/TE-floor slots, "
+            "which cannot both fit in a %d-player flex lineup"
+            % (depth, 2 * teams, teams, teams, depth))
+
+    rb_idx = [i for i, p in enumerate(recs) if p.pos == "RB"]
+    wrte_idx = [i for i, p in enumerate(recs) if p.pos in ("WR", "TE")]
+
+    if len(rb_idx) < teams:
+        raise ValueError(
+            "flex pool has only %d RB but the league requires %d (1 RB "
+            "floor per team x %d teams)" % (len(rb_idx), teams, teams))
+    if len(wrte_idx) < teams:
+        raise ValueError(
+            "flex pool has only %d WR/TE but the league requires %d (1 "
+            "WR/TE floor per team x %d teams)" % (len(wrte_idx), teams, teams))
+
+    # Reserve the top `teams` at each floor position...
+    selected = set(rb_idx[:teams])
+    selected.update(wrte_idx[:teams])
+
+    # ...then fill whatever is left with the best remaining players
+    # regardless of position.
+    need = depth - len(selected)
+    for i in range(len(recs)):
+        if need <= 0:
+            break
+        if i not in selected:
+            selected.add(i)
+            need -= 1
+    return selected
+
+
 def _starter_counts(lg):
     return {"TQB": lg.teams, "FLEX": lg.teams * lg.flex_slots,
             "K": lg.teams, "DST": lg.teams}
@@ -83,6 +147,29 @@ def replacement_levels(lg, pool, policy):
 
     levels = {}
     for name in POOLS:
+        if name == "FLEX":
+            recs = _sorted_flex_records(pool)
+            idx = depths[name]
+            if len(recs) == 0:
+                # Empty pool: cannot compute a replacement level. Raise loudly.
+                raise ValueError(
+                    "no players in pool %r; cannot compute replacement level" % name)
+            elif idx < len(recs):
+                # Pool is deep enough to fill every flex starter slot -
+                # enforce the RB and WR/TE lineup floors when choosing who
+                # starts, then take the best player left out of that set.
+                selected = _select_flex_starters(lg, recs, idx)
+                levels[name] = next(
+                    recs[i].stats["_season_points"]
+                    for i in range(len(recs)) if i not in selected)
+            else:
+                # Pool is shallower than depth index (e.g., only 50 FLEX
+                # available but need the 61st). Same bounded degradation as
+                # below - the floors don't apply when there aren't enough
+                # players to fill starters at all, only to choose among them.
+                levels[name] = recs[-1].stats["_season_points"]
+            continue
+
         pts = _sorted_points(pool, name)
         idx = depths[name]
         if len(pts) == 0:
