@@ -152,13 +152,37 @@ def test_tqb_map_uses_2025_teams_not_the_2026_extract():
     assert prices.get("ari") == 1.0
 
 
-def test_a_franchise_with_two_priced_quarterbacks_keeps_the_higher_price():
-    # One roster carried both a starter and a backup TQB unit. Whichever way
-    # collisions resolve, the mapping must not silently drop a price.
+def test_all_21_priced_tqb_units_join_distinct_franchises():
+    # All 21 priced 2025 Team QB units land on 21 *distinct* franchises (e.g.
+    # BUF's Josh Allen and ARI's Kyler Murray were bought by the same roster,
+    # but they are two different franchises, not a collision on one). This
+    # test only proves the join is complete; it does not exercise the
+    # collision-resolution branch in load_prices - see
+    # test_a_franchise_with_two_colliding_tqb_prices_keeps_the_higher_price
+    # for that, which needs a synthetic fixture because no real 2025 entry
+    # collides.
     #
     # Filtered against NFL_TEAMS rather than len(k) == 3: six franchises
     # (GB, KC, LV, NE, SF, TB) have canonical two-letter codes, so a
     # length-3 filter would silently undercount a fully correct join.
     prices = load_prices(REAL_PRICES)
     tqb_keys = [k for k in prices if k.upper() in NFL_TEAMS]
-    assert len(tqb_keys) >= 20
+    assert len(tqb_keys) == 21
+
+
+TQB_COLLISION_STARTERS = "tests/fixtures/tqb_starters_collision.yaml"
+
+
+def test_a_franchise_with_two_colliding_tqb_prices_keeps_the_higher_price():
+    # Two distinct quarterback names ("Quarterback A", "Quarterback B") are
+    # mapped to the same synthetic franchise "ZZZ" by a fixture starter map,
+    # so both rows collapse onto the same output key regardless of the real
+    # 2025 data, which never collides. Checked in both file orders so the
+    # test would fail under "last write wins" as well as "first write wins" -
+    # only max() passes both.
+    higher_first = load_prices("tests/fixtures/prices_tqb_collision_high_first.csv",
+                                tqb_starters_path=TQB_COLLISION_STARTERS)
+    lower_first = load_prices("tests/fixtures/prices_tqb_collision_low_first.csv",
+                               tqb_starters_path=TQB_COLLISION_STARTERS)
+    assert higher_first.get("zzz") == 30.0
+    assert lower_first.get("zzz") == 30.0

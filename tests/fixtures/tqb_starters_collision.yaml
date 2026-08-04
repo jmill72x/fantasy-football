@@ -1,0 +1,8 @@
+# Synthetic starter map for tests/test_fit.py's TQB-collision test only.
+# Two distinct quarterback names deliberately point at the same franchise so
+# the test can exercise load_prices' collision-resolution branch, which the
+# real 2025 data never triggers (all 21 real starters land on distinct
+# franchises).
+starters:
+  "Quarterback A": "ZZZ"
+  "Quarterback B": "ZZZ"
