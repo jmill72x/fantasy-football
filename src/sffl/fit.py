@@ -36,6 +36,8 @@ def load_prices(path, alias_path=DEFAULT_ALIASES):
             normalized = normalize_name(row["player_as_written"])
             if normalized:
                 name = aliases.get(normalized, normalized)
+                if name in aliases:
+                    raise ValueError("alias chain in %s: %r -> %r (chains prevent non-transitive lookup; resolve to final spelling instead)" % (alias_path, normalized, name))
                 out[name] = float(row["price"])
     return out
 

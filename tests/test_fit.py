@@ -1,6 +1,7 @@
 import pytest
 
 from sffl.fit import load_prices, score_fit, choose_policy
+from sffl.identity import Resolver
 from sffl.league import load_league
 from sffl.schema import PlayerProjection
 
@@ -117,3 +118,21 @@ def test_players_genuinely_absent_from_the_extract_stay_unresolved():
     prices = load_prices(REAL_PRICES)
     assert "jordan mason" not in prices or prices.get("jordan mason") != 1.0
     assert "erick all" not in prices or prices.get("erick all") != 13.0
+
+
+def test_no_alias_chains_in_resolver():
+    # Alias chains break the non-transitive lookup in load_prices. This test
+    # catches the whole bug class by ensuring no alias value is itself a key.
+    resolver = Resolver("identity/aliases.yaml")
+    aliases = resolver.aliases
+    keys = set(aliases.keys())
+    values = set(aliases.values())
+    chains = keys & values
+    assert not chains, "alias chains detected: %s" % {k: aliases[k] for k in chains}
+
+
+def test_cameron_skattebo_joins_from_roster_sheet_spelling():
+    # The roster sheet writes "CAM SKATEBO" (one t); our alias must point
+    # directly to "Cameron Skattebo", not through an intermediate spelling.
+    prices = load_prices(REAL_PRICES)
+    assert "cameron skattebo" in prices
