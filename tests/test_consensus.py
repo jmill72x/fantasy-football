@@ -11,6 +11,12 @@ def proj(name, source, set_name, **stats):
                             raw_name=name, set_name=set_name)
 
 
+def proj_with_team_pos(name, source, set_name, team, pos, **stats):
+    return PlayerProjection(name=name, team=team, pos=pos, source=source,
+                            source_year=2026, games=17, stats=dict(stats),
+                            raw_name=name, set_name=set_name)
+
+
 def test_averages_across_sources():
     out = merge([proj("Josh Allen", "fbg", "Consensus", rush_yds=610.0),
                  proj("Josh Allen", "fbg", "Hindery", rush_yds=690.0)])
@@ -73,20 +79,30 @@ def test_per_stat_source_count_with_spread():
     assert out[0].stats["_spread_rush_yds"] == pytest.approx(50.0)
 
 
-def test_resolver_parameter_used():
-    # Demonstrate that resolver parameter is used to resolve names.
-    # Create a Resolver and register a canonical key.
-    resolver = Resolver()
-    resolver.register(["josh allen|BUF|TQB"])
+def test_resolver_merges_aliased_spellings():
+    # Test that resolver parameter actually exercises the resolver branch,
+    # not just p.key(). Use different spellings from aliases.yaml.
+    # Without resolver: "Jamaar Chase" and "Ja'Marr Chase" have different keys.
+    # With resolver: the alias resolves both to the same canonical key.
 
-    # When resolver.resolve() returns a key, projections with different
-    # spelled names can still merge if the resolver returns the same key.
-    # We test this by verifying the resolver path is taken (not just p.key()).
-    out = merge([
-        proj("Josh Allen", "src1", "A", rush_yds=600.0),
-        proj("Josh Allen", "src2", "B", rush_yds=700.0),
-    ], resolver=resolver)
-    # The two projections merge because resolver returns consistent key.
-    assert len(out) == 1
-    assert out[0].stats["rush_yds"] == pytest.approx(650.0)
-    assert out[0].stats["_n_sources"] == 2.0
+    a = proj_with_team_pos("Jamaar Chase", "src1", "A", team="KC", pos="WR",
+                           rec_yds=100.0)
+    b = proj_with_team_pos("Ja'Marr Chase", "src2", "B", team="KC", pos="WR",
+                           rec_yds=110.0)
+
+    # Without resolver: different spellings produce different keys, so 2 records.
+    out_no_resolver = merge([a, b])
+    assert len(out_no_resolver) == 2, (
+        "Without resolver, different spellings must not merge"
+    )
+
+    # With resolver: aliases.yaml resolves "Jamaar Chase" -> "Ja'Marr Chase",
+    # both map to the same canonical key, so they merge into 1 record.
+    resolver = Resolver(alias_path="identity/aliases.yaml")
+    resolver.register(["jamarr chase|KC|WR"])
+    out_with_resolver = merge([a, b], resolver=resolver)
+    assert len(out_with_resolver) == 1, (
+        "With resolver, aliased spellings must merge"
+    )
+    assert out_with_resolver[0].stats["rec_yds"] == pytest.approx(105.0)
+    assert out_with_resolver[0].stats["_n_sources"] == 2.0
