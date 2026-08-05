@@ -17,6 +17,8 @@ is dropped, and its width goes to EST$ (this league's own market fit). See
 from reportlab.lib.colors import HexColor, white, black
 from reportlab.pdfgen import canvas
 
+from sffl.render.rows import overall_board
+
 PAGE_W, PAGE_H = 454.9, 660.0        # iPad Pro 11" M4 portrait, 264ppi
 MARGIN, GUTTER, ROW_H, HEADER_H = 12.0, 9.0, 16.0, 42.0
 COL_W = (PAGE_W - 2 * MARGIN - GUTTER) / 2
@@ -316,13 +318,11 @@ def render_pdf(lg, rows, path, subtitle=""):
     if not rows:
         raise ValueError("render_pdf: rows is empty; nothing to render")
 
-    # Overall board is TQB/RB/WR/TE only - K and DST are flat-priced $1
-    # fillers that appear only together on their own page. Mixing them in
-    # here would also put all six palette colours on one page, a
-    # combination the colourblind validation (see COLORS above) never
-    # covered - it was deliberately validated as two disjoint sets.
-    overall = sorted([r for r in rows if r.pos in ("TQB", "RB", "WR", "TE")],
-                      key=lambda r: -r.my_dollars)
+    # One shared filter with the workbook's Overall Board - see
+    # sffl.render.rows.overall_board, which also records why K and DST are
+    # excluded (flat-priced $1 fillers with their own page, and a six-colour
+    # page the colourblind validation deliberately never covered).
+    overall = overall_board(rows)
     tqb = sorted([r for r in rows if r.pos == "TQB"], key=lambda r: -r.my_dollars)
     rb = sorted([r for r in rows if r.pos == "RB"], key=lambda r: -r.my_dollars)
     wrte = sorted([r for r in rows if r.pos in ("WR", "TE")], key=lambda r: -r.my_dollars)

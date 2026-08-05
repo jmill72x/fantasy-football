@@ -21,6 +21,13 @@ from sffl.value import _pool_of
 DEFAULT_BYES = "leagues/nfl-byes-2026.yaml"
 N_TIERS = 6
 
+# What the Overall Board contains, in both artifacts. K and DST are excluded:
+# they are flat-priced $1 fillers with their own dedicated section, so ranking
+# them inline against real dollar values says nothing, and (on the PDF) it
+# would put all six palette colours on one page - a combination the
+# colourblind validation deliberately never covered.
+OVERALL_POSITIONS = ("TQB", "RB", "WR", "TE")
+
 
 @dataclass
 class BoardRow(object):
@@ -33,6 +40,20 @@ class BoardRow(object):
     avg_pts: float
     my_dollars: float
     est_price: Optional[float]
+
+
+def overall_board(rows):
+    """The Overall Board slice, ranked by MY$ descending.
+
+    Lives here, not in either renderer, because the PDF and the workbook
+    must never disagree about which players the Overall Board contains -
+    the whole reason both artifacts render from one row list. Each renderer
+    used to spell this filter and sort out itself; identical copies, so a
+    future edit to one would have silently diverged the two artifacts with
+    nothing to catch it.
+    """
+    return sorted([r for r in rows if r.pos in OVERALL_POSITIONS],
+                  key=lambda r: -r.my_dollars)
 
 
 def load_byes(path=DEFAULT_BYES):
