@@ -62,12 +62,22 @@ below group 1's Overall Board, Receivers (WR+TE) continuing below group 2's
 elsewhere. Kickers, Team Defense and Team QB are not continued: their group
 3 allocation already covers everyone that matters (one row per team, or the
 whole bounded pool), so extra rows there would not reduce any real cut.
+
+Each continuation starts at the first row its own column actually left
+free, reported by _write_overall_columns - never at a fixed fraction of
+ROW_BUDGET. The two agree only while the Overall pool exceeds its capacity,
+as the production extract does (453 against 124); a leaner extract, a
+different --policy or a filtered pool puts it under, and a fixed start row
+would then print a band of blank rows in the middle of the column while the
+blocks below were still cutting players. Same failure class as the two
+above, different trigger.
 """
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from sffl.identity import NFL_TEAMS
+from sffl.render.rows import overall_board
 
 HEADERS = ["Rank", "Name", "Team/Bye", "Pos", "Tier", "AVG", "MY$", "EST$"]
 
@@ -189,9 +199,20 @@ def _overall_capacity():
 
 def _write_overall_columns(ws, overall):
     """Write the Overall Board title + header + as much data as
-    ROW_BUDGET allows into group 1, spilling into group 2. Returns
-    (shown, cut) - the two slices of `overall` this call wrote and dropped,
-    so the caller can report the cutoff."""
+    ROW_BUDGET allows into group 1, spilling into group 2.
+
+    Returns (shown, cut, next_rows):
+      shown, cut - the two slices of `overall` this call wrote and dropped,
+                   so the caller can report the cutoff;
+      next_rows  - {col0: first free row} for each of the two columns, so a
+                   continuation block starts immediately below whatever was
+                   ACTUALLY written rather than at a fixed fraction of the
+                   budget. Those two numbers coincide only when the Overall
+                   pool fills its capacity (the production case); when it is
+                   smaller, or odd-sized, the columns end at different rows
+                   and a fixed start row would leave one or both of them
+                   holed. See _write_continuation_block.
+    """
     col1, col2 = 1, 1 + GROUP_GAP
     for col0 in (col1, col2):
         _write_title(ws, 1, col0, "OVERALL")
@@ -202,12 +223,14 @@ def _write_overall_columns(ws, overall):
 
     half = -(-len(shown) // 2)   # ceil division: group 1 gets the larger half
     left, right = shown[:half], shown[half:]
+    next_rows = {}
     for col0, chunk in ((col1, left), (col2, right)):
         row = 3
         for r in chunk:
             _write_data_row(ws, row, col0, r)
             row += 1
-    return shown, cut
+        next_rows[col0] = row
+    return shown, cut, next_rows
 
 
 def _block_capacities(lg, rows):
@@ -299,22 +322,34 @@ def _write_position_blocks(lg, ws, rows):
     return shown, cut
 
 
-def _continuation_capacity():
-    """Data rows available for a continuation position block below the
-    Overall Board in group 1 or group 2: the freed half of that column's
-    usable rows (see _overall_capacity), minus the continuation block's own
-    HEADER_ROWS."""
-    per_col_data = ROW_BUDGET - HEADER_ROWS
-    overall_half = per_col_data // 2
-    remaining = per_col_data - overall_half
-    return remaining - HEADER_ROWS
+def _continuation_capacity(start_row):
+    """Data rows available for a continuation position block that begins at
+    `start_row` in group 1 or group 2: everything from its first data row
+    down to ROW_BUDGET, after paying its own HEADER_ROWS (title + header).
+
+    Derived from where the block actually starts, not from a fixed fraction
+    of the budget, so it stays exact whatever the Overall Board above it
+    consumed."""
+    first_data_row = start_row + HEADER_ROWS
+    return max(0, ROW_BUDGET - first_data_row + 1)
 
 
-def _write_continuation_block(ws, col0, title, members):
+def _write_continuation_block(ws, col0, title, members, start_row):
     """Write a continuation position block below the Overall Board in group
     1 or group 2, picking up exactly where group 3's own allocation for
     this position left off - `members` is that position's own cut list, so
     this never re-lists a player already shown elsewhere on the sheet.
+
+    `start_row` is the first free row in this column, reported by
+    _write_overall_columns from what it actually wrote. It must NOT be a
+    fixed fraction of ROW_BUDGET: that is only equal to the real first free
+    row while the Overall pool exceeds its capacity (453 against 124 in the
+    production extract). A leaner extract, a different --policy or a
+    filtered pool puts it under, and a fixed start row then leaves a band of
+    blank printed rows in the middle of the column while the position blocks
+    below are still cutting players - the same allocation failure this
+    module's history shipped three times. See
+    test_a_short_overall_board_leaves_no_blank_gap_above_the_continuation.
 
     Writes nothing (and returns two empty lists) if there is nothing left
     to continue - a position group 3 already covered in full has no cut
@@ -326,13 +361,17 @@ def _write_continuation_block(ws, col0, title, members):
     if not members:
         return [], []
 
-    start_row = 3 + (ROW_BUDGET - HEADER_ROWS) // 2   # right after the Overall Board's data
+    capacity = _continuation_capacity(start_row)
+    if capacity <= 0:
+        # No room even for a title: the Overall Board filled this column to
+        # the budget. Write nothing rather than a headed but empty block.
+        return [], list(members)
+
     _write_title(ws, start_row, col0, title)
     _write_header(ws, start_row + 1, col0)
 
-    capacity = _continuation_capacity()
     shown, cut = members[:capacity], members[capacity:]
-    row = start_row + 2
+    row = start_row + HEADER_ROWS
     for r in shown:
         _write_data_row(ws, row, col0, r)
         row += 1
@@ -384,14 +423,19 @@ def render_xlsx(lg, rows, path):
     for col0 in (1, 1 + GROUP_GAP, 1 + 2 * GROUP_GAP):
         _set_widths(ws, col0)
 
-    # Overall Board: TQB/RB/WR/TE only, same filter as render_pdf's Overall
-    # Board - K/DST are flat-priced $1 fillers with their own block below,
-    # not part of the ranked overall list.
-    overall = sorted([r for r in rows if r.pos in ("TQB", "RB", "WR", "TE")],
-                      key=lambda r: -r.my_dollars)
+    # One shared filter with render_pdf's Overall Board - see
+    # sffl.render.rows.overall_board. Spelling it out separately in each
+    # renderer let a future edit to one silently disagree with the other
+    # about what the Overall Board even contains.
+    col1, col2 = 1, 1 + GROUP_GAP
+    overall = overall_board(rows)
     overall_shown, overall_cut = [], []
+    # With no Overall Board written at all, both columns are free from row 1
+    # and a continuation may start there - never at a fixed offset into
+    # rows that nothing occupies.
+    next_rows = {col1: 1, col2: 1}
     if overall:
-        overall_shown, overall_cut = _write_overall_columns(ws, overall)
+        overall_shown, overall_cut, next_rows = _write_overall_columns(ws, overall)
 
     block_shown, block_cut = _write_position_blocks(lg, ws, rows)
 
@@ -402,11 +446,12 @@ def render_xlsx(lg, rows, path):
     # by capping the Overall Board at half of groups 1 and 2 - Running Backs
     # below group 1's Overall, Receivers below group 2's, matching where the
     # 2022 template put them.
-    col1, col2 = 1, 1 + GROUP_GAP
     rb_extra_shown, rb_extra_cut = _write_continuation_block(
-        ws, col1, "RUNNING BACKS", block_cut.get("RUNNING BACKS", []))
+        ws, col1, "RUNNING BACKS", block_cut.get("RUNNING BACKS", []),
+        next_rows[col1])
     recv_extra_shown, recv_extra_cut = _write_continuation_block(
-        ws, col2, "RECEIVERS (WR + TE)", block_cut.get("RECEIVERS (WR + TE)", []))
+        ws, col2, "RECEIVERS (WR + TE)", block_cut.get("RECEIVERS (WR + TE)", []),
+        next_rows[col2])
 
     wb.save(path)
 

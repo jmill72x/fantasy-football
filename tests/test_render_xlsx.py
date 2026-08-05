@@ -82,6 +82,43 @@ def big_board():
     return rows
 
 
+def lean_board():
+    """A board whose Overall pool is SMALLER than the Overall Board's own
+    capacity (100 TQB/RB/WR/TE rows against a 124-row capacity) while
+    Running Backs and Receivers still overflow group 3's allocation - so
+    the continuation blocks must run, and must start immediately below a
+    short Overall Board rather than at a fixed fraction of the budget."""
+    rows, n = [], 1
+    for pos, count in (("RB", 40), ("WR", 40), ("TE", 10),
+                       ("TQB", 10), ("K", 32), ("DST", 32)):
+        for i in range(count):
+            rows.append(row(n, "%s %d" % (pos, i), pos, 300.0 - 0.2 * n,
+                            est=150.0 - 0.1 * n))
+            n += 1
+    return rows
+
+
+def _populated_rows(ws, col0):
+    """Row numbers carrying content in a column group's first (Rank) column.
+    Every row this module writes - title, header or data - populates it, so
+    it is the one column that reports a group's real vertical extent."""
+    return [r for r in range(1, ws.max_row + 1)
+            if ws.cell(r, col0).value not in (None, "")]
+
+
+def _assert_no_interior_gap(ws, col0):
+    """A column must be solid from row 1 down to its last populated row. A
+    column that is full at the bottom but holed in the middle is the same
+    defect as one that stops short, wearing a disguise - blank printed rows
+    while players are being cut."""
+    used = _populated_rows(ws, col0)
+    assert used, "column %d is entirely empty" % col0
+    missing = sorted(set(range(1, used[-1] + 1)) - set(used))
+    assert not missing, (
+        "column %d has blank row(s) %s above its last populated row (%d) - "
+        "a hole in the middle of a printed column" % (col0, missing, used[-1]))
+
+
 def test_workbook_stays_within_the_two_page_row_budget(tmp_path):
     # The regression this guards against: a future change to margins, scale
     # or row height silently pushing the sheet past two printed pages again.
@@ -165,10 +202,52 @@ def test_no_column_stops_short_of_the_budget_while_players_are_cut(tmp_path):
         "nothing was cut, the test proves nothing"
 
     for col0 in (1, 1 + GROUP_GAP, 1 + 2 * GROUP_GAP):
-        used = 0
-        for r in range(1, ws.max_row + 1):
-            if ws.cell(r, col0).value not in (None, ""):
-                used = r
-        assert used == ROW_BUDGET, (
+        used = _populated_rows(ws, col0)
+        last = used[-1] if used else 0
+        assert last == ROW_BUDGET, (
             "column %d stopped at row %d, short of the %d-row budget, "
-            "while players are still being cut" % (col0, used, ROW_BUDGET))
+            "while players are still being cut" % (col0, last, ROW_BUDGET))
+        # Reaching the budget is not enough. A column can end at row 126 and
+        # still waste a block of printed rows in the middle - which is
+        # exactly what a fixed continuation start row does as soon as the
+        # Overall Board is shorter than its capacity. See
+        # test_a_short_overall_board_leaves_no_blank_gap_above_the_continuation.
+        _assert_no_interior_gap(ws, col0)
+
+
+def test_a_short_overall_board_leaves_no_blank_gap_above_the_continuation(tmp_path):
+    # The regression this guards against: _write_continuation_block used to
+    # start at a FIXED 3 + (ROW_BUDGET - HEADER_ROWS) // 2, independent of
+    # how many rows the Overall Board actually wrote. That is only correct
+    # while the Overall pool exceeds its capacity, as the production extract
+    # does (453 against 124). A leaner extract, a different --policy or a
+    # filtered pool can put it under - and then the continuation block still
+    # starts at the fixed row, leaving a blank band in the middle of the
+    # printed column while the position blocks below are still cutting
+    # players. That is the same allocation failure class that shipped three
+    # times in this module's history, just triggered by different input.
+    from sffl.render.xlsx import GROUP_GAP, _overall_capacity
+
+    rows = lean_board()
+    overall_total = sum(1 for r in rows if r.pos in ("TQB", "RB", "WR", "TE"))
+    assert overall_total < _overall_capacity(), (
+        "this test only proves anything when the Overall pool is smaller "
+        "than its capacity (%d vs %d)" % (overall_total, _overall_capacity()))
+
+    path = str(tmp_path / "board.xlsx")
+    stats = render_xlsx(LG, rows, path)
+    ws = openpyxl.load_workbook(path).active
+
+    assert stats["overall"]["cut"] == 0, "the Overall Board should fit whole here"
+    # ... and yet the continuation blocks must still have run, or a passing
+    # no-gap assertion below would be vacuous.
+    col1, col2 = 1, 1 + GROUP_GAP
+    titles = dict((col, [ws.cell(r, col).value for r in _populated_rows(ws, col)])
+                  for col in (col1, col2))
+    assert "RUNNING BACKS" in titles[col1], (
+        "group 1's Running Backs continuation never ran - nothing to gap-check")
+    assert "RECEIVERS (WR + TE)" in titles[col2], (
+        "group 2's Receivers continuation never ran - nothing to gap-check")
+
+    for col0 in (col1, col2, 1 + 2 * GROUP_GAP):
+        _assert_no_interior_gap(ws, col0)
