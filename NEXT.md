@@ -13,7 +13,7 @@ artifacts render. What remains is Jeff's markup list, TODO B, and the 08-23 data
 | **Plan 1 — scoring foundation & ingest** | ✅ merged, 64 tests |
 | **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections, lineup floors and market calibration — 165 tests |
 | **Plan 3 — Excel + PDF renderers** | ✅ merged — 203 tests. `sffl render` writes both |
-| **Plan 4 — silent auction planner** | ✅ built on branch `silent-auction` — 274 tests. `sffl plan` prints the tradeoff table |
+| **Plan 4 — silent auction planner** | ✅ merged — 279 tests. `sffl plan`; the table is on PDF p17 |
 
 Verify state in one command:
 
