@@ -22,7 +22,7 @@ escalates to a live auction. The premium those rows paid is a live-auction
 settlement, not a sealed bump a bidder could have pre-committed to. Four of
 the fifteen ties on record escalated this way - 2021 at $35 (both bumped $4),
 2022 at $26 (both bumped $0), 2023's four-way at $39, 2025 at $33 - and at
-three of the six bid levels that show a charged premium, EVERY premium came
+three of the nine bid levels that show a charged premium, EVERY premium came
 from a live auction. `winning_bumps_at` therefore reports only ties a sealed
 bump actually settled; `escalated_at` reports the rest.
 
@@ -176,8 +176,8 @@ def ranks_for_bid(history, bid):
     COUNTERFACTUAL INSERTION, not a lookup of observed ranks. For each year on
     record, this bid is placed against that year's twelve sealed bids:
 
-        best  = 1 + (bids strictly above it)      - it wins every tie
-        worst = best + (bids equal to it) - 1     - it loses every tie
+        best  = 1 + (bids strictly above it)          - it wins every tie
+        worst = best + max(bids equal to it, 1) - 1   - it loses every tie
                 (worst == best when nothing ties it)
 
     then best/worst/median are taken across the years. A tie is a real spread,
@@ -251,7 +251,7 @@ def observations_at(history, bid):
     precisely so a never-looked-at bid cannot be reported as a confident
     "never tied". Call this first to find out which case you are in without
     handling an exception: $36 sits in the middle of the plausible range and
-    has never been bid, while $39 has been bid six times.
+    has never been bid, while $39 has been bid seven times.
 
     Unlike the other functions here this one is a pure count of the record,
     so it neither raises on an unobserved bid nor checks the floor.
@@ -364,9 +364,10 @@ def escalated_at(history, bid):
     """Years in which a tie at this bid escalated to a live auction, sorted.
 
     The complement of `winning_bumps_at`: these are the ties no sealed bump
-    could settle, because the top bump was shared. Half the bid levels showing
-    a charged premium are entirely of this kind ($39, $35, $33), and the $26
-    floor has one such year too - 2022, where both franchises bumped $0.
+    could settle, because the top bump was shared. One third of the bid levels
+    showing a charged premium are entirely of this kind - three of nine ($39,
+    $35, $33) - and the $26 floor has one such year too, 2022, where both
+    franchises bumped $0.
 
     A bidder can pre-commit a bump; a bidder cannot pre-commit to winning a
     live auction. Report this as escalation risk, never as a bump.
