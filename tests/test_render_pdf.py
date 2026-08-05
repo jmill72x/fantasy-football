@@ -90,8 +90,11 @@ def test_overall_board_excludes_kickers_and_defense(tmp_path):
     # Given the highest dollar values on the sheet, a K/DST row that leaked
     # into the Overall Board would rank #1 and render on page 1 - well
     # before the K/DST section's own page.
-    rows = [row(1, "Justin Tucker", "K", 999.0, est=999.0),
-            row(2, "Ravens DST", "DST", 998.0, est=998.0)]
+    # Invented names, not real players: this repo is public, and the plan's
+    # global constraints allow no real player name in a committed file. The
+    # name here only has to be findable in the PDF's bytes.
+    rows = [row(1, "Boone Castellane", "K", 999.0, est=999.0),
+            row(2, "Ironmoor DST", "DST", 998.0, est=998.0)]
     rows += [row(i, "RB Player %d" % i, "RB", 50.0 - i, est=30.0)
              for i in range(3, 30)]
     # Every section needs at least one row - see
@@ -104,9 +107,9 @@ def test_overall_board_excludes_kickers_and_defense(tmp_path):
     data = read(path)
     overall_title = data.index(b"Overall Board")
     kdst_title = data.index(b"Kickers & Team Defense")
-    tucker = data.index(b"Justin Tucker")
-    assert overall_title < kdst_title < tucker, (
-        "Justin Tucker (K, $999) must not render on the Overall Board")
+    kicker = data.index(b"Boone Castellane")
+    assert overall_title < kdst_title < kicker, (
+        "Boone Castellane (K, $999) must not render on the Overall Board")
 
 
 def test_a_position_with_zero_rows_raises_rather_than_dropping_its_page(tmp_path):
