@@ -34,9 +34,11 @@ import math
 from dataclasses import dataclass
 from typing import List, Optional
 
+from sffl.league import LeagueProfile
 from sffl.render.rows import BoardRow, overall_board
-from sffl.silent import (SilentBid, escalated_at, observations_at,
-                         ranks_for_bid, tie_rate_at, winning_bumps_at)
+from sffl.silent import (SilentBid, _require_history, escalated_at,
+                         observations_at, ranks_for_bid, tie_rate_at,
+                         winning_bumps_at)
 
 
 @dataclass
@@ -48,20 +50,32 @@ class BidOutcome(object):
     worst_rank: int
     median_rank: float
 
-    # The illustration at the median rank. All three are None when the board
-    # is shallower than that rank - an honest blank beats a fabricated pick.
+    # The illustration at the median rank. All three go None together when the
+    # board is shallower than that rank - an honest blank beats a fabricated
+    # pick. TEST `likely_player`, NOT THE OTHER TWO: `BoardRow.est_price` is
+    # itself Optional, so `likely_est_price is None` also means "this player
+    # has no market estimate" on a pick that exists. Only `likely_player` is a
+    # sound shallow-board sentinel.
     likely_player: Optional[str]
     likely_my_dollars: Optional[float]
     likely_est_price: Optional[float]
 
-    budget_left: int          # lg.budget - bid
+    # BEFORE ANY BUMP. A bump is chosen by the bidder and charged only on a
+    # winning tie, so it cannot be subtracted here without guessing - read
+    # these alongside `winning_bumps` and `escalated_years`, which quantify
+    # that exposure. At the $26 floor it has really been $1 and $2.
+    budget_left: int           # lg.budget - bid
     per_remaining_spot: float  # budget_left / the other roster spots
     discretionary: int         # budget_left beyond $1 for every other spot
 
+    # None means "never submitted, so nothing is known"; 0.0 / [] mean
+    # "submitted, and it never happened". THE TWO ARE NOT INTERCHANGEABLE and
+    # no shortcut may collapse them - `x or None` would silently reclassify
+    # every observed-but-never-tied level ($27, $44, $45) as unknown.
     observations: int                        # times this bid was ever made
-    tie_rate: Optional[float]                # None when observations == 0
-    winning_bumps: Optional[List[int]]       # None when observations == 0
-    escalated_years: Optional[List[int]]     # None when observations == 0
+    tie_rate: Optional[float]                # None iff observations == 0
+    winning_bumps: Optional[List[int]]       # None iff observations == 0
+    escalated_years: Optional[List[int]]     # None iff observations == 0
 
 
 def default_candidates(lg, history):
@@ -72,8 +86,16 @@ def default_candidates(lg, history):
     answer a $50 bid perfectly well - it reports rank 1, correctly - but "rank
     1" is the only thing $50 could ever be told, and a table of bids that all
     say the same thing invites spending $5 to buy nothing.
+
+    Raises ValueError on an empty history or a league profile with no silent
+    auction configured.
     """
-    # type: (object, List[SilentBid]) -> List[int]
+    # type: (LeagueProfile, List[SilentBid]) -> List[int]
+    _require_history(history)
+    if "bid_floor" not in (lg.silent_auction or {}):
+        raise ValueError(
+            "%s configures no silent_auction.bid_floor, so there is no floor "
+            "to build candidate bids from" % lg.name)
     floor = int(lg.silent_auction["bid_floor"])
     return list(range(floor, max(b.bid for b in history) + 1))
 
@@ -81,10 +103,15 @@ def default_candidates(lg, history):
 def plan_bids(lg, rows, history, candidates=None):
     """A `BidOutcome` per candidate bid, in ascending bid order.
 
+    Caller-supplied `candidates` are sorted and de-duplicated, so the result is
+    always one row per distinct bid in bid order however they arrived.
+
     Raises ValueError on an empty board, on a board with no skill-position
-    rows, or (via `sffl.silent`) on a candidate below the league's bid floor.
+    rows, on an empty history, on a league profile with no silent auction
+    configured, or (via `sffl.silent`) on a candidate below the bid floor.
     """
-    # type: (object, List[BoardRow], List[SilentBid], Optional[List[int]]) -> List[BidOutcome]
+    # type: (LeagueProfile, List[BoardRow], List[SilentBid], Optional[List[int]]) -> List[BidOutcome]
+    _require_history(history)
     ranked = overall_board(rows)
     if not ranked:
         raise ValueError(
@@ -97,7 +124,7 @@ def plan_bids(lg, rows, history, candidates=None):
     spots_left = lg.roster_size - 1
 
     out = []  # type: List[BidOutcome]
-    for bid in sorted(candidates):
+    for bid in sorted(set(candidates)):
         best, worst, median = ranks_for_bid(history, bid)
         pick = _row_at(ranked, median)
         budget_left = lg.budget - bid
