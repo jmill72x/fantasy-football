@@ -30,10 +30,38 @@ columns, dropping AVG from the position blocks, a lower scale) touch row
 *count* - so this module truncates deliberately, computing the cutoff from
 the page geometry below rather than hardcoding a player count. See
 ROWS_PER_PAGE / ROW_BUDGET.
+
+GROUP 3 ALLOCATION - every position gets a slot. A first pass filled group
+3's five position blocks greedily in a fixed order (Team QB, then Running
+Backs, then Receivers, Kickers, Team Defense) until ROW_BUDGET ran out.
+Against the real 2026 pool that spent the whole budget on Team QB (32) and
+part of Running Backs (90 of 122) and left Receivers - the single largest
+position group in this league - Kickers and Team Defense with zero rows:
+not even a title. A cheat sheet missing the receiver breakout entirely is
+not usable, so this module now allocates ROW_BUDGET across the five blocks
+deliberately (see _block_capacities): Team QB gets one row per real NFL
+franchise (bounded and small - it always fits whole), Kickers and Team
+Defense each get one row per drafting team (`lg.teams` - what actually
+matters for a pool priced flat at $1), and whatever budget remains is split
+between Running Backs and Receivers in proportion to their real relative
+pool sizes in the run being rendered, not a fixed historical ratio. This
+mirrors the 2022 template's own choice to give every position some room
+rather than exhausting the page on whichever section happens to come first.
+
+THE OVERALL BOARD does not consume the entirety of groups 1 + 2 either,
+again matching the 2022 file: there, "OVERALL" took roughly half of each
+column's usable rows (57 of ~116), with the remainder of those columns
+carrying supplementary position content in the original snaking layout.
+This module does not replicate that snake (group 3 alone now guarantees
+full position coverage on its own), but keeps the Overall Board's own
+proportion - see _overall_capacity - so the top-of-board cross-position
+ranking does not overwhelm the sheet the way a full-capacity fill would.
 """
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
+
+from sffl.identity import NFL_TEAMS
 
 HEADERS = ["Rank", "Name", "Team/Bye", "Pos", "Tier", "AVG", "MY$", "EST$"]
 
@@ -143,9 +171,14 @@ def _write_data_row(ws, row, col0, r):
 
 
 def _overall_capacity():
-    """Max Overall Board rows across group 1 + group 2 combined: each
-    column gets the full ROW_BUDGET, minus its own title + header rows."""
-    return 2 * (ROW_BUDGET - HEADER_ROWS)
+    """Max Overall Board rows across group 1 + group 2 combined.
+
+    Each column has ROW_BUDGET - HEADER_ROWS usable data rows; the Overall
+    Board gets half of that per column, matching the 2022 template's own
+    proportion (its OVERALL block took 57 of ~116 usable rows per column,
+    not the full column) rather than filling every column edge to edge."""
+    per_col_data = ROW_BUDGET - HEADER_ROWS
+    return 2 * (per_col_data // 2)
 
 
 def _write_overall_columns(ws, overall):
@@ -171,26 +204,66 @@ def _write_overall_columns(ws, overall):
     return shown, cut
 
 
-def _write_position_blocks(ws, rows):
+def _block_capacities(lg, rows):
+    """Data-row capacity for each of the five position blocks in group 3
+    (not counting each block's own HEADER_ROWS - the caller pays that
+    separately), derived from ROW_BUDGET so every position is guaranteed a
+    non-empty slot rather than however much a greedy fill leaves over. See
+    the module docstring's GROUP 3 ALLOCATION note.
+
+    Two-phase allocation, entirely in data rows:
+      1. Guaranteed minimums for the three positions whose real pool size is
+         small and bounded: Team QB (one per real NFL franchise - capped at
+         len(NFL_TEAMS), the same authority `sffl.cli.cmd_render` already
+         uses for what counts as a franchise - so it always fits whole),
+         Kickers and Team Defense (one per drafting team - `lg.teams` - the
+         number that actually matters for a pool priced flat at $1).
+      2. Whatever budget remains ("stretch") is split between Running Backs
+         and Receivers (WR+TE - one pool, never a separate ladder) in
+         proportion to their real relative pool sizes in this run, not a
+         fixed historical ratio, so the split tracks the data being
+         rendered rather than a snapshot of the 2022 file.
+    """
+    header_overhead = len(POSITION_BLOCKS) * HEADER_ROWS
+    data_budget = ROW_BUDGET - header_overhead
+
+    min_tqb = len(NFL_TEAMS)
+    min_k = lg.teams
+    min_dst = lg.teams
+    stretch = max(0, data_budget - (min_tqb + min_k + min_dst))
+
+    rb_n = sum(1 for r in rows if r.pos == "RB")
+    recv_n = sum(1 for r in rows if r.pos in ("WR", "TE"))
+    pool_n = rb_n + recv_n
+    rb_cap = int(round(stretch * rb_n / pool_n)) if pool_n else 0
+    recv_cap = stretch - rb_cap
+
+    return {
+        "TEAM QB": min_tqb,
+        "RUNNING BACKS": rb_cap,
+        "RECEIVERS (WR + TE)": recv_cap,
+        "KICKERS": min_k,
+        "TEAM DEFENSE": min_dst,
+    }
+
+
+def _write_position_blocks(lg, ws, rows):
     """Stack position blocks in group 3, exactly as the 2022 file stacks
     QUARTERBACKS / RUNNING BACKS / WIDE RECEIVERS / TIGHT ENDS / KICKERS /
     TEAM DEFENSE - collapsed to five blocks here since WR and TE share one
     pool in this league.
 
-    Fills blocks in POSITION_BLOCKS order against a single ROW_BUDGET shared
-    by the whole column (group 3 is one column, unlike the Overall Board's
-    two): each block gets its title + header rows plus as many of its
-    highest-$ members as remain, then the next block continues in whatever
-    budget is left. A block that arrives after the budget is already spent
-    is skipped entirely (not even its title/header), since printing an empty
-    section's headers with nothing under them isn't a page a reader can use.
+    Each block gets its own fixed capacity from _block_capacities - not
+    whatever a previous block left over - so every position with any real
+    members gets a non-empty title, header and at least its guaranteed
+    share of rows.
 
     Returns (shown, cut): dicts of block title -> list of BoardRow shown /
     count cut, for the caller to report.
     """
     col0 = 1 + 2 * GROUP_GAP
     row = 1
-    remaining = ROW_BUDGET
+    capacities = _block_capacities(lg, rows)
     shown = {}
     cut = {}
     for title, positions in POSITION_BLOCKS:
@@ -198,21 +271,17 @@ def _write_position_blocks(ws, rows):
                           key=lambda r: -r.my_dollars)
         if not members:
             continue
-        if remaining < HEADER_ROWS:
-            cut[title] = len(members)
-            continue
 
         _write_title(ws, row, col0, title)
         row += 1
         _write_header(ws, row, col0)
         row += 1
-        remaining -= HEADER_ROWS
 
-        block_shown, block_cut = members[:remaining], members[remaining:]
+        cap = capacities[title]
+        block_shown, block_cut = members[:cap], members[cap:]
         for r in block_shown:
             _write_data_row(ws, row, col0, r)
             row += 1
-        remaining -= len(block_shown)
 
         shown[title] = block_shown
         if block_cut:
@@ -228,22 +297,20 @@ def render_xlsx(lg, rows, path):
     the same "raise clearly" rule `render_pdf` follows.
 
     Returns a stats dict describing any truncation this call applied to fit
-    the two-page ROW_BUDGET:
-        total       - len(rows), everyone this call was asked to render
-        made        - distinct players actually written anywhere on the
-                       sheet (the Overall Board and the position blocks are
-                       independently truncated - see _write_position_blocks -
-                       so a player cut from one can still appear via the
-                       other; this is the true union, not just Overall's)
-        cut         - total - made
-        last_dollar - the lowest MY$ among everyone who made the sheet, i.e.
-                       "the sheet covers everyone worth more than $X" - or
-                       None if nothing was written (only possible if every
-                       position pool is empty, since `rows` is non-empty)
-        overall_shown / overall_cut - the Overall Board's own split, for
-                       detail beyond the headline made/cut/last_dollar
-        block_shown / block_cut - per-position-block counts in group 3, for
-                       whichever blocks got a partial or zero allocation
+    the two-page ROW_BUDGET. Reported per section - a single global
+    shown/cut number hides exactly the failure mode this module exists to
+    avoid: it can look "mostly fine" while an entire position is silently
+    missing (see the module docstring's GROUP 3 ALLOCATION note).
+        total    - len(rows), everyone this call was asked to render
+        overall  - {"shown": n, "cut": n} for the Overall Board (group 1+2)
+        sections - {block title: {"shown": n, "cut": n}} for each of the
+                   five position blocks in group 3 that had at least one
+                   real member; a position absent from `rows` entirely does
+                   not get an entry (there is nothing to report), but every
+                   position that DID have members is guaranteed "shown" > 0
+                   by _block_capacities - if this call fails to write a
+                   position's title at all, that is the bug this stats dict
+                   is here to catch, not a valid outcome.
     A full board never needs this - see the caller (`sffl.cli.cmd_render`)
     for how it's reported.
     """
@@ -277,32 +344,20 @@ def render_xlsx(lg, rows, path):
     if overall:
         overall_shown, overall_cut = _write_overall_columns(ws, overall)
 
-    block_shown, block_cut = _write_position_blocks(ws, rows)
+    block_shown, block_cut = _write_position_blocks(lg, ws, rows)
 
     wb.save(path)
 
-    # The Overall Board and each position block are truncated independently
-    # against their own share of ROW_BUDGET (see _write_position_blocks), so
-    # a player cut from the Overall Board's 248-row cap can still appear via
-    # their position's own block, or vice versa - the two views don't cut at
-    # the same rank. "made the sheet" has to be the union of everyone
-    # written anywhere, not just the Overall Board's count, or this would
-    # understate real coverage.
-    shown_union = {}
-    for r in overall_shown:
-        shown_union[(r.name, r.team, r.pos)] = r
-    for members in block_shown.values():
-        for r in members:
-            shown_union[(r.name, r.team, r.pos)] = r
+    sections = {}
+    for title, _positions in POSITION_BLOCKS:
+        if title in block_shown or title in block_cut:
+            sections[title] = {
+                "shown": len(block_shown.get(title, [])),
+                "cut": block_cut.get(title, 0),
+            }
 
     return {
         "total": len(rows),
-        "made": len(shown_union),
-        "cut": len(rows) - len(shown_union),
-        "last_dollar": (min(r.my_dollars for r in shown_union.values())
-                         if shown_union else None),
-        "overall_shown": len(overall_shown),
-        "overall_cut": len(overall_cut),
-        "block_shown": dict((t, len(m)) for t, m in block_shown.items()),
-        "block_cut": block_cut,
+        "overall": {"shown": len(overall_shown), "cut": len(overall_cut)},
+        "sections": sections,
     }
