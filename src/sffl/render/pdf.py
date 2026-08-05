@@ -41,11 +41,42 @@ PLAN_ROW_H = 13.5
 # Everything on a page must clear the footer caveat, whose baseline is y=5.
 FOOTER_TOP = 12.0
 
-# Column offsets inside the silent-auction table, from the right column's left
-# edge. LEFT and DISCR are right-aligned at theirs; the rest are left-aligned.
-# Everything from PLAN_X_PICK to COL_W belongs to the pick range.
-(PLAN_X_BID, PLAN_X_RANK, PLAN_X_TIE, PLAN_X_BUMP, PLAN_X_LIVE,
- PLAN_X_LEFT, PLAN_X_DISCR, PLAN_X_PICK) = (0, 17, 36, 57, 77, 106, 128, 132)
+# Columns inside the silent-auction table: name -> (left edge, width, align),
+# measured from the right column's left edge and summing to exactly COL_W.
+#
+# THE WIDTHS ARE THE GUARD. Every string this block draws goes through `_cell`,
+# which raises rather than letting a cell run into its neighbour. Before that
+# guard existed only PICK was checked, and BUMP had 3.2pt of clearance against
+# "1,2,2,2" while TIE had 2.7pt against "no data" - one more year of floor ties
+# ("1,2,2,2,2" is 21.4pt) or a bid level that escalated three times
+# ("'21 '22 '23" is 24.6pt) would have printed one column through the next with
+# nothing failing. Two columns overprinted on an auction table is unreadable at
+# a table under time pressure, so the render stops instead.
+#
+# Each width therefore carries deliberate headroom for the widest string the
+# 2027 file could hold, plus PLAN_CELL_GAP of white space:
+#   BID    "$45" bold 7               11.7 + gap
+#   RANK   "11-12"                    15.3 + gap
+#   TIE1+  "no data" (widest, not a rate)  18.4 + gap
+#   TIE2+  same
+#   BUMP   "1,2,2,2,2" - six floor ties    21.4 + gap
+#   LIVE   "'21 '22 '23" - three escalations 24.6 + gap
+#   LEFT   header "LEFT*"             14.5 + gap
+#   DISCR  header "DISCR*"            17.5 + gap
+#   PICK   whatever is left; `_fit` shortens names into it.
+PLAN_CELL_GAP = 2.0
+PLAN_COLS = (
+    ("BID", 0.0, 14.0, "left"),
+    ("RANK", 14.0, 18.0, "left"),
+    ("TIE1+", 32.0, 21.0, "left"),
+    ("TIE2+", 53.0, 21.0, "left"),
+    ("BUMP", 74.0, 24.0, "left"),
+    ("LIVE", 98.0, 27.0, "left"),
+    ("LEFT*", 125.0, 17.0, "right"),
+    ("DISCR*", 142.0, 20.0, "right"),
+    ("PICK RANGE", 162.0, COL_W - 162.0, "left"),
+)
+PLAN_COL = dict((name, (x, w, align)) for name, x, w, align in PLAN_COLS)
 
 # Validated with dataviz/scripts/validate_palette.js, light mode, --pairs all.
 #
@@ -115,6 +146,64 @@ def _fit(c, text, font, size, width):
     while short and c.stringWidth(short + "…", font, size) > width:
         short = short[:-1]
     return short + "…" if short else ""
+
+
+def _cell(c, x, y, text, font, size, column, width=None):
+    """Draw one silent-auction cell, or raise if it would overlap its neighbour.
+
+    THE SAME DISCIPLINE AS `PLAN_ROW_H`, ONE AXIS OVER. That constant refuses a
+    table too tall for the page because a LEAGUE SPEND box silently pushed off
+    the bottom is invisible to any byte-search test. A cell too wide for its
+    column is invisible in exactly the same way - the PDF renders, every string
+    is findable, and the page simply prints BUMP through LIVE. So width is
+    checked here, at the only place that knows both the string and the space.
+
+    Wrong numbers must never be produced silently, and two numbers printed on
+    top of each other is the worst version of that: it is not even wrong, it is
+    unreadable, and it is discovered at the table on 2026-08-26.
+
+    Callers that CAN shorten (the pick range) run `_fit` first and arrive
+    already inside the width; this then guarantees the result. Callers that
+    cannot - a tie rate, a bump list - simply have to fit, and the message says
+    which column, which string and by how much when they do not.
+    """
+    if not text:
+        return
+    x0, w, align = PLAN_COL[column]
+    allowed = (w if width is None else width) - PLAN_CELL_GAP
+    used = c.stringWidth(text, font, size)
+    if used > allowed:
+        raise ValueError(
+            "the silent-auction table's %s column cannot hold %r: it needs "
+            "%.1fpt of the %.1fpt available (column %.1fpt less a %.1fpt gap) "
+            "and would print through the column beside it. Widen %s in "
+            "PLAN_COLS and take the space from PICK RANGE."
+            % (column, text, used, allowed, w, PLAN_CELL_GAP, column))
+    if align == "right":
+        # THE GAP GOES ON THE SIDE THE NEXT COLUMN IS ON. Right-aligning flush
+        # to `x0 + w` spends the whole allowance on the left and leaves zero
+        # white space on the right, so DISCR's "$72" ended on the exact pixel
+        # PICK RANGE starts - inside the width check and still touching. Pull
+        # the anchor in by the gap instead.
+        c.drawRightString(x + x0 + w - PLAN_CELL_GAP, y, text)
+    else:
+        c.drawString(x + x0, y, text)
+
+
+def _line(c, x, y, text, font, size, width, what):
+    """A full-width line of prose in the block: note, legend or heading.
+
+    Same rule as `_cell` and for the same reason - the notes and the legend run
+    the full width of the right column, and a line that overruns it prints into
+    the page margin or off the sheet. Neither shows up in a byte search either.
+    """
+    used = c.stringWidth(text, font, size)
+    if used > width:
+        raise ValueError(
+            "the silent-auction %s line %r needs %.1fpt but the column is "
+            "%.1fpt wide; it would print off the edge of the page. Break the "
+            "line." % (what, text, used, width))
+    c.drawString(x, y, text)
 
 
 class Sheet:
@@ -302,7 +391,7 @@ class Sheet:
             notes.append("at each end of the rank span. The room will not draft in")
             notes.append("that order. RANK is stated as a fact and priced at nothing.")
         for line in notes:
-            c.drawString(x, y, line)
+            _line(c, x, y, line, "Helvetica", 5.8, COL_W, "note")
             y -= 7
         y -= 2
 
@@ -311,14 +400,11 @@ class Sheet:
 
         c.setFont("Helvetica-Bold", 5)
         c.setFillColor(MUTED)
-        for label, dx in (("BID", PLAN_X_BID), ("RANK", PLAN_X_RANK),
-                          ("TIE", PLAN_X_TIE), ("BUMP", PLAN_X_BUMP),
-                          ("LIVE", PLAN_X_LIVE), ("PICK RANGE", PLAN_X_PICK)):
-            c.drawString(x + dx, y, label)
-        c.drawRightString(x + PLAN_X_LEFT, y, "LEFT")
-        c.drawRightString(x + PLAN_X_DISCR, y, "DISCR")
+        for name, _x0, _w, _align in PLAN_COLS:
+            _cell(c, x, y, name, "Helvetica-Bold", 5, name)
         y -= 3
 
+        pick_w = PLAN_COL["PICK RANGE"][1] - PLAN_CELL_GAP
         for i, o in enumerate(outcomes):
             ry = y - (i + 1) * PLAN_ROW_H
             if i % 2 == 1:
@@ -327,42 +413,50 @@ class Sheet:
             ty = ry + 4.5
 
             c.setFillColor(black)
-            c.setFont("Helvetica-Bold", 7)
-            c.drawString(x + PLAN_X_BID, ty, "$%d" % o.bid)
+            _cell(c, x, ty, "$%d" % o.bid, "Helvetica-Bold", 7, "BID")
 
             c.setFont("Helvetica", 6)
             span = ("%d" % o.best_rank if o.best_rank == o.worst_rank
                     else "%d-%d" % (o.best_rank, o.worst_rank))
-            c.drawString(x + PLAN_X_RANK, ty, span)
-            c.drawRightString(x + PLAN_X_LEFT, ty, "$%d" % o.budget_left)
-            c.drawRightString(x + PLAN_X_DISCR, ty, "$%d" % o.discretionary)
+            _cell(c, x, ty, span, "Helvetica", 6, "RANK")
+            # PRE-BUMP, and the header's asterisk plus the legend say so. A
+            # bump is charged only on a winning tie, so it cannot be netted off
+            # here without guessing which tie you win.
+            _cell(c, x, ty, "$%d" % o.budget_left, "Helvetica", 6, "LEFT*")
+            _cell(c, x, ty, "$%d" % o.discretionary, "Helvetica", 6, "DISCR*")
 
-            tie, bump, live = tie_cells(o)
+            join, field, bump, live = tie_cells(o)
             c.setFont("Helvetica", 5.5)
             # Absence of evidence is muted; a measurement is not. "no data"
             # and "0%" must never be mistaken for each other at arm's length
             # on an iPad, so they differ in wording AND in weight.
             c.setFillColor(MUTED if not o.observations else black)
-            c.drawString(x + PLAN_X_TIE, ty, tie)
-            c.drawString(x + PLAN_X_BUMP, ty, bump)
-            c.drawString(x + PLAN_X_LIVE, ty, live)
+            _cell(c, x, ty, join, "Helvetica", 5.5, "TIE1+")
+            _cell(c, x, ty, field, "Helvetica", 5.5, "TIE2+")
+            _cell(c, x, ty, bump, "Helvetica", 5.5, "BUMP")
+            _cell(c, x, ty, live, "Helvetica", 5.5, "LIVE")
 
             c.setFillColor(MUTED)
-            c.drawString(x + PLAN_X_PICK, ty,
-                         _fit(c, pick_range(o), "Helvetica", 5.5,
-                              COL_W - PLAN_X_PICK))
+            _cell(c, x, ty,
+                  _fit(c, pick_range(o), "Helvetica", 5.5, pick_w),
+                  "Helvetica", 5.5, "PICK RANGE")
 
         y -= len(outcomes) * PLAN_ROW_H + 7
         c.setFont("Helvetica", 5.2)
         c.setFillColor(MUTED)
+        # TWO TIE COLUMNS, TWO MEANINGS, and the legend has to keep them apart
+        # without inviting anyone to average them. TIE1+ is the bidder's own
+        # exposure and is always the larger; TIE2+ is what the field did among
+        # itself. The wording names WHO is in each count.
         for line in (
-            "TIE = share of years 2+ teams bid this. \"no data\" = never bid,",
-            "so nothing is known there - it is not a measured 0%. BUMP = bumps",
-            "actually charged to win a tie. LIVE = a year the tie escalated to a",
-            "live auction, where money was paid above the bid: an empty BUMP",
-            "beside a LIVE year is not a free tie.",
+            "TIE1+ = share of the 5 years with a team ALREADY at this exact bid: join it and you are",
+            "in a tie. TIE2+ = share with 2+ teams tied EACH OTHER there, so TIE1+ is never the",
+            "smaller. \"no data\" in both = never bid, so nothing is known: NOT a measured 0%.",
+            "BUMP = bumps actually charged to win a tie. LIVE = a year the tie went to a live auction,",
+            "where money was paid over the bid: an empty BUMP beside a LIVE year is not a free tie.",
+            "*LEFT and DISCR are PRE-BUMP: win a tie and the bump comes out of them too.",
         ):
-            c.drawString(x, y, line)
+            _line(c, x, y, line, "Helvetica", 5.2, COL_W, "legend")
             y -= 6.5
         return y
 

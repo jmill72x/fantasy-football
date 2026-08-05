@@ -246,7 +246,7 @@ def bids_for_rank(history, rank):
 def observations_at(history, bid):
     """How many times this exact bid has ever been submitted.
 
-    ZERO EVIDENCE AND STRONG EVIDENCE MUST NOT LOOK ALIKE. `tie_rate_at` and
+    ZERO EVIDENCE AND STRONG EVIDENCE MUST NOT LOOK ALIKE. The tie rates and
     `winning_bumps_at` refuse to answer for a bid nobody has ever submitted,
     precisely so a never-looked-at bid cannot be reported as a confident
     "never tied". Call this first to find out which case you are in without
@@ -302,12 +302,37 @@ def _escalated(group):
     return sum(1 for b in group if b.bump == top) >= 2
 
 
-def tie_rate_at(history, bid):
-    """Fraction of YEARS in which two or more franchises submitted this bid.
+def _years_with_at_least(history, bid, minimum):
+    """Fraction of YEARS holding at least `minimum` bids at exactly this level.
 
     The denominator is years, not rows: five years of history means five
-    chances to tie, so a bid tied in all five scores 1.0. Ranks 11-12 have
-    tied at the $26 floor in every year on record.
+    chances, so something seen in all five scores 1.0.
+    """
+    # type: (List[SilentBid], int, int) -> float
+    per_year = {}  # type: Dict[int, int]
+    for b in history:
+        per_year.setdefault(b.year, 0)
+        if b.bid == bid:
+            per_year[b.year] += 1
+    hits = sum(1 for count in per_year.values() if count >= minimum)
+    return float(hits) / float(len(per_year))
+
+
+def field_tie_rate_at(history, bid):
+    """Fraction of YEARS in which two or more franchises submitted this bid.
+
+    THE FIELD TYING AMONG ITSELF - a fact about the record, and the narrower of
+    the two tie statistics here. It asks how often this exact number produced a
+    tie between the twelve bids actually submitted. Ranks 11-12 have tied at
+    the $26 floor in every year on record, so the floor scores 1.0.
+
+    Read as a bidder's own tie risk it quietly assumes one of those two rows
+    was YOURS. That assumption is right for the rank arithmetic in
+    `ranks_for_bid` - `worst = above + max(tied, 1)` reproduces 2024's ranks 11
+    and 12 at the floor exactly because it inserts you into the tie - but it is
+    the wrong question when deciding whether to bid a level at all. Use
+    `join_tie_rate_at` for that, and see its docstring for how far the two
+    diverge ($30: 40% here, 100% there).
 
     Raises ValueError for a bid below the floor, for a bid nobody has ever
     submitted (see `observations_at` - 0.0 must mean "never tied", never "never
@@ -317,13 +342,38 @@ def tie_rate_at(history, bid):
     _require_history(history)
     _check_floor(bid)
     _require_observed(history, bid)
-    per_year = {}  # type: Dict[int, int]
-    for b in history:
-        per_year.setdefault(b.year, 0)
-        if b.bid == bid:
-            per_year[b.year] += 1
-    tied = sum(1 for count in per_year.values() if count >= 2)
-    return float(tied) / float(len(per_year))
+    return _years_with_at_least(history, bid, 2)
+
+
+def join_tie_rate_at(history, bid):
+    """Fraction of YEARS in which SOMEONE WAS ALREADY SITTING at this bid.
+
+    YOUR exposure if you join it - one franchise already there is all it takes
+    to put you in a tie, and a tie is settled by a bump or, when the bumps
+    match, by a live auction. So the years that matter to a bidder choosing a
+    number are the years anybody at all submitted it, not only the years two
+    other franchises collided on it.
+
+    ALWAYS >= `field_tie_rate_at`, and the gap is widest exactly where the
+    stakes are: $30 has held a bid in all five years (1.0) while only two of
+    those years saw two teams there (0.4); $33, $35, $38 and $39 all read 0.8
+    against 0.2. Reporting only the narrower number understates the chance of
+    needing a bump at four of the five levels the top of this board sits on.
+
+    IT IS STILL THE HISTORICAL FIELD, NOT A PREDICTION of 2026's twelve bids.
+    It says how often this number has been occupied, which is the best evidence
+    available about whether it will be occupied again. It cannot know who else
+    is deciding to move.
+
+    Raises ValueError for a bid below the floor, for a bid nobody has ever
+    submitted (0.0 must mean "nobody was ever there", never "never looked"), or
+    on an empty history.
+    """
+    # type: (List[SilentBid], int) -> float
+    _require_history(history)
+    _check_floor(bid)
+    _require_observed(history, bid)
+    return _years_with_at_least(history, bid, 1)
 
 
 def winning_bumps_at(history, bid):

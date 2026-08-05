@@ -153,8 +153,11 @@ def _board_rows(lg, pool, args):
 # The header, row format and legend of the silent-auction tradeoff table, in
 # the terminal. Deliberately the same columns, the same order and the same
 # three tie states as the PDF's management page - `sffl.plan.tie_cells` and
-# `pick_range` are the single source for the wording of both.
-_PLAN_ROW = "  %-5s %-7s %-8s %-9s %-6s %-6s %-7s %s"
+# `pick_range` are the single source for the wording of both. That includes
+# BOTH tie columns: TIE1+ (someone was already there) and TIE2+ (the field tied
+# itself). The terminal has width the page does not, so it spells the headers
+# out where the PDF has to abbreviate; the meanings are identical.
+_PLAN_ROW = "  %-5s %-7s %-8s %-8s %-9s %-6s %-7s %-7s %s"
 
 
 def _print_plan(outcomes, bid_floor):
@@ -168,22 +171,28 @@ def _print_plan(outcomes, bid_floor):
           "is a fact and")
     print("  is priced at nothing here; whether finishing first is worth "
           "anything is unmeasured.")
-    print(_PLAN_ROW % ("BID", "RANK", "TIE", "BUMP", "LIVE", "LEFT", "DISCR",
-                       "PICK RANGE (ILLUSTRATION)"))
+    print(_PLAN_ROW % ("BID", "RANK", "TIE1+", "TIE2+", "BUMP", "LIVE",
+                       "LEFT*", "DISCR*", "PICK RANGE (ILLUSTRATION)"))
     for o in outcomes:
-        tie, bump, live = tie_cells(o)
+        join, field, bump, live = tie_cells(o)
         span = ("%d" % o.best_rank if o.best_rank == o.worst_rank
                 else "%d-%d" % (o.best_rank, o.worst_rank))
-        print(_PLAN_ROW % ("$%d" % o.bid, span, tie, bump, live,
+        print(_PLAN_ROW % ("$%d" % o.bid, span, join, field, bump, live,
                            "$%d" % o.budget_left, "$%d" % o.discretionary,
                            pick_range(o)))
-    print("  TIE = share of years 2+ teams bid this. \"no data\" = never bid, "
-          "so nothing is")
-    print("  known there - it is NOT a measured 0%. BUMP = bumps actually "
-          "charged to win a")
-    print("  tie. LIVE = a year the tie escalated to a live auction, where "
-          "money was paid")
-    print("  above the bid: an empty BUMP beside a LIVE year is not a free tie.")
+    print("  TIE1+ = share of the 5 years with a team ALREADY at this exact "
+          "bid: join it and")
+    print("  you are in a tie. TIE2+ = share with 2+ teams tied EACH OTHER "
+          "there, so TIE1+ is")
+    print("  never the smaller. \"no data\" in both = never bid, so nothing is "
+          "known: it is NOT")
+    print("  a measured 0%. BUMP = bumps actually charged to win a tie. LIVE = "
+          "a year the tie")
+    print("  went to a live auction, where money was paid over the bid: an "
+          "empty BUMP beside")
+    print("  a LIVE year is not a free tie. *LEFT and DISCR are PRE-BUMP - win "
+          "a tie and the")
+    print("  bump comes out of them too.")
 
 
 def cmd_ingest(args):
@@ -376,7 +385,13 @@ def cmd_plan(args):
 
     try:
         history = load_bid_history(args.bids)
-    except OSError as e:
+    except (OSError, ValueError) as e:
+        # BOTH, and ValueError is the likelier of the two. OSError is a missing
+        # or unreadable file; ValueError is what `load_bid_history` raises for
+        # a MALFORMED one - a missing column, an unparseable number, a
+        # cap_cost under its own bid, a duplicated or transposed rank - and it
+        # raises with a message naming the file, the line and the problem.
+        # Catching only OSError threw that message away behind a traceback.
         print("error: cannot read the bid history: %s" % e, file=sys.stderr)
         return 1
 
