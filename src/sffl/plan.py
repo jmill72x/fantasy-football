@@ -26,11 +26,21 @@ THE LIKELY PICK IS AN ILLUSTRATION, NOT A PREDICTION, and every surface that
 renders it must say so. It assumes eleven other franchises value players in
 exactly our order.
 
-`tie_rate`, `winning_bumps` and `escalated_years` are Optional and are None -
-never 0.0, never [] - at a bid nobody has ever submitted. $28, $29 and $36 sit
-inside the plausible range and have never been bid; reporting "0% tie risk"
-there would be a fabrication read as fact. `observations` says which case you
-are in, and a renderer must print "no data" rather than a number when it is 0.
+TWO TIE NUMBERS, NOT ONE, and they answer different questions. `join_tie_rate`
+is the share of years somebody was ALREADY at that exact bid - join it and you
+are in a tie. `field_tie_rate` is the share of years two or more franchises
+tied each OTHER there. The second is the narrower fact about the record; the
+first is the bidder's own exposure, and it is much the larger number at the
+levels this board's top actually sits on ($30: 100% against 40%). Jeff ruled on
+2026-08-05 that both go on the page, because which one he wants depends on how
+he is thinking at the table. Neither may be labelled simply "tie".
+
+`join_tie_rate`, `field_tie_rate`, `winning_bumps` and `escalated_years` are
+Optional and are None - never 0.0, never [] - at a bid nobody has ever
+submitted. $28, $29 and $36 sit inside the plausible range and have never been
+bid; reporting "0% tie risk" there would be a fabrication read as fact.
+`observations` says which case you are in, and a renderer must print "no data"
+rather than a number when it is 0.
 """
 
 import math
@@ -40,8 +50,8 @@ from typing import List, Optional, Tuple
 from sffl.league import LeagueProfile
 from sffl.render.rows import BoardRow, overall_board
 from sffl.silent import (SilentBid, _require_history, escalated_at,
-                         observations_at, ranks_for_bid, tie_rate_at,
-                         winning_bumps_at)
+                         field_tie_rate_at, join_tie_rate_at, observations_at,
+                         ranks_for_bid, winning_bumps_at)
 
 
 @dataclass
@@ -74,12 +84,12 @@ class BidOutcome(object):
     best_player: Optional[str]
     worst_player: Optional[str]
 
-    # BEFORE ANY BUMP. A bump is chosen by the bidder and charged only on a
-    # winning tie, so it cannot be subtracted here without guessing - read
-    # these alongside `winning_bumps` and `escalated_years`, which quantify
-    # that exposure. At the $26 floor it has really been $1 and $2.
+    # BEFORE ANY BUMP, and every surface must say so. A bump is chosen by the
+    # bidder and charged only on a winning tie, so it cannot be subtracted here
+    # without guessing - read these alongside `winning_bumps` and
+    # `escalated_years`, which quantify that exposure. $39 shows $71 left, but
+    # 2023's winner at $39 paid $42 and had $68.
     budget_left: int           # lg.budget - bid
-    per_remaining_spot: float  # budget_left / the other roster spots
     discretionary: int         # budget_left beyond $1 for every other spot
 
     # None means "never submitted, so nothing is known"; 0.0 / [] mean
@@ -87,7 +97,12 @@ class BidOutcome(object):
     # no shortcut may collapse them - `x or None` would silently reclassify
     # every observed-but-never-tied level ($27, $44, $45) as unknown.
     observations: int                        # times this bid was ever made
-    tie_rate: Optional[float]                # None iff observations == 0
+
+    # Two different questions - see the module docstring, and never print
+    # either under a bare "TIE" heading. All four fields below go None
+    # together, exactly when observations == 0.
+    join_tie_rate: Optional[float]           # years SOMEONE was already there
+    field_tie_rate: Optional[float]          # years 2+ franchises tied there
     winning_bumps: Optional[List[int]]       # None iff observations == 0
     escalated_years: Optional[List[int]]     # None iff observations == 0
 
@@ -156,10 +171,10 @@ def plan_bids(lg, rows, history, candidates=None):
             best_player=(best_pick.name if best_pick else None),
             worst_player=(worst_pick.name if worst_pick else None),
             budget_left=budget_left,
-            per_remaining_spot=float(budget_left) / spots_left,
             discretionary=budget_left - spots_left,
             observations=seen,
-            tie_rate=(tie_rate_at(history, bid) if seen else None),
+            join_tie_rate=(join_tie_rate_at(history, bid) if seen else None),
+            field_tie_rate=(field_tie_rate_at(history, bid) if seen else None),
             winning_bumps=(winning_bumps_at(history, bid) if seen else None),
             escalated_years=(escalated_at(history, bid) if seen else None),
         ))
@@ -167,21 +182,33 @@ def plan_bids(lg, rows, history, candidates=None):
 
 
 def tie_cells(o):
-    """(tie, bump, live) as any surface must print them. Never three numbers.
+    """(join, field, bump, live) as any surface must print them.
 
     Lives here rather than in a renderer for the same reason
     `sffl.render.rows.overall_board` does: the PDF and the terminal must not
-    be able to disagree about what the evidence says. There are THREE states
-    and no two of them may be collapsed:
+    be able to disagree about what the evidence says.
 
-      never submitted   `observations == 0`, so tie_rate/winning_bumps/
-                        escalated_years are all None. Reads "no data", and the
-                        bump and live cells stay EMPTY - an em dash there would
-                        claim "none happened", which is evidence nobody has.
-                        $28, $29 and $36 are in this state.
+    FOUR CELLS, AND THE FIRST TWO ARE DIFFERENT QUESTIONS. `join` is the share
+    of years someone was already sitting at this exact bid - join it and you
+    are in a tie. `field` is the share of years two or more franchises tied
+    each other there. `join` is never smaller, and at $30 it is 100% against
+    40%. A surface that prints one of them under a bare "TIE" heading has
+    thrown the distinction away; both need a heading that names which is which,
+    and a legend that spells both out.
+
+    There are THREE states of evidence and no two of them may be collapsed:
+
+      never submitted   `observations == 0`, so both rates, winning_bumps and
+                        escalated_years are all None. BOTH RATE CELLS read
+                        "no data" - one number beside a blank would read as a
+                        measured zero for the blank one - and the bump and live
+                        cells stay EMPTY, since an em dash there would claim
+                        "none happened", which is evidence nobody has. $28, $29
+                        and $36 are in this state.
       submitted, never tied
-                        `tie_rate == 0.0`, a real measurement over five years
-                        ($27, $32, $37, $42-$45). Reads "0%", em dashes beside.
+                        a real measurement over five years. $27 reads 40% join
+                        and 0% field: someone was there in two of five years,
+                        and never twice in the same year. Em dashes beside.
       tied, settled by a bump
                         the bumps actually charged, e.g. 1,2,2,2 at the floor.
       tied, escalated to a LIVE auction
@@ -191,11 +218,12 @@ def tie_cells(o):
                         bump anyone could pre-commit. Printing the empty bump
                         list without the years reads as a free tie.
     """
-    # type: (BidOutcome) -> Tuple[str, str, str]
+    # type: (BidOutcome) -> Tuple[str, str, str, str]
     if not o.observations:
-        return ("no data", "", "")
+        return ("no data", "no data", "", "")
     return (
-        "%.0f%%" % (o.tie_rate * 100.0),
+        "%.0f%%" % (o.join_tie_rate * 100.0),
+        "%.0f%%" % (o.field_tie_rate * 100.0),
         ",".join(str(b) for b in o.winning_bumps) if o.winning_bumps else "—",
         " ".join("'%02d" % (y % 100) for y in o.escalated_years)
         if o.escalated_years else "—",

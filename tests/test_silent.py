@@ -2,8 +2,8 @@ import pytest
 import yaml
 
 from sffl.silent import (BID_FLOOR, SilentBid, bids_for_rank, escalated_at,
-                         load_bid_history, observations_at, ranks_for_bid,
-                         tie_rate_at, winning_bumps_at)
+                         field_tie_rate_at, join_tie_rate_at, load_bid_history,
+                         observations_at, ranks_for_bid, winning_bumps_at)
 
 HEADER = "year,rank,franchise,bid,bump,cap_cost,player,note\n"
 
@@ -54,9 +54,57 @@ def test_bids_for_rank_reports_the_range_that_bought_it():
 def test_tie_rate_is_the_fraction_of_years_with_a_duplicate_bid():
     h = load_bid_history(FIXTURE)
     # $26 was bid twice in 2024 and twice in 2025 - tied in both years
-    assert tie_rate_at(h, 26) == pytest.approx(1.0)
+    assert field_tie_rate_at(h, 26) == pytest.approx(1.0)
     # $43 appears once, in one year only
-    assert tie_rate_at(h, 43) == pytest.approx(0.0)
+    assert field_tie_rate_at(h, 43) == pytest.approx(0.0)
+
+
+def test_the_join_rate_counts_years_someone_was_already_there():
+    """The other tie question, and the one a bidder is actually asking.
+
+    $43 was submitted once, in 2025 - the field never tied itself there, so
+    field_tie_rate_at is 0.0. But bid $43 in a year like 2025 and you are in a
+    tie, because somebody was already sitting on it. One of the fixture's two
+    years, so 0.5. The two numbers are not interchangeable, and neither of
+    them is "the tie rate".
+    """
+    h = load_bid_history(FIXTURE)
+    assert join_tie_rate_at(h, 43) == pytest.approx(0.5)
+    assert field_tie_rate_at(h, 43) == pytest.approx(0.0)
+    # $26 was occupied in both years and tied in both, so the two agree there.
+    assert join_tie_rate_at(h, 26) == pytest.approx(1.0)
+
+
+def test_the_join_rate_is_never_below_the_field_rate():
+    # Two or more franchises at a bid implies at least one, always. A year
+    # counted by field_tie_rate_at is always counted by join_tie_rate_at too.
+    h = load_bid_history(REAL)
+    for bid in sorted(set(b.bid for b in h)):
+        assert join_tie_rate_at(h, bid) >= field_tie_rate_at(h, bid), "$%d" % bid
+
+
+def test_both_tie_rates_on_the_real_history_at_the_levels_that_matter():
+    """The gap Jeff ruled on, pinned bid by bid against the five-year file.
+
+    Hand-counted from the rank->bid table: $30 held a bid in every one of the
+    five years but only 2022 and 2023 saw two teams there. Reporting 40% alone
+    would have said a $30 bid mostly walks in clean, when in fact somebody has
+    been standing on $30 every single year on record.
+    """
+    h = load_bid_history(REAL)
+    expected = {
+        30: (1.0, 0.4),     # 2021,2022x2,2023x2,2024,2025
+        33: (0.8, 0.2),     # 2022,2023,2024,2025x2 - only 2025 tied
+        35: (0.8, 0.2),     # 2021x2,2022,2023,2024
+        38: (0.8, 0.2),     # 2021,2022x2,2023,2025
+        39: (0.8, 0.2),     # 2022,2023x4,2024,2025
+        27: (0.4, 0.0),     # 2022,2025 - never twice in a year
+        26: (1.0, 1.0),     # ranks 11-12 tie at the floor every year
+    }
+    for bid, (join, field) in sorted(expected.items()):
+        assert join_tie_rate_at(h, bid) == pytest.approx(join), "$%d join" % bid
+        assert field_tie_rate_at(h, bid) == pytest.approx(field), \
+            "$%d field" % bid
 
 
 def test_winning_bumps_come_from_cap_cost_not_the_bump_column():
@@ -172,7 +220,7 @@ def test_winning_bumps_exclude_ties_that_escalated_to_a_live_auction():
 
 def test_the_floor_still_needs_a_bump_and_one_year_escalated():
     h = load_bid_history(REAL)
-    assert tie_rate_at(h, BID_FLOOR) == pytest.approx(1.0)
+    assert field_tie_rate_at(h, BID_FLOOR) == pytest.approx(1.0)
     # Four of the five floor ties were settled by a $1-$2 bump.
     assert winning_bumps_at(h, BID_FLOOR) == [1, 2, 2, 2]
     # 2022's was not: both franchises bumped $0, so it escalated.
@@ -211,13 +259,14 @@ def test_a_bid_nobody_ever_submitted_refuses_to_summarise_itself():
     # fabrication; the caller must be made to notice.
     h = load_bid_history(REAL)
     assert observations_at(h, 36) == 0
-    for fn in (tie_rate_at, winning_bumps_at, escalated_at):
+    for fn in (join_tie_rate_at, field_tie_rate_at, winning_bumps_at,
+               escalated_at):
         with pytest.raises(ValueError) as e:
             fn(h, 36)
         assert "never been submitted" in str(e.value)
     # A bid that WAS submitted and simply never tied still answers 0.0.
     assert observations_at(h, 44) == 1
-    assert tie_rate_at(h, 44) == pytest.approx(0.0)
+    assert field_tie_rate_at(h, 44) == pytest.approx(0.0)
     assert winning_bumps_at(h, 44) == []
     # ranks_for_bid has no such gap - every year votes on every bid.
     assert ranks_for_bid(h, 36)[0] >= 1

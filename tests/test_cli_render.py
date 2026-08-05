@@ -123,6 +123,42 @@ def test_plan_prints_the_tradeoff_table_and_keeps_the_three_tie_states(capsys):
     assert bids == sorted(bids) and min(bids) == 26
 
 
+def test_plan_prints_both_tie_numbers_under_headings_that_tell_them_apart(capsys):
+    # Jeff's ruling on 2026-08-05: show both. The terminal and the PDF must
+    # not be able to disagree about what either number means, so both carry
+    # the same two headings and the same legend wording.
+    main(["plan", "--source", DS, "--file", FIXTURE, "--year", "2026"])
+    out = capsys.readouterr().out
+    assert "TIE1+" in out and "TIE2+" in out
+    assert "ALREADY at this exact bid" in out
+    assert "2+ teams tied EACH OTHER" in out
+    # $30 is the case that made the ruling: occupied every year, tied twice.
+    row = [l for l in out.splitlines() if l.startswith("  $30 ")][0]
+    assert "100%" in row and "40%" in row
+    # ...and $28, never bid, refuses to answer either question.
+    row = [l for l in out.splitlines() if l.startswith("  $28 ")][0]
+    assert row.count("no data") == 2
+    # LEFT and DISCR say on the page that they are before any bump.
+    assert "LEFT*" in out and "DISCR*" in out and "PRE-BUMP" in out
+
+
+def test_plan_reports_a_malformed_bid_history_instead_of_a_traceback(tmp_path, capsys):
+    # `load_bid_history` raises ValueError - not OSError - for a file that
+    # exists and is wrong: a missing column, an unparseable number, a cap_cost
+    # under its own bid, a duplicated rank. It raises with a message naming the
+    # file and the line, and that message is the useful thing. Catching only
+    # OSError sent it out as a traceback instead of the intended clean exit.
+    bad = tmp_path / "bad.csv"
+    bad.write_text("year,rank,franchise,bid,bump,cap_cost,player,note\n"
+                   "2025,1,Alpha,40,0,39,Player One,\n")
+    rc = main(["plan", "--source", DS, "--file", FIXTURE, "--year", "2026",
+               "--bids", str(bad)])
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert "cannot read the bid history" in err
+    assert "cap_cost" in err, "the loader's own diagnosis must survive"
+
+
 def test_render_degrades_loudly_when_the_bid_history_cannot_be_read(tmp_path, capsys):
     # The board is the artifact that must exist on auction day, so a bad
     # --bids path costs one block of one page - never the whole render, and

@@ -43,7 +43,7 @@ def test_a_higher_bid_never_buys_a_worse_rank():
 def test_the_floor_bid_reports_a_tie_every_year():
     out = plan_bids(LG, board(), load_bid_history(REAL))
     o = [x for x in out if x.bid == 26][0]
-    assert o.tie_rate == pytest.approx(1.0)
+    assert o.field_tie_rate == pytest.approx(1.0)
     assert o.winning_bumps, "a floor bid has always needed a bump"
 
 
@@ -75,7 +75,8 @@ def test_an_unobserved_bid_reports_no_tie_evidence_rather_than_a_fabricated_zero
     history = load_bid_history(REAL)
     assert observations_at(history, 36) == 0
     o = [x for x in plan_bids(LG, board(), history) if x.bid == 36][0]
-    assert o.tie_rate is None
+    assert o.join_tie_rate is None
+    assert o.field_tie_rate is None
     assert o.winning_bumps is None
     assert o.escalated_years is None
     assert o.observations == 0
@@ -86,14 +87,17 @@ def test_an_observed_level_that_never_tied_reports_zero_not_no_data():
 
     $27 was bid in 2022 and 2025, never twice in one year. "0%" and "no data"
     are different facts on the auction-day page, and any shortcut that
-    collapses them - `tie_rate_at(...) or None` being the obvious one - would
-    pass every other test in this file while flipping this row to unknown.
+    collapses them - `field_tie_rate_at(...) or None` being the obvious one -
+    would pass every other test in this file while flipping this row to
+    unknown. Note the two rates disagree here and both are measurements: 40% of
+    years had somebody at $27, 0% had two teams there.
     """
     history = load_bid_history(REAL)
     o = [x for x in plan_bids(LG, board(), history) if x.bid == 27][0]
     assert observations_at(history, 27) == 2
     assert o.observations == 2
-    assert o.tie_rate == pytest.approx(0.0)
+    assert o.join_tie_rate == pytest.approx(0.4)
+    assert o.field_tie_rate == pytest.approx(0.0)
     assert o.winning_bumps == []
     assert o.escalated_years == []
 
@@ -102,11 +106,12 @@ def test_every_observed_level_that_never_tied_is_zero_and_every_unobserved_is_no
     """The invariant behind the two tests above, over the whole table."""
     history = load_bid_history(REAL)
     out = plan_bids(LG, board(), history)
-    assert [o.bid for o in out if o.observations and o.tie_rate == 0.0] \
+    assert [o.bid for o in out if o.observations and o.field_tie_rate == 0.0] \
         == [27, 32, 34, 37, 42, 43, 44, 45]
-    assert [o.bid for o in out if o.tie_rate is None] == [28, 29, 36]
+    assert [o.bid for o in out if o.field_tie_rate is None] == [28, 29, 36]
     for o in out:
-        none_fields = (o.tie_rate, o.winning_bumps, o.escalated_years)
+        none_fields = (o.join_tie_rate, o.field_tie_rate,
+                       o.winning_bumps, o.escalated_years)
         assert all(f is None for f in none_fields) == (o.observations == 0), \
             "$%d: tie evidence must be None exactly when unobserved" % o.bid
 
@@ -130,7 +135,7 @@ def test_a_level_whose_only_ties_went_live_reports_no_bumps_but_names_the_years(
     """$39 tied in 2023 and settled live; empty bumps alone would mislead."""
     o = [x for x in plan_bids(LG, board(), load_bid_history(REAL))
          if x.bid == 39][0]
-    assert o.tie_rate == pytest.approx(0.2)
+    assert o.field_tie_rate == pytest.approx(0.2)
     assert o.winning_bumps == []
     assert o.escalated_years == [2023]
 
@@ -183,14 +188,62 @@ def test_a_league_with_no_silent_auction_configured_is_refused():
         plan_bids(lg, board(), load_bid_history(REAL))
 
 
-def test_the_per_spot_figure_divides_what_is_left_by_the_spots_left():
+def test_what_a_bid_leaves_is_the_budget_less_the_bid_and_a_dollar_a_spot():
     o = [x for x in plan_bids(LG, board(), load_bid_history(REAL))
          if x.bid == 44][0]
     assert o.budget_left == 66
     assert o.discretionary == 54
-    assert o.per_remaining_spot == pytest.approx(66.0 / 12)
 
 
 def test_outcomes_are_bid_outcomes():
     out = plan_bids(LG, board(), load_bid_history(REAL))
     assert all(isinstance(o, BidOutcome) for o in out)
+
+
+# --- both tie numbers, ruled on by Jeff 2026-08-05 --------------------------
+
+def test_both_tie_rates_reach_the_outcome_and_disagree_where_the_record_does():
+    """The gap is the whole reason both are carried.
+
+    A bidder weighing $30 wants to know that someone has been standing on $30
+    in every year on record (TIE1+ 100%), which the narrower "two teams tied
+    each other" figure (TIE2+ 40%) does not say. Pinned at the levels where the
+    top of this board actually sits.
+    """
+    out = plan_bids(LG, board(), load_bid_history(REAL))
+    by_bid = dict((o.bid, o) for o in out)
+    for bid, join, field in ((30, 1.0, 0.4), (33, 0.8, 0.2), (39, 0.8, 0.2),
+                             (27, 0.4, 0.0)):
+        o = by_bid[bid]
+        assert o.join_tie_rate == pytest.approx(join), "$%d join" % bid
+        assert o.field_tie_rate == pytest.approx(field), "$%d field" % bid
+        assert o.join_tie_rate >= o.field_tie_rate
+
+
+def test_both_tie_rates_go_none_together_at_a_bid_nobody_has_ever_made():
+    """$28 has never been submitted, so NEITHER number may be a number.
+
+    Half an answer is worse than none: 0% beside "no data" would read as a
+    measured "this level never draws a tie" for whichever cell held the zero.
+    """
+    out = plan_bids(LG, board(), load_bid_history(REAL))
+    o = [x for x in out if x.bid == 28][0]
+    assert o.observations == 0
+    assert o.join_tie_rate is None
+    assert o.field_tie_rate is None
+    # ...and the invariant, over every candidate: the two are never split.
+    for x in out:
+        assert (x.join_tie_rate is None) == (x.field_tie_rate is None), \
+            "$%d: one tie rate known and the other not" % x.bid
+
+
+def test_the_two_tie_cells_print_no_data_twice_and_never_a_bare_zero():
+    from sffl.plan import tie_cells
+
+    out = plan_bids(LG, board(), load_bid_history(REAL))
+    by_bid = dict((o.bid, o) for o in out)
+    assert tie_cells(by_bid[28]) == ("no data", "no data", "", "")
+    assert tie_cells(by_bid[30])[:2] == ("100%", "40%")
+    assert tie_cells(by_bid[39])[:2] == ("80%", "20%")
+    # $27: observed twice, occupied in 40% of years, never tied in one.
+    assert tie_cells(by_bid[27])[:2] == ("40%", "0%")

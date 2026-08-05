@@ -7,8 +7,9 @@ management page draws is findable with a plain byte search.
 WHAT IS BEING PROTECTED HERE IS A DISTINCTION, not a layout. Three states of
 tie evidence exist and none of them may render as another:
 
-    tie_rate = 0.0   the bid was submitted and never tied     -> "0%"
-    tie_rate = None  the bid was never submitted at all       -> "no data"
+    rate = 0.0   the bid was submitted and never tied     -> "0%"
+    rate = None  the bid was never submitted at all       -> "no data" (BOTH
+                 tie cells - one number beside a blank reads as a measured 0)
     bumps = [] with escalated years -> the tie went to a LIVE auction, where
                      real money was paid above the bid. Not "no bump risk".
 
@@ -100,12 +101,13 @@ def test_the_fallback_grid_never_offers_a_bid_that_forfeits_the_pick(tmp_path):
 
 def test_a_bid_nobody_has_ever_made_says_so_instead_of_zero_percent(tmp_path):
     # $28 sits between $27 and $29 and has never been submitted in five
-    # years. `tie_rate` is None there, not 0.0. Printing "0%" would claim
+    # years. Both tie rates are None there, not 0.0. Printing "0%" would claim
     # five years of evidence that a bid at $28 draws no tie.
     out = outcomes()
     unbid = [o for o in out if o.observations == 0]
     assert unbid, "expected at least one never-submitted candidate bid"
-    assert all(o.tie_rate is None for o in unbid)
+    assert all(o.join_tie_rate is None and o.field_tie_rate is None
+               for o in unbid)
     assert b"no data" in rendered(tmp_path)
 
 
@@ -113,7 +115,7 @@ def test_an_observed_bid_that_never_tied_reads_as_a_measured_zero(tmp_path):
     # $27 was submitted twice and never tied: 0% is a real measurement and
     # must render as one, distinct from "no data".
     out = outcomes()
-    measured = [o for o in out if o.observations and o.tie_rate == 0.0]
+    measured = [o for o in out if o.observations and o.field_tie_rate == 0.0]
     assert measured, "expected at least one observed-but-never-tied bid"
     assert b"0%" in rendered(tmp_path)
 
@@ -224,3 +226,108 @@ def test_the_page_carries_every_candidate_bid(tmp_path):
     data = rendered(tmp_path)
     for o in outcomes():
         assert b"$%d" % o.bid in data
+
+
+def test_the_page_carries_both_tie_numbers_and_says_which_is_which(tmp_path):
+    # Jeff's ruling on 2026-08-05: show both. $30 has held a bid in every one
+    # of the five years (TIE1+ 100%) but only twice did two teams collide there
+    # (TIE2+ 40%). One number under a bare "TIE" heading throws that away.
+    out = outcomes()
+    o30 = [o for o in out if o.bid == 30][0]
+    assert (o30.join_tie_rate, o30.field_tie_rate) == (1.0, 0.4)
+    data = rendered(tmp_path)
+    assert b"TIE1+" in data and b"TIE2+" in data
+    assert b"100%" in data
+    # The legend must define both, unambiguously, on the page itself.
+    assert b"ALREADY at this exact bid" in data
+    assert b"2+ teams tied EACH OTHER" in data
+
+
+def test_the_page_says_that_what_is_left_is_before_any_bump(tmp_path):
+    # LEFT reads $71 at a $39 bid, but 2023's winner at $39 paid $42. The
+    # bump is not netted off - it cannot be, since it is charged only on a
+    # winning tie - so the page has to say the column is pre-bump.
+    data = rendered(tmp_path)
+    assert b"LEFT*" in data and b"DISCR*" in data
+    assert b"PRE-BUMP" in data
+
+
+def test_a_cell_too_wide_for_its_column_raises_instead_of_overprinting(tmp_path):
+    # The horizontal twin of the PLAN_ROW_H guard. Before this, BUMP had 3.2pt
+    # of clearance against "1,2,2,2" and TIE 2.7pt against "no data": one more
+    # year of floor ties would have printed BUMP through LIVE, with every
+    # string still findable by a byte search and nothing failing.
+    from reportlab.pdfgen import canvas
+
+    from sffl.render.pdf import PLAN_CELL_GAP, PLAN_COL, _cell
+
+    c = canvas.Canvas(str(tmp_path / "x.pdf"))
+    width = PLAN_COL["BUMP"][1]
+    # Seven charged bumps at one level - two more years of floor ties than the
+    # file holds today. It fits nothing and must not be drawn.
+    too_wide = "1,2,2,2,2,2,2"
+    assert c.stringWidth(too_wide, "Helvetica", 5.5) > width - PLAN_CELL_GAP
+    with pytest.raises(ValueError) as e:
+        _cell(c, 0.0, 0.0, too_wide, "Helvetica", 5.5, "BUMP")
+    assert "BUMP" in str(e.value)
+    assert too_wide in str(e.value)
+
+    # ...and what the file holds today still draws.
+    _cell(c, 0.0, 0.0, "1,2,2,2", "Helvetica", 5.5, "BUMP")
+
+
+def test_every_column_has_room_for_the_widest_string_it_can_hold(tmp_path):
+    """The guard is only useful if today's real table is inside it.
+
+    A guard that raises on the production render is not a guard, it is an
+    outage on 2026-08-26. So every cell the real 20-row table draws is measured
+    here, plus the strings one more year of history could produce.
+    """
+    from reportlab.pdfgen import canvas
+
+    from sffl.render.pdf import PLAN_CELL_GAP, PLAN_COL
+
+    c = canvas.Canvas(str(tmp_path / "x.pdf"))
+
+    def fits(column, text, font, size):
+        room = PLAN_COL[column][1] - PLAN_CELL_GAP
+        return c.stringWidth(text, font, size) <= room
+
+    # Headers.
+    for name in PLAN_COL:
+        assert fits(name, name, "Helvetica-Bold", 5), name
+    # Every cell of the real table.
+    from sffl.plan import tie_cells
+    for o in outcomes():
+        join, field, bump, live = tie_cells(o)
+        assert fits("BID", "$%d" % o.bid, "Helvetica-Bold", 7)
+        span = ("%d" % o.best_rank if o.best_rank == o.worst_rank
+                else "%d-%d" % (o.best_rank, o.worst_rank))
+        assert fits("RANK", span, "Helvetica", 6)
+        assert fits("TIE1+", join, "Helvetica", 5.5)
+        assert fits("TIE2+", field, "Helvetica", 5.5)
+        assert fits("BUMP", bump, "Helvetica", 5.5)
+        assert fits("LIVE", live, "Helvetica", 5.5)
+        assert fits("LEFT*", "$%d" % o.budget_left, "Helvetica", 6)
+        assert fits("DISCR*", "$%d" % o.discretionary, "Helvetica", 6)
+    # Headroom for 2026's file: a sixth year of floor ties, and a level that
+    # escalated in three separate years.
+    assert fits("BUMP", "1,2,2,2,2", "Helvetica", 5.5)
+    assert fits("LIVE", "'21 '22 '23", "Helvetica", 5.5)
+    assert fits("RANK", "11-12", "Helvetica", 6)
+    assert fits("TIE1+", "no data", "Helvetica", 5.5)
+    assert fits("TIE2+", "no data", "Helvetica", 5.5)
+
+
+def test_the_columns_tile_the_block_exactly_with_no_overlap(tmp_path):
+    """Widths are only a guard if the columns they describe are the real ones."""
+    from sffl.render.pdf import COL_W, PLAN_COLS
+
+    edge = 0.0
+    for name, x, w, align in PLAN_COLS:
+        assert x == pytest.approx(edge), "%s does not start where %s ends" % (
+            name, "the previous column")
+        assert w > 0, name
+        assert align in ("left", "right")
+        edge = x + w
+    assert edge == pytest.approx(COL_W), "the columns must fill the block"

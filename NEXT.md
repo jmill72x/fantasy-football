@@ -13,7 +13,7 @@ real prices. What remains is rendering it onto paper and an iPad.
 | **Plan 1 — scoring foundation & ingest** | ✅ merged, 64 tests |
 | **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections, lineup floors and market calibration — 165 tests |
 | **Plan 3 — Excel + PDF renderers** | ✅ merged — 203 tests. `sffl render` writes both |
-| **Plan 4 — silent auction planner** | ✅ built on branch `silent-auction` — 261 tests. `sffl plan` prints the tradeoff table |
+| **Plan 4 — silent auction planner** | ✅ built on branch `silent-auction` — 274 tests. `sffl plan` prints the tradeoff table |
 
 Verify state in one command:
 
@@ -383,6 +383,14 @@ Do not assume it does. Present the order consequence factually and let him weigh
 
 **Jeff wants the tradeoff shown, not a recommendation.** A table of candidate bids with what
 each likely wins and what it leaves.
+
+**TWO tie numbers, ruled 2026-08-05 — do not collapse them back into one.** `TIE2+`
+(`field_tie_rate_at`) is the share of years two or more franchises tied EACH OTHER at a bid;
+`TIE1+` (`join_tie_rate_at`) is the share of years at least ONE was already there, which is
+what a bidder joining that number is exposed to. The second is never smaller and is much
+larger where it matters: $30 is 40% against **100%**, and $33/$35/$38/$39 are all 20%
+against **80%**. Both print on the management page and in `sffl plan`, and both go
+`no data` — never `0%` — at $28, $29 and $36, which nobody has ever bid.
 
 Empirical rank -> bid, all five years:
 

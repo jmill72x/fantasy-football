@@ -75,7 +75,7 @@ Rank → bid, all five years. Total spend is stable at **$412-432** of the leagu
   - `load_bid_history(path=DEFAULT_BIDS) -> List[SilentBid]`
   - `ranks_for_bid(history, bid) -> Tuple[int, int, float]` — `(best_rank, worst_rank, median_rank)` observed for that exact bid across all years. Raises if the bid is below the floor.
   - `bids_for_rank(history, rank) -> Tuple[int, int, float]` — `(min, max, median)` bid that historically bought that rank.
-  - `tie_rate_at(history, bid) -> float` — the fraction of years in which two or more franchises submitted this exact bid.
+  - `tie_rate_at(history, bid) -> float` — the fraction of years in which two or more franchises submitted this exact bid. *(Renamed `field_tie_rate_at` on 2026-08-05, when Jeff ruled that the page must also carry `join_tie_rate_at` — the fraction of years in which AT LEAST ONE franchise was already there, which is the bidder's own tie exposure and a much larger number: $30 is 40% by the first measure and 100% by the second. Two statistics named "tie rate" could not stay one word.)*
   - `winning_bumps_at(history, bid) -> List[int]` — bumps that were actually charged at that bid level, i.e. bumps that won a tie.
 
 **Reading `cap_cost` correctly.** `cap_cost` differs from `bid` exactly when a bump was charged, which happens only on a winning tie. So `cap_cost - bid` is the bump that won, and a row where they are equal either had no tie or lost one. Do not infer a charged bump from the `bump` column alone — 2024 rank 4 recorded `bump 2` with `cap_cost 39 == bid 39` and the note "no tie; bump not charged".
@@ -216,14 +216,14 @@ git commit -m "feat: load and summarise five years of silent auction bids"
 **Interfaces:**
 - Consumes: `sffl.silent` (Task 1); `sffl.render.rows.BoardRow`; `lg.budget`, `lg.roster_size`, `lg.silent_auction["bid_floor"]`.
 - Produces:
-  - `BidOutcome` dataclass: `bid: int`, `best_rank: int`, `worst_rank: int`, `median_rank: float`, `likely_player: Optional[str]`, `likely_my_dollars: Optional[float]`, `likely_est_price: Optional[float]`, `budget_left: int`, `per_remaining_spot: float`, `discretionary: int`, `tie_rate: float`, `winning_bumps: List[int]`.
+  - `BidOutcome` dataclass: `bid: int`, `best_rank: int`, `worst_rank: int`, `median_rank: float`, `likely_player: Optional[str]`, `likely_my_dollars: Optional[float]`, `likely_est_price: Optional[float]`, `budget_left: int`, `per_remaining_spot: float`, `discretionary: int`, `tie_rate: float`, `winning_bumps: List[int]`. *(As built: `per_remaining_spot` was dropped after the `$/ea` column was cut from the page — nothing computed it for any reader. `tie_rate` became the pair `join_tie_rate` / `field_tie_rate`, both `Optional[float]`, both None exactly when `observations == 0`.)*
   - `plan_bids(lg, rows, history, candidates=None) -> List[BidOutcome]`
 
 **The arithmetic.** Winning at bid `X` leaves `lg.budget - X` for `lg.roster_size - 1` further spots. Each costs at least $1, so `discretionary = (lg.budget - X) - (lg.roster_size - 1)`. With the real config: bid $26 leaves $84 and $72 discretionary; bid $44 leaves $66 and $54 discretionary.
 
 **Which player you would get.** At median rank `N`, the `N`-th best board row by `my_dollars` is the illustration — **assuming the room drafts in our board's order**, which it will not exactly. Label it as an illustration everywhere it surfaces. Only `pos in ("TQB", "RB", "WR", "TE")` are candidates; nobody spends a silent pick on a kicker.
 
-**Default candidates.** The observed range, floor to the highest bid ever recorded, in $1 steps. Do not invent bids above the observed maximum — `ranks_for_bid` clamps there and the answer would be fiction.
+**Default candidates.** The observed range, floor to the highest bid ever recorded, in $1 steps. Do not invent bids above the observed maximum. *(Corrected after task 1: `ranks_for_bid` does NOT clamp — it places the bid against every year, so a bid above everything ever submitted correctly reports rank 1, as `test_a_bid_above_everything_ever_observed_is_rank_one` pins. The cap stands for a different reason, recorded in `default_candidates`: rank 1 is the only thing $50 could ever be told, and a ladder of bids that all say the same thing invites spending $5 to buy nothing.)*
 
 - [ ] **Step 1: Write the failing test**
 
@@ -451,4 +451,4 @@ git commit -m "feat: put the real silent auction tradeoff table on the managemen
 
 **Known limitation carried forward.** The "likely pick" column assumes the room drafts in our board's order. It will not. The column is labelled an illustration everywhere it appears, and a board shallower than the rank reports no player rather than fabricating one.
 
-**Type consistency.** `BoardRow` is the board contract, unchanged from the renderers plan. `BidOutcome` is new and local to `plan.py`. Bids and ranks are `int`; `median_rank`, `tie_rate` and `per_remaining_spot` are `float`; `likely_*` are `Optional`. `bid_floor` is read from `lg.silent_auction` wherever a league is in scope.
+**Type consistency.** `BoardRow` is the board contract, unchanged from the renderers plan. `BidOutcome` is new and local to `plan.py`. Bids and ranks are `int`; `median_rank` is `float` and the two tie rates are `Optional[float]` (see the correction at Task 2's interfaces); `likely_*` are `Optional`. `bid_floor` is read from `lg.silent_auction` wherever a league is in scope.
