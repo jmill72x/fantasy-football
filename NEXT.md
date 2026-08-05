@@ -57,7 +57,22 @@ Update this block at the end of every session so the next one can resume blind.
 - [x] **Plan 3 — renderers MERGED** (203 tests). PDF 17 pages, Excel 2 pages
 - [ ] **Full dry run** — review the PDF on the iPad, print the Excel. THE 08-10 GOAL
 - [x] Plan 4 — silent auction planner MERGED. 5 years of real bids on the management page
-- [ ] **Work Jeff's markup list** from the 2026-08-05 PDF/Excel review  <- NEXT
+- [ ] **Excel format fixes — Jeff's review, 2026-08-05**  <- NEXT
+      1. **No cell borders or fills.** The 2022 template has 2,444 bordered cells and 138
+         fills; ours has ZERO of each. The spec recorded "gridlines off" from
+         `showGridLines: False` — that is the SCREEN setting and is true of the template
+         too. The template switches Excel's gridlines off and draws EXPLICIT CELL BORDERS,
+         which is what makes it read as a ruled table. Widths and fonts were captured; the
+         borders were missed entirely. The 138 fills are the tier shading.
+      2. **Section boundaries do not align to the page break** (after row 63). Our OVERALL
+         ends at row 64 — one row onto page 2. Template ends at 59, clean.
+      3. **Positions interleave across the break.** Our g3 has RECEIVERS at rows 54-98,
+         starting 10 rows before the page edge and running deep into page 2, so page 1
+         reads RB-then-WR and page 2 gives more RB. Template's g3 WR block is rows 60-70
+         and its long continuations live in g1/g2. Give a position's continuation
+         contiguous space instead of interleaving.
+      Widths, fonts and the three column groups stay as they are.
+- [ ] Any further PDF/Excel changes from Jeff's iPad review
 - [ ] TODO B — widen the weekly collection to ~120 players (needs `claude --chrome`)
       **Jeff confirmed 2026-08-04 this IS still needed** — first pass with this scoring
       model, so 18 players is too thin to trust curves that shape every value
