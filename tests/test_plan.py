@@ -1,6 +1,6 @@
 import pytest
 
-from sffl.league import load_league
+from sffl.league import LeagueProfile, load_league
 from sffl.plan import BidOutcome, plan_bids
 from sffl.render.rows import BoardRow
 from sffl.silent import load_bid_history, observations_at
@@ -81,6 +81,36 @@ def test_an_unobserved_bid_reports_no_tie_evidence_rather_than_a_fabricated_zero
     assert o.observations == 0
 
 
+def test_an_observed_level_that_never_tied_reports_zero_not_no_data():
+    """The other side of the same distinction, and the one that regresses.
+
+    $27 was bid in 2022 and 2025, never twice in one year. "0%" and "no data"
+    are different facts on the auction-day page, and any shortcut that
+    collapses them - `tie_rate_at(...) or None` being the obvious one - would
+    pass every other test in this file while flipping this row to unknown.
+    """
+    history = load_bid_history(REAL)
+    o = [x for x in plan_bids(LG, board(), history) if x.bid == 27][0]
+    assert observations_at(history, 27) == 2
+    assert o.observations == 2
+    assert o.tie_rate == pytest.approx(0.0)
+    assert o.winning_bumps == []
+    assert o.escalated_years == []
+
+
+def test_every_observed_level_that_never_tied_is_zero_and_every_unobserved_is_none():
+    """The invariant behind the two tests above, over the whole table."""
+    history = load_bid_history(REAL)
+    out = plan_bids(LG, board(), history)
+    assert [o.bid for o in out if o.observations and o.tie_rate == 0.0] \
+        == [27, 32, 34, 37, 42, 43, 44, 45]
+    assert [o.bid for o in out if o.tie_rate is None] == [28, 29, 36]
+    for o in out:
+        none_fields = (o.tie_rate, o.winning_bumps, o.escalated_years)
+        assert all(f is None for f in none_fields) == (o.observations == 0), \
+            "$%d: tie evidence must be None exactly when unobserved" % o.bid
+
+
 def test_an_unobserved_bid_still_reports_a_rank_because_every_year_votes_on_it():
     """Rank evidence is counterfactual insertion, so $36 is fully evidenced."""
     o = [x for x in plan_bids(LG, board(), load_bid_history(REAL))
@@ -131,9 +161,26 @@ def test_a_caller_may_ask_about_specific_bids():
     assert [o.bid for o in out] == [30, 40]
 
 
+def test_candidates_come_back_in_bid_order_however_they_were_supplied():
+    out = plan_bids(LG, board(), load_bid_history(REAL),
+                    candidates=[40, 30, 40])
+    assert [o.bid for o in out] == [30, 40]
+
+
 def test_a_sub_floor_candidate_is_refused_rather_than_priced():
     with pytest.raises(ValueError):
         plan_bids(LG, board(), load_bid_history(REAL), candidates=[25])
+
+
+def test_an_empty_history_is_named_rather_than_failing_inside_max():
+    with pytest.raises(ValueError, match="no bid history"):
+        plan_bids(LG, board(), [])
+
+
+def test_a_league_with_no_silent_auction_configured_is_refused():
+    lg = LeagueProfile(dict(LG.raw, silent_auction={}))
+    with pytest.raises(ValueError, match="bid_floor"):
+        plan_bids(lg, board(), load_bid_history(REAL))
 
 
 def test_the_per_spot_figure_divides_what_is_left_by_the_spots_left():
