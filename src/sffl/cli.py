@@ -157,10 +157,16 @@ def _board_rows(lg, pool, args):
 # BOTH tie columns: TIE1+ (someone was already there) and TIE2+ (the field tied
 # itself). The terminal has width the page does not, so it spells the headers
 # out where the PDF has to abbreviate; the meanings are identical.
-_PLAN_ROW = "  %-5s %-7s %-8s %-8s %-9s %-6s %-7s %-7s %s"
+# LIVE is %-12s, not %-6s: a level that escalated in three separate
+# years prints "'21 '22 '23" and any narrower field shunts PICK RANGE
+# right on that row alone, breaking the column the eye is following.
+_PLAN_ROW = "  %-5s %-7s %-8s %-8s %-10s %-12s %-7s %-7s %s"
 
 
 def _print_plan(outcomes, bid_floor):
+    # The tie rates' denominator comes off the outcome, which took it from the
+    # file. Typing "5" here goes wrong the August 2026's twelve rows land.
+    years = outcomes[0].years
     print("silent auction (rd 1): what each bid has historically bought, and "
           "what it leaves")
     print("  a bid under $%d is DISCARDED and forfeits the silent pick "
@@ -180,8 +186,8 @@ def _print_plan(outcomes, bid_floor):
         print(_PLAN_ROW % ("$%d" % o.bid, span, join, field, bump, live,
                            "$%d" % o.budget_left, "$%d" % o.discretionary,
                            pick_range(o)))
-    print("  TIE1+ = share of the 5 years with a team ALREADY at this exact "
-          "bid: join it and")
+    print("  TIE1+ = share of the %d years with a team ALREADY at this exact "
+          "bid: join it and" % years)
     print("  you are in a tie. TIE2+ = share with 2+ teams tied EACH OTHER "
           "there, so TIE1+ is")
     print("  never the smaller. \"no data\" in both = never bid, so nothing is "

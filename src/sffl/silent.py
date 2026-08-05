@@ -302,6 +302,20 @@ def _escalated(group):
     return sum(1 for b in group if b.bump == top) >= 2
 
 
+def years_on_record(history):
+    """How many distinct years the history covers - the tie rates' denominator.
+
+    EXPORTED SO NO SURFACE HAS TO HARDCODE IT. Both tie rates divide by this,
+    and the printed legends have to name it ("share of the 5 years..."). The
+    file grows by twelve rows every August, so a legend with a 5 typed into it
+    starts lying the moment 2026's results are appended - stating a wrong
+    denominator for numbers a bidder is about to act on.
+    """
+    # type: (List[SilentBid]) -> int
+    _require_history(history)
+    return len(set(b.year for b in history))
+
+
 def _years_with_at_least(history, bid, minimum):
     """Fraction of YEARS holding at least `minimum` bids at exactly this level.
 

@@ -51,7 +51,7 @@ from sffl.league import LeagueProfile
 from sffl.render.rows import BoardRow, overall_board
 from sffl.silent import (SilentBid, _require_history, escalated_at,
                          field_tie_rate_at, join_tie_rate_at, observations_at,
-                         ranks_for_bid, winning_bumps_at)
+                         ranks_for_bid, winning_bumps_at, years_on_record)
 
 
 @dataclass
@@ -97,6 +97,10 @@ class BidOutcome(object):
     # no shortcut may collapse them - `x or None` would silently reclassify
     # every observed-but-never-tied level ($27, $44, $45) as unknown.
     observations: int                        # times this bid was ever made
+
+    # The denominator behind both tie rates, carried so a renderer can name it
+    # in the legend instead of typing "5" and being wrong next August.
+    years: int
 
     # Two different questions - see the module docstring, and never print
     # either under a bare "TIE" heading. All four fields below go None
@@ -151,6 +155,7 @@ def plan_bids(lg, rows, history, candidates=None):
         candidates = default_candidates(lg, history)
 
     spots_left = lg.roster_size - 1
+    years = years_on_record(history)
 
     out = []  # type: List[BidOutcome]
     for bid in sorted(set(candidates)):
@@ -173,6 +178,7 @@ def plan_bids(lg, rows, history, candidates=None):
             budget_left=budget_left,
             discretionary=budget_left - spots_left,
             observations=seen,
+            years=years,
             join_tie_rate=(join_tie_rate_at(history, bid) if seen else None),
             field_tie_rate=(field_tie_rate_at(history, bid) if seen else None),
             winning_bumps=(winning_bumps_at(history, bid) if seen else None),

@@ -3,7 +3,8 @@ import yaml
 
 from sffl.silent import (BID_FLOOR, SilentBid, bids_for_rank, escalated_at,
                          field_tie_rate_at, join_tie_rate_at, load_bid_history,
-                         observations_at, ranks_for_bid, winning_bumps_at)
+                         observations_at, ranks_for_bid, winning_bumps_at,
+                         years_on_record)
 
 HEADER = "year,rank,franchise,bid,bump,cap_cost,player,note\n"
 
@@ -73,6 +74,16 @@ def test_the_join_rate_counts_years_someone_was_already_there():
     assert field_tie_rate_at(h, 43) == pytest.approx(0.0)
     # $26 was occupied in both years and tied in both, so the two agree there.
     assert join_tie_rate_at(h, 26) == pytest.approx(1.0)
+
+
+def test_the_years_on_record_are_the_denominator_both_rates_divide_by():
+    # Exported so a printed legend can name it instead of typing "5" and being
+    # wrong the August 2026's twelve rows are appended.
+    assert years_on_record(load_bid_history(REAL)) == 5
+    assert years_on_record(load_bid_history(FIXTURE)) == 2
+    # ...and it really is the denominator: one franchise at $43 in one of the
+    # fixture's two years is 1/2.
+    assert join_tie_rate_at(load_bid_history(FIXTURE), 43) == pytest.approx(0.5)
 
 
 def test_the_join_rate_is_never_below_the_field_rate():
