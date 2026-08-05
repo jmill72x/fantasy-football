@@ -12,8 +12,8 @@ real prices. What remains is rendering it onto paper and an iPad.
 |---|---|
 | **Plan 1 — scoring foundation & ingest** | ✅ merged, 64 tests |
 | **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections, lineup floors and market calibration — 165 tests |
-| **Plan 3 — Excel + PDF renderers** | ⬅️ **NEXT.** Not written. Every design decision is settled (see below); first task is installing `reportlab`/`openpyxl` and pinning a `requirements.txt` |
-| **Plan 4 — silent auction planner** | not written — consumes plan 2 values |
+| **Plan 3 — Excel + PDF renderers** | ✅ merged — 203 tests. `sffl render` writes both |
+| **Plan 4 — silent auction planner** | ⬅️ **NEXT.** Not written; spec is thin, needs Jeff's answers first |
 
 Verify state in one command:
 
@@ -54,39 +54,45 @@ Update this block at the end of every session so the next one can resume blind.
 - [x] Valuation corrections — K/DST flat at $1, TQB + DST markets joined to the fit
 - [x] Lineup floors — 1 RB and 1 WR/TE enforced at flex replacement
 - [x] Market calibration — EST$ (what the room pays) beside MY$ (what he's worth), 165 tests
-- [x] Plan 3 written — `docs/superpowers/plans/2026-08-04-renderers.md`, 3 tasks
-- [x] `reportlab` 5.0.0 + `openpyxl` 3.1.5 installed, `requirements.txt` pinned
-- [ ] **Plan 3 IN FLIGHT on branch `renderers`** — see "Renderers: live status" below
-- [ ] Write plan 4 (silent auction planner), then execute it
+- [x] **Plan 3 — renderers MERGED** (203 tests). PDF 17 pages, Excel 2 pages
+- [ ] **Full dry run** — review the PDF on the iPad, print the Excel. THE 08-10 GOAL
+- [ ] Write plan 4 (silent auction planner) — needs Jeff's answers first, see below
 - [ ] TODO B — widen the weekly collection to ~120 players (needs `claude --chrome`)
-- [ ] Full dry run: generate both artifacts, review on the iPad
+      **Jeff confirmed 2026-08-04 this IS still needed** — first pass with this scoring
+      model, so 18 players is too thin to trust curves that shape every value
 - [ ] Clean licensed values out of the two tracked fixtures (see FOLLOW-UP below)
 
 Work top to bottom. Each unchecked box is the next thing to do.
 
-### Renderers: live status (branch `renderers`, not yet merged)
+### Renderers — MERGED 2026-08-04
 
-**Check this branch, not `main`, for renderer progress.** `git log --oneline main..renderers`.
+`sffl render` writes both artifacts. Production command is in "What works today" above,
+plus `--pdf output/x.pdf --xlsx output/x.xlsx`.
 
-| Task | State |
-|---|---|
-| 1 — render rows, tiers, byes (`src/sffl/render/rows.py`) | ✅ done, reviewed, 179 tests |
-| 2 — PDF (`src/sffl/render/pdf.py`) | ⚠️ built (185 tests) — review found **one Critical**, fix in flight |
-| 3 — Excel + `render` CLI command | not started |
+**PDF — 17 pages**, the iPad layout ported verbatim from `poc/render_poc.py`. Row is
+`# | PLAYER | TM/BYE | MY$ | EST$ | PAID`. Six bookmarks. Footer carries the EST$-is-a-floor
+caveat.
 
-**Task 2's open Critical:** the Overall Board was including K and DST. The spec is explicit
-that it carries TQB/RB/WR/TE only, and that K/DST appear together on their own page — the
-validated colour palette depends on it, having been checked as *two disjoint sets* because
-those six colours were never supposed to co-occur. One-line filter; being fixed.
+**Excel — 2 pages**, the 2022 template's shape. **126 rows is the budget**: 63 rows/page at
+the template's 9.95pt row height, landscape letter, 97% scale. Jeff's 2022 file is 118 rows —
+it was ALWAYS a curated cheat sheet, never the full pool. 520 players need ~174 rows even
+packed perfectly, so no column-width change can fit them; it is a row-count problem.
 
-**Real-data render works:** 18 pages, every section populated (TQB 32, RB 122, WR 194,
-TE 105, K 35, DST 32). Drops to 17 once the Critical is fixed.
+Per-section on the 2026 data: Overall 124/453, TQB 32/32, RB 77/122, Receivers 103/299,
+K 12/35, DST 12/32. **23 of 543 players dropped** as unrostered (`UNS` ×22 unsigned free
+agents, `RK` ×1) — no NFL team means no bye; all below replacement so no dollar value moves.
+The count is printed, never silent.
 
-**Found during the real run — 23 of 543 players carry placeholder team codes** (`UNS` ×22
-unsigned free agents, `RK` ×1). They have no NFL team, so no bye week, and `build_rows`
-correctly raises rather than rendering a blank. All sit below replacement, so they affect
-no dollar value. Task 3 filters them at render time and reports the count — dropping them
-silently would be the wrong shape of fix.
+**Two things needing Jeff's eyes, not more code:**
+1. **Is 124 rows the right depth for the overall board?** The cross-position "who's next best
+   regardless of position" view stops ~32 short of the 156 drafted. That view is what matters
+   for late-auction bid timing. Only visible on a printed page.
+2. **Does it actually print on two sheets?** `soffice` is not installed, so 126 rows = 2 pages
+   is arithmetic, not verification.
+
+The workbook took three fix rounds, every defect caught by opening the generated file rather
+than by a passing test. All three are now asserted: no position missing, no column short of
+budget, no interior gaps. A committed capacity-boundary sweep pins it.
 
 **Carry into plan 3 — the caveats that must survive onto the printed page:**
 EST$ is a *floor* at the very top, not a point estimate. Spread is unmeasured, so render
