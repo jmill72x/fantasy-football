@@ -51,11 +51,17 @@ rather than exhausting the page on whichever section happens to come first.
 THE OVERALL BOARD does not consume the entirety of groups 1 + 2 either,
 again matching the 2022 file: there, "OVERALL" took roughly half of each
 column's usable rows (57 of ~116), with the remainder of those columns
-carrying supplementary position content in the original snaking layout.
-This module does not replicate that snake (group 3 alone now guarantees
-full position coverage on its own), but keeps the Overall Board's own
-proportion - see _overall_capacity - so the top-of-board cross-position
-ranking does not overwhelm the sheet the way a full-capacity fill would.
+carrying supplementary position content. A first pass left that freed half
+blank - 124 rows, close to half the printed sheet, while the same run was
+cutting 105 Running Backs and 256 Receivers. That is not an acceptable
+trade: this module now snakes the two positions absorbing the most
+truncation into that space exactly as 2022 does - Running Backs continuing
+below group 1's Overall Board, Receivers (WR+TE) continuing below group 2's
+- picking up where group 3's own allocation for that position left off
+(see _write_continuation_block), never re-listing players already shown
+elsewhere. Kickers, Team Defense and Team QB are not continued: their group
+3 allocation already covers everyone that matters (one row per team, or the
+whole bounded pool), so extra rows there would not reduce any real cut.
 """
 
 from openpyxl import Workbook
@@ -258,8 +264,12 @@ def _write_position_blocks(lg, ws, rows):
     members gets a non-empty title, header and at least its guaranteed
     share of rows.
 
-    Returns (shown, cut): dicts of block title -> list of BoardRow shown /
-    count cut, for the caller to report.
+    Returns (shown, cut): dicts of block title -> list of BoardRow, both
+    always present together for a title with any real members (cut may be
+    an empty list). `cut` is the list of members this block's capacity
+    couldn't fit - kept as the actual rows, not just a count, so the caller
+    can continue showing them elsewhere (see _write_continuation_block)
+    instead of just reporting how many were dropped.
     """
     col0 = 1 + 2 * GROUP_GAP
     row = 1
@@ -284,9 +294,48 @@ def _write_position_blocks(lg, ws, rows):
             row += 1
 
         shown[title] = block_shown
-        if block_cut:
-            cut[title] = len(block_cut)
+        cut[title] = block_cut
 
+    return shown, cut
+
+
+def _continuation_capacity():
+    """Data rows available for a continuation position block below the
+    Overall Board in group 1 or group 2: the freed half of that column's
+    usable rows (see _overall_capacity), minus the continuation block's own
+    HEADER_ROWS."""
+    per_col_data = ROW_BUDGET - HEADER_ROWS
+    overall_half = per_col_data // 2
+    remaining = per_col_data - overall_half
+    return remaining - HEADER_ROWS
+
+
+def _write_continuation_block(ws, col0, title, members):
+    """Write a continuation position block below the Overall Board in group
+    1 or group 2, picking up exactly where group 3's own allocation for
+    this position left off - `members` is that position's own cut list, so
+    this never re-lists a player already shown elsewhere on the sheet.
+
+    Writes nothing (and returns two empty lists) if there is nothing left
+    to continue - a position group 3 already covered in full has no cut
+    members to place here.
+
+    Returns (shown, cut): the slice of `members` this call wrote, and
+    whatever was still left over after this block's own capacity.
+    """
+    if not members:
+        return [], []
+
+    start_row = 3 + (ROW_BUDGET - HEADER_ROWS) // 2   # right after the Overall Board's data
+    _write_title(ws, start_row, col0, title)
+    _write_header(ws, start_row + 1, col0)
+
+    capacity = _continuation_capacity()
+    shown, cut = members[:capacity], members[capacity:]
+    row = start_row + 2
+    for r in shown:
+        _write_data_row(ws, row, col0, r)
+        row += 1
     return shown, cut
 
 
@@ -346,15 +395,31 @@ def render_xlsx(lg, rows, path):
 
     block_shown, block_cut = _write_position_blocks(lg, ws, rows)
 
+    # Running Backs and Receivers are what absorb almost all of group 3's
+    # truncation (Team QB is always complete; Kickers and Team Defense's
+    # guaranteed one-per-team allocation already covers what matters for a
+    # flat-$1 pool), so they're the two that continue into the space freed
+    # by capping the Overall Board at half of groups 1 and 2 - Running Backs
+    # below group 1's Overall, Receivers below group 2's, matching where the
+    # 2022 template put them.
+    col1, col2 = 1, 1 + GROUP_GAP
+    rb_extra_shown, rb_extra_cut = _write_continuation_block(
+        ws, col1, "RUNNING BACKS", block_cut.get("RUNNING BACKS", []))
+    recv_extra_shown, recv_extra_cut = _write_continuation_block(
+        ws, col2, "RECEIVERS (WR + TE)", block_cut.get("RECEIVERS (WR + TE)", []))
+
     wb.save(path)
+
+    extra_shown = {"RUNNING BACKS": rb_extra_shown, "RECEIVERS (WR + TE)": recv_extra_shown}
+    extra_cut = {"RUNNING BACKS": rb_extra_cut, "RECEIVERS (WR + TE)": recv_extra_cut}
 
     sections = {}
     for title, _positions in POSITION_BLOCKS:
-        if title in block_shown or title in block_cut:
-            sections[title] = {
-                "shown": len(block_shown.get(title, [])),
-                "cut": block_cut.get(title, 0),
-            }
+        if title not in block_shown:
+            continue
+        shown_n = len(block_shown[title]) + len(extra_shown.get(title, []))
+        cut_n = len(extra_cut.get(title, block_cut[title]))
+        sections[title] = {"shown": shown_n, "cut": cut_n}
 
     return {
         "total": len(rows),

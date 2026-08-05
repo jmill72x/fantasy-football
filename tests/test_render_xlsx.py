@@ -142,3 +142,33 @@ def test_every_position_appears_on_the_printed_sheet(tmp_path):
 
     for title, _positions in POSITION_BLOCKS:
         assert title in titles_present, "%s is missing from the printed sheet" % title
+
+
+def test_no_column_stops_short_of_the_budget_while_players_are_cut(tmp_path):
+    # The regression this guards against: capping the Overall Board at half
+    # of groups 1 and 2 freed 124 rows (close to half the printed sheet)
+    # that a second version of this module left blank, while the same run
+    # was cutting 105 Running Backs and 256 Receivers. A column may stop
+    # short of the budget only once it has run out of players to show for
+    # every section that uses it - never while there is still content that
+    # would fit. big_board() has far more RB/Receivers than any budget can
+    # hold, so every column here should reach ROW_BUDGET exactly.
+    from sffl.render.xlsx import GROUP_GAP, ROW_BUDGET
+
+    path = str(tmp_path / "board.xlsx")
+    stats = render_xlsx(LG, big_board(), path)
+    ws = openpyxl.load_workbook(path).active
+
+    any_cut = stats["overall"]["cut"] > 0 or any(
+        s["cut"] > 0 for s in stats["sections"].values())
+    assert any_cut, "this board was built to overflow every budget - if " \
+        "nothing was cut, the test proves nothing"
+
+    for col0 in (1, 1 + GROUP_GAP, 1 + 2 * GROUP_GAP):
+        used = 0
+        for r in range(1, ws.max_row + 1):
+            if ws.cell(r, col0).value not in (None, ""):
+                used = r
+        assert used == ROW_BUDGET, (
+            "column %d stopped at row %d, short of the %d-row budget, "
+            "while players are still being cut" % (col0, used, ROW_BUDGET))
