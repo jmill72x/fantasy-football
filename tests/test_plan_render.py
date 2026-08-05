@@ -281,7 +281,15 @@ def test_every_column_has_room_for_the_widest_string_it_can_hold(tmp_path):
 
     A guard that raises on the production render is not a guard, it is an
     outage on 2026-08-26. So every cell the real 20-row table draws is measured
-    here, plus the strings one more year of history could produce.
+    here.
+
+    THE COLUMNS ARE SIZED TO THIS YEAR'S FILE ON PURPOSE. They used to reserve
+    room for strings 2027 might hold - "1,2,2,2,2", "'21 '22 '23" - and paid
+    for it out of PICK RANGE, which then ellipsized three rows into ambiguity
+    ("Robinson - McC..." is four real players). The reserve is gone and the
+    guard replaces it: a bigger string next August fails loudly at render time,
+    weeks before anyone bids. The bottom of this test pins that trade in both
+    directions so nobody restores the reserve without seeing what it costs.
     """
     from reportlab.pdfgen import canvas
 
@@ -310,13 +318,158 @@ def test_every_column_has_room_for_the_widest_string_it_can_hold(tmp_path):
         assert fits("LIVE", live, "Helvetica", 5.5)
         assert fits("LEFT*", "$%d" % o.budget_left, "Helvetica", 6)
         assert fits("DISCR*", "$%d" % o.discretionary, "Helvetica", 6)
-    # Headroom for 2026's file: a sixth year of floor ties, and a level that
-    # escalated in three separate years.
-    assert fits("BUMP", "1,2,2,2,2", "Helvetica", 5.5)
-    assert fits("LIVE", "'21 '22 '23", "Helvetica", 5.5)
+    # The widest strings this year's data can produce, whatever the board.
     assert fits("RANK", "11-12", "Helvetica", 6)
     assert fits("TIE1+", "no data", "Helvetica", 5.5)
     assert fits("TIE2+", "no data", "Helvetica", 5.5)
+    assert fits("LIVE", "'21 '22", "Helvetica", 5.5), \
+        "two escalations at one level is within reach of the 2026 file"
+
+    # ...and NOT a point more. These are the 2027 strings whose reserve was
+    # sold to PICK RANGE. If a change makes either of these fit again, PICK
+    # RANGE has silently been narrowed and names have gone back to ellipsis.
+    assert not fits("BUMP", "1,2,2,2,2", "Helvetica", 5.5)
+    assert not fits("LIVE", "'21 '22 '23", "Helvetica", 5.5)
+
+
+def test_no_pick_range_on_the_real_board_is_truncated_into_ambiguity(tmp_path):
+    """Every illustration renders as full surnames - no ellipsis anywhere.
+
+    "Robinson - McC..." is McCaffrey, McConkey, McLaurin or McBride, all real
+    skill players, on a page read under a bid clock. The column is an
+    illustration, not a prediction, but an ambiguous name is not an
+    illustration of anything.
+    """
+    from reportlab.pdfgen import canvas
+
+    from sffl.plan import pick_range
+    from sffl.render.pdf import PLAN_CELL_GAP, PLAN_COL, _fit
+
+    c = canvas.Canvas(str(tmp_path / "x.pdf"))
+    room = PLAN_COL["PICK RANGE"][1] - PLAN_CELL_GAP
+    for o in outcomes():
+        drawn = _fit(c, pick_range(o), "Helvetica", 5.5, room)
+        assert "…" not in drawn, \
+            "$%d truncates to %r in %.1fpt" % (o.bid, drawn, room)
+        # Both players still named, and still apart, wherever the span is wide.
+        if o.best_player and o.worst_player and o.best_player != o.worst_player:
+            assert " - " in drawn, "$%d lost the separator: %r" % (o.bid, drawn)
+
+    # THIS BOARD'S NAMES ARE SYNTHETIC AND SHORT ("RB 7"), so the loop above
+    # would pass at almost any width and catches nothing. What the column
+    # actually has to hold is a real pair, and the widest the live 2026 board
+    # produces is a hyphenated surname beside a long Mc- surname: 61.4pt at
+    # Helvetica 5.5. These invented surnames are measured to 61.4pt for that
+    # reason - the repo is public, so no real player name is committed here,
+    # but the WIDTH is the real one, and it is what pins the column.
+    pair = "Barnabas Brightwater - Ignatius Castellanos"
+    surnames = "Brightwater - Castellanos"
+    assert 61.0 <= c.stringWidth(surnames, "Helvetica", 5.5) <= 62.0, \
+        "the stand-in must stay calibrated to the live board's widest pair"
+    drawn = _fit(c, pair, "Helvetica", 5.5, room)
+    assert drawn == surnames, \
+        "%r rendered as %r in %.1fpt of PICK RANGE" % (pair, drawn, room)
+
+
+def _drawn_fonts(pdf_bytes):
+    """[(font, size, text)] for every string on the LAST page, in draw order.
+
+    The content streams are uncompressed (see `sffl.render.pdf`), so the font
+    actually in effect at each `Tj` can be read straight out of the file. A
+    byte search for the VALUE cannot do this, and that is precisely how the BID
+    column lost its font: `_cell` took `font`/`size` for `stringWidth` only,
+    the `setFont` calls the old inline `drawString`s relied on were deleted
+    with them, and every bid from row two down drew in Helvetica 5.5 - the pick
+    range's font, left set by the row above - instead of Helvetica-Bold 7. All
+    274 tests passed. The bid is the column Jeff scans to find his row, and it
+    had become the lightest text in the table.
+    """
+    import re
+
+    names = dict((m.group(2).decode(), m.group(1).decode()) for m in re.finditer(
+        rb'/BaseFont\s*/([\w-]+)\s*/Encoding\s*/\w+\s*/Name\s*/(F\d+)', pdf_bytes))
+    stream = [m.group(1) for m in re.finditer(
+        rb'stream\r?\n(.*?)endstream', pdf_bytes, re.S)][-1].decode('latin-1')
+    out, font, size = [], None, None
+    for m in re.finditer(r'/(F\d+) ([\d.]+) Tf|\((.*?)\) Tj', stream):
+        if m.group(1):
+            font, size = names.get(m.group(1), m.group(1)), float(m.group(2))
+        else:
+            out.append((font, size, m.group(3)))
+    return out
+
+
+def test_the_bid_column_is_drawn_in_the_font_it_was_measured_in(tmp_path):
+    # The BID cell is bold 7 - larger and heavier than RANK/LEFT/DISCR at 6 and
+    # the tie cells at 5.5 - because it is what the eye lands on to find a row.
+    # Pinned as DRAWN, not as bytes present somewhere on the page.
+    drawn = _drawn_fonts(rendered(tmp_path))
+    bids = set("$%d" % o.bid for o in outcomes())
+    seen = [(f, s, t) for f, s, t in drawn if t in bids]
+    assert len(seen) >= 20, "expected every candidate bid to be drawn"
+    for font, size, text in seen:
+        assert (font, size) == ("Helvetica-Bold", 7.0), \
+            "%s drew in %s %s, not Helvetica-Bold 7" % (text, font, size)
+
+    # ...and it really is the heaviest thing in its row: nothing else on the
+    # page's table is bold at 7 or larger except the block's own headings.
+    weights = set((f, s) for f, s, t in drawn if t in ("100%", "no data", "1,2,2,2"))
+    assert weights and all(f == "Helvetica" and s == 5.5 for f, s in weights)
+
+
+def test_every_cell_sets_its_own_font_and_inherits_nothing(tmp_path):
+    """The bug generalises: nine `_cell` calls and two `_line` loops.
+
+    Each was correct only because an unrelated `setFont` happened to precede
+    its group. Assert the property instead - the font in effect at every draw
+    is the font that draw asked for - by checking the whole table row by row.
+    """
+    drawn = _drawn_fonts(rendered(tmp_path))
+    out = outcomes()
+    expected = {}
+    for o in out:
+        expected["$%d" % o.bid] = ("Helvetica-Bold", 7.0)
+        expected["$%d" % o.budget_left] = ("Helvetica", 6.0)
+        expected["$%d" % o.discretionary] = ("Helvetica", 6.0)
+    # LEFT/DISCR collide with no bid value on this board ($26-$45 vs $53-$84).
+    assert not (set("$%d" % o.bid for o in out)
+                & set("$%d" % o.budget_left for o in out))
+    for font, size, text in drawn:
+        if text in expected:
+            assert (font, size) == expected[text], \
+                "%r drew in %s %s, expected %s" % (text, font, size,
+                                                   expected[text])
+
+    # `_line` has the same hazard and the same fix: the notes follow the
+    # block's bold-8 heading and the legend follows a 5.5pt table cell, so
+    # dropping its setFont draws prose in whatever the neighbour left behind.
+    prose = dict((t, (f, s)) for f, s, t in drawn)
+    note = "bid order, which also sets nomination control all draft."
+    legend = ("*LEFT and DISCR are PRE-BUMP: win a tie and the bump comes out "
+              "of them too.")
+    assert prose.get(note) == ("Helvetica", 5.8), \
+        "note drew in %s" % (prose.get(note),)
+    assert prose.get(legend) == ("Helvetica", 5.2), \
+        "legend drew in %s" % (prose.get(legend),)
+
+
+def test_the_legend_takes_its_denominator_from_the_file_not_a_typed_five(tmp_path):
+    # "share of the 5 years" is right until 2026's twelve rows are appended,
+    # at which point the page states a wrong denominator for numbers a bidder
+    # is about to act on. It comes off the outcome, which took it from the file.
+    out = outcomes()
+    assert out[0].years == 5, "the tracked file holds 2021-2025"
+    assert b"share of the 5 years" in rendered(tmp_path)
+
+    # Six years of history moves the legend without anyone editing wording.
+    from sffl.render.pdf import render_pdf
+    import dataclasses
+    six = [dataclasses.replace(o, years=6) for o in out]
+    path = str(tmp_path / "six.pdf")
+    render_pdf(LG, board(), path, outcomes=six)
+    data = read(path)
+    assert b"share of the 6 years" in data
+    assert b"share of the 5 years" not in data
 
 
 def test_the_columns_tile_the_block_exactly_with_no_overlap(tmp_path):

@@ -53,28 +53,46 @@ FOOTER_TOP = 12.0
 # nothing failing. Two columns overprinted on an auction table is unreadable at
 # a table under time pressure, so the render stops instead.
 #
-# Each width therefore carries deliberate headroom for the widest string the
-# 2027 file could hold, plus PLAN_CELL_GAP of white space:
-#   BID    "$45" bold 7               11.7 + gap
-#   RANK   "11-12"                    15.3 + gap
-#   TIE1+  "no data" (widest, not a rate)  18.4 + gap
+# WIDTHS ARE SIZED TO THIS YEAR'S FILE, NOT TO A HYPOTHETICAL ONE. Each column
+# holds the widest string it must draw today - whichever is larger, its own
+# header or its widest datum - plus PLAN_CELL_GAP of white space, and no more:
+#   BID    "$45" bold 7                 11.7 + gap
+#   RANK   "11-12"                      15.3 + gap
+#   TIE1+  "no data" (wider than any rate) 18.4 + gap
 #   TIE2+  same
-#   BUMP   "1,2,2,2,2" - six floor ties    21.4 + gap
-#   LIVE   "'21 '22 '23" - three escalations 24.6 + gap
-#   LEFT   header "LEFT*"             14.5 + gap
-#   DISCR  header "DISCR*"            17.5 + gap
-#   PICK   whatever is left; `_fit` shortens names into it.
+#   BUMP   "1,2,2,2" - the four floor bumps 16.8 + gap
+#   LIVE   header "LIVE"                 11.1 + gap (two years, "'21 '22", fits)
+#   LEFT   header "LEFT*"                14.5 + gap
+#   DISCR  header "DISCR*"               17.5 + gap
+#   PICK   EVERYTHING LEFT OVER, and it needs all of it.
+#
+# The first cut of this reserved 2027 headroom - BUMP for a sixth year of floor
+# ties ("1,2,2,2,2"), LIVE for three escalations at one level ("'21 '22 '23") -
+# and paid for it out of PICK RANGE, which then ellipsized three of the twenty
+# rows. "Robinson - McC..." is ambiguous between McCaffrey, McConkey, McLaurin
+# and McBride, all real skill players, on a page read under a bid clock. That
+# is a live cost in 2026 bought with space for strings the 2026 file does not
+# contain.
+#
+# BUYING NEXT YEAR'S HEADROOM WITH THIS YEAR'S LEGIBILITY IS BACKWARDS ONCE THE
+# GUARD EXISTS. `_cell` raises when a string outgrows its column, naming the
+# column and telling you to take the space from PICK RANGE, so 2027's file
+# fails loudly at render time - during a dry run, weeks out - instead of
+# overprinting. A guard that turns growth into a clear failure is worth more
+# than a reserve that costs a legible name every year until then. Expect BUMP
+# to be the first to go: ranks 11-12 tie at the floor every year and four of
+# five were settled by a bump, so a fifth "1,2,2,2,2" is likely in 2026's file.
 PLAN_CELL_GAP = 2.0
 PLAN_COLS = (
     ("BID", 0.0, 14.0, "left"),
-    ("RANK", 14.0, 18.0, "left"),
-    ("TIE1+", 32.0, 21.0, "left"),
-    ("TIE2+", 53.0, 21.0, "left"),
-    ("BUMP", 74.0, 24.0, "left"),
-    ("LIVE", 98.0, 27.0, "left"),
-    ("LEFT*", 125.0, 17.0, "right"),
-    ("DISCR*", 142.0, 20.0, "right"),
-    ("PICK RANGE", 162.0, COL_W - 162.0, "left"),
+    ("RANK", 14.0, 17.6, "left"),
+    ("TIE1+", 31.6, 20.5, "left"),
+    ("TIE2+", 52.1, 20.5, "left"),
+    ("BUMP", 72.6, 19.0, "left"),
+    ("LIVE", 91.6, 18.0, "left"),
+    ("LEFT*", 109.6, 16.6, "right"),
+    ("DISCR*", 126.2, 19.6, "right"),
+    ("PICK RANGE", 145.8, COL_W - 145.8, "left"),
 )
 PLAN_COL = dict((name, (x, w, align)) for name, x, w, align in PLAN_COLS)
 
@@ -148,7 +166,7 @@ def _fit(c, text, font, size, width):
     return short + "…" if short else ""
 
 
-def _cell(c, x, y, text, font, size, column, width=None):
+def _cell(c, x, y, text, font, size, column):
     """Draw one silent-auction cell, or raise if it would overlap its neighbour.
 
     THE SAME DISCIPLINE AS `PLAN_ROW_H`, ONE AXIS OVER. That constant refuses a
@@ -162,6 +180,17 @@ def _cell(c, x, y, text, font, size, column, width=None):
     top of each other is the worst version of that: it is not even wrong, it is
     unreadable, and it is discovered at the table on 2026-08-26.
 
+    IT SETS THE FONT IT MEASURES. The first version of this took `font`/`size`
+    for `stringWidth` only, and deleted the `setFont` calls the old inline
+    `drawString`s had relied on - so every bid from the second row down drew in
+    Helvetica 5.5 (the pick range's font, left set by the row above) instead of
+    Helvetica-Bold 7. The BID column, the one Jeff scans to find his row,
+    rendered lighter than everything beside it and identical in weight to the
+    muted "no data" cells, and all 274 tests passed because a byte search finds
+    "$26" whatever font drew it. Measuring one font and drawing another also
+    makes the width guard measure ink that is never laid down. So the argument
+    now means what its name says, and no caller may depend on ambient state.
+
     Callers that CAN shorten (the pick range) run `_fit` first and arrive
     already inside the width; this then guarantees the result. Callers that
     cannot - a tie rate, a bump list - simply have to fit, and the message says
@@ -170,7 +199,7 @@ def _cell(c, x, y, text, font, size, column, width=None):
     if not text:
         return
     x0, w, align = PLAN_COL[column]
-    allowed = (w if width is None else width) - PLAN_CELL_GAP
+    allowed = w - PLAN_CELL_GAP
     used = c.stringWidth(text, font, size)
     if used > allowed:
         raise ValueError(
@@ -179,6 +208,7 @@ def _cell(c, x, y, text, font, size, column, width=None):
             "and would print through the column beside it. Widen %s in "
             "PLAN_COLS and take the space from PICK RANGE."
             % (column, text, used, allowed, w, PLAN_CELL_GAP, column))
+    c.setFont(font, size)
     if align == "right":
         # THE GAP GOES ON THE SIDE THE NEXT COLUMN IS ON. Right-aligning flush
         # to `x0 + w` spends the whole allowance on the left and leaves zero
@@ -196,6 +226,8 @@ def _line(c, x, y, text, font, size, width, what):
     Same rule as `_cell` and for the same reason - the notes and the legend run
     the full width of the right column, and a line that overruns it prints into
     the page margin or off the sheet. Neither shows up in a byte search either.
+    And like `_cell` it SETS the font it measured, so no line inherits whatever
+    the last caller happened to leave set.
     """
     used = c.stringWidth(text, font, size)
     if used > width:
@@ -203,6 +235,7 @@ def _line(c, x, y, text, font, size, width, what):
             "the silent-auction %s line %r needs %.1fpt but the column is "
             "%.1fpt wide; it would print off the edge of the page. Break the "
             "line." % (what, text, used, width))
+    c.setFont(font, size)
     c.drawString(x, y, text)
 
 
@@ -374,7 +407,6 @@ class Sheet:
         c.drawString(x, y, "SILENT AUCTION (RD 1)")
         y -= 10
 
-        c.setFont("Helvetica", 5.8)
         c.setFillColor(MUTED)
         notes = [
             "Sealed bid, floor $%d. A BID UNDER $%d IS DISCARDED AND YOU"
@@ -398,7 +430,6 @@ class Sheet:
         if outcomes is None:
             return self._fallback_grid(x, y, budget, roster_size, bid_floor)
 
-        c.setFont("Helvetica-Bold", 5)
         c.setFillColor(MUTED)
         for name, _x0, _w, _align in PLAN_COLS:
             _cell(c, x, y, name, "Helvetica-Bold", 5, name)
@@ -415,7 +446,6 @@ class Sheet:
             c.setFillColor(black)
             _cell(c, x, ty, "$%d" % o.bid, "Helvetica-Bold", 7, "BID")
 
-            c.setFont("Helvetica", 6)
             span = ("%d" % o.best_rank if o.best_rank == o.worst_rank
                     else "%d-%d" % (o.best_rank, o.worst_rank))
             _cell(c, x, ty, span, "Helvetica", 6, "RANK")
@@ -426,7 +456,6 @@ class Sheet:
             _cell(c, x, ty, "$%d" % o.discretionary, "Helvetica", 6, "DISCR*")
 
             join, field, bump, live = tie_cells(o)
-            c.setFont("Helvetica", 5.5)
             # Absence of evidence is muted; a measurement is not. "no data"
             # and "0%" must never be mistaken for each other at arm's length
             # on an iPad, so they differ in wording AND in weight.
@@ -442,15 +471,15 @@ class Sheet:
                   "Helvetica", 5.5, "PICK RANGE")
 
         y -= len(outcomes) * PLAN_ROW_H + 7
-        c.setFont("Helvetica", 5.2)
         c.setFillColor(MUTED)
         # TWO TIE COLUMNS, TWO MEANINGS, and the legend has to keep them apart
         # without inviting anyone to average them. TIE1+ is the bidder's own
         # exposure and is always the larger; TIE2+ is what the field did among
         # itself. The wording names WHO is in each count.
         for line in (
-            "TIE1+ = share of the 5 years with a team ALREADY at this exact bid: join it and you are",
-            "in a tie. TIE2+ = share with 2+ teams tied EACH OTHER there, so TIE1+ is never the",
+            "TIE1+ = share of the %d years with a team ALREADY at this exact bid: join it and you"
+            % outcomes[0].years,
+            "are in a tie. TIE2+ = share with 2+ teams tied EACH OTHER there, so TIE1+ is never the",
             "smaller. \"no data\" in both = never bid, so nothing is known: NOT a measured 0%.",
             "BUMP = bumps actually charged to win a tie. LIVE = a year the tie went to a live auction,",
             "where money was paid over the bid: an empty BUMP beside a LIVE year is not a free tie.",
