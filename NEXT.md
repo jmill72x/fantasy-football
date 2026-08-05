@@ -5,8 +5,8 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 ## Where things stand
 
 Auction cheatsheet pipeline for the STRIPES Fantasy Football League (CBS). Four plans;
-**plans 1 and 2 are merged and done.** The valuation is finished and validated against
-real prices. What remains is rendering it onto paper and an iPad.
+**all four plans are merged and done.** Valuation is validated against real prices; both
+artifacts render. What remains is Jeff's markup list, TODO B, and the 08-23 data refresh.
 
 | | Status |
 |---|---|
@@ -56,7 +56,8 @@ Update this block at the end of every session so the next one can resume blind.
 - [x] Market calibration — EST$ (what the room pays) beside MY$ (what he's worth), 165 tests
 - [x] **Plan 3 — renderers MERGED** (203 tests). PDF 17 pages, Excel 2 pages
 - [ ] **Full dry run** — review the PDF on the iPad, print the Excel. THE 08-10 GOAL
-- [x] Plan 4 — silent auction planner. Mechanic confirmed, 5 years of real bids, `sffl plan`
+- [x] Plan 4 — silent auction planner MERGED. 5 years of real bids on the management page
+- [ ] **Work Jeff's markup list** from the 2026-08-05 PDF/Excel review  <- NEXT
 - [ ] TODO B — widen the weekly collection to ~120 players (needs `claude --chrome`)
       **Jeff confirmed 2026-08-04 this IS still needed** — first pass with this scoring
       model, so 18 players is too thin to trust curves that shape every value
