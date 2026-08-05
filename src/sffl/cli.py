@@ -10,42 +10,31 @@ import sys
 
 from sffl.calibrate import load_curves
 from sffl.fit import DEFAULT_TQB_STARTERS, choose_policy, load_prices
-from sffl.identity import normalize_name
+from sffl.identity import NFL_TEAMS, normalize_name
 from sffl.league import load_league
 from sffl.market import assign_expected_prices, fit_price_curve
 from sffl.pool import build_pool, score_season_calibrated
+from sffl.render.pdf import render_pdf
+from sffl.render.rows import DEFAULT_BYES, build_rows, load_byes
+from sffl.render.xlsx import render_xlsx
 from sffl.value import _pool_of, assign_dollars, assign_vorp, replacement_levels
 
 DEFAULT_LEAGUE = "leagues/sffl/2026.yaml"
 
 
-def cmd_ingest(args):
-    lg = load_league(args.league)
-    pool = build_pool(lg, args.source, args.file, args.year, args.set)
+def _value_pool(lg, args):
+    """Build a pool and run it through the full valuation path: vendor
+    extract -> calibration curves -> replacement policy -> VORP/dollars ->
+    (if prices are supplied) the market price curve.
 
-    by_pos = {}
-    for p in pool:
-        by_pos[p.pos] = by_pos.get(p.pos, 0) + 1
-    print("%d players from %s" % (len(pool), args.source))
-    print("  " + "  ".join("%s=%d" % kv for kv in sorted(by_pos.items())))
-    print("\ntop 15 by SFFL season points:")
-    for i, p in enumerate(pool[:15], 1):
-        print("  %2d. %7.1f  %-4s %s" % (i, p.stats["_season_points"], p.pos, p.name))
+    Shared by cmd_value and cmd_render so the two commands can never price
+    the same player differently - duplicating this path would let a fix or a
+    calibration change land in one command's copy and not the other's.
 
-    if args.out:
-        with open(args.out, "w", newline="") as fh:
-            w = csv.writer(fh)
-            w.writerow(["name", "team", "pos", "games", "season_points", "source", "set"])
-            for p in pool:
-                w.writerow([p.name, p.team, p.pos, p.games,
-                            round(p.stats["_season_points"], 2),
-                            p.source, p.set_name or ""])
-        print("\nwrote %s" % args.out)
-    return 0
-
-
-def cmd_value(args):
-    lg = load_league(args.league)
+    Returns (pool, curve, prices) on success. Returns None after printing why
+    on the one recoverable failure (`--policy fit` without `--prices`) - the
+    caller should print nothing further and return 1.
+    """
     pool = build_pool(lg, args.source, args.file, args.year, args.set)
 
     if args.curves:
@@ -66,7 +55,7 @@ def cmd_value(args):
     if policy == "fit":
         if not args.prices:
             print("error: --policy fit requires --prices with observed auction prices")
-            return 1
+            return None
         policy, reports = choose_policy(lg, pool, prices)
         total_prices = prices.total_rows
         for r in reports:
@@ -124,6 +113,41 @@ def cmd_value(args):
     for name in sorted(levels):
         print("  %-5s %8.1f pts" % (name, levels[name]))
     print("  $%.4f per VORP point\n" % rate)
+
+    return pool, curve, prices
+
+
+def cmd_ingest(args):
+    lg = load_league(args.league)
+    pool = build_pool(lg, args.source, args.file, args.year, args.set)
+
+    by_pos = {}
+    for p in pool:
+        by_pos[p.pos] = by_pos.get(p.pos, 0) + 1
+    print("%d players from %s" % (len(pool), args.source))
+    print("  " + "  ".join("%s=%d" % kv for kv in sorted(by_pos.items())))
+    print("\ntop 15 by SFFL season points:")
+    for i, p in enumerate(pool[:15], 1):
+        print("  %2d. %7.1f  %-4s %s" % (i, p.stats["_season_points"], p.pos, p.name))
+
+    if args.out:
+        with open(args.out, "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["name", "team", "pos", "games", "season_points", "source", "set"])
+            for p in pool:
+                w.writerow([p.name, p.team, p.pos, p.games,
+                            round(p.stats["_season_points"], 2),
+                            p.source, p.set_name or ""])
+        print("\nwrote %s" % args.out)
+    return 0
+
+
+def cmd_value(args):
+    lg = load_league(args.league)
+    result = _value_pool(lg, args)
+    if result is None:
+        return 1
+    pool, curve, prices = result
 
     # _spread_rec_yds / _spread_rush_yds / _n_sources are only populated when
     # the pool came through sffl.consensus.merge (multi-source agreement
@@ -216,6 +240,69 @@ def cmd_value(args):
     return 0
 
 
+def cmd_render(args):
+    if not args.pdf and not args.xlsx:
+        print("error: render needs at least one of --pdf or --xlsx to write")
+        return 1
+
+    lg = load_league(args.league)
+    result = _value_pool(lg, args)
+    if result is None:
+        return 1
+    pool, _curve, _prices = result
+
+    # 23 of 543 real Draft Sharks rows carry a placeholder team code (UNS x22
+    # unsigned free agents, RK x1) - not real NFL franchises, so they have no
+    # bye week. build_rows correctly raises on an unknown team code rather
+    # than rendering a blank bye, so filter them out here, at the render
+    # layer, using sffl.identity.NFL_TEAMS as the authority on what counts as
+    # a real franchise. All of them sit below replacement, so dropping them
+    # changes no dollar value on the board - but dropping them silently would
+    # be exactly the kind of quiet data loss this project's raise-don't-guess
+    # rule exists to prevent, so the count is always printed. A team code
+    # that IS a real franchise but is still missing from the bye file is left
+    # alone here and reaches build_rows, which still raises - that is a
+    # genuine data gap, not a free agent, and must not be swallowed the same way.
+    rosterable = [p for p in pool if p.team in NFL_TEAMS]
+    dropped = [p for p in pool if p.team not in NFL_TEAMS]
+    if dropped:
+        codes = sorted(set(p.team for p in dropped))
+        print("dropped %d unrostered player(s) with a non-NFL team code (%s) "
+              "- not real franchises, so no bye week and not draftable"
+              % (len(dropped), ", ".join(codes)))
+
+    byes = load_byes(args.byes)
+    rows = build_rows(lg, rosterable, byes)
+
+    if args.pdf:
+        pages = render_pdf(lg, rows, args.pdf)
+        print("wrote %s (%d pages)" % (args.pdf, pages))
+    if args.xlsx:
+        stats = render_xlsx(lg, rows, args.xlsx)
+        print("wrote %s" % args.xlsx)
+        # render_xlsx truncates to a hard two-page row budget (derived from
+        # page geometry, not a hardcoded player count - see
+        # sffl.render.xlsx.ROW_BUDGET) because a full board cannot fit in
+        # two printed pages. Report it per section, not as one combined
+        # number - a single global count once hid an entire position
+        # (Receivers) getting cut to zero while the total still looked
+        # reasonable.
+        ov = stats["overall"]
+        if ov["cut"]:
+            print("  Overall Board: %d of %d shown (%d cut)"
+                  % (ov["shown"], ov["shown"] + ov["cut"], ov["cut"]))
+        else:
+            print("  Overall Board: all %d shown, nothing cut" % ov["shown"])
+        for title, sec in sorted(stats["sections"].items()):
+            total = sec["shown"] + sec["cut"]
+            if sec["cut"]:
+                print("  %s: %d of %d shown (%d cut)" % (title, sec["shown"], total, sec["cut"]))
+            else:
+                print("  %s: all %d shown, nothing cut" % (title, sec["shown"]))
+
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sffl")
     sub = ap.add_subparsers(dest="cmd")
@@ -247,6 +334,28 @@ def main(argv=None):
                            "(default: the 2025 map; a new season needs its own file)")
     val.add_argument("--out", default=None)
     val.set_defaults(func=cmd_value)
+
+    ren = sub.add_parser("render", help="value the pool and write the PDF/Excel cheatsheets")
+    ren.add_argument("--source", required=True)
+    ren.add_argument("--file", required=True)
+    ren.add_argument("--year", type=int, required=True)
+    ren.add_argument("--set", default=None)
+    ren.add_argument("--league", default=DEFAULT_LEAGUE)
+    ren.add_argument("--curves", default=None,
+                      help="calibration curves YAML from `sffl.calibrate`")
+    ren.add_argument("--policy", default="starter",
+                      choices=["starter", "draftable", "fit"])
+    ren.add_argument("--prices", default=None,
+                      help="observed auction prices CSV; required with --policy fit")
+    ren.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
+                      help="year-bound map of starting QB name -> franchise code, "
+                           "used to join --prices' Team QB rows to the pool "
+                           "(default: the 2025 map; a new season needs its own file)")
+    ren.add_argument("--byes", default=DEFAULT_BYES,
+                      help="team code -> bye week YAML (default: %s)" % DEFAULT_BYES)
+    ren.add_argument("--pdf", default=None, help="path to write the iPad board PDF")
+    ren.add_argument("--xlsx", default=None, help="path to write the printed workbook")
+    ren.set_defaults(func=cmd_render)
 
     args = ap.parse_args(argv)
     if not getattr(args, "func", None):
