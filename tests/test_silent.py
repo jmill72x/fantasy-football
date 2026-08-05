@@ -1,8 +1,11 @@
 import pytest
 import yaml
 
-from sffl.silent import (BID_FLOOR, SilentBid, bids_for_rank, load_bid_history,
-                         ranks_for_bid, tie_rate_at, winning_bumps_at)
+from sffl.silent import (BID_FLOOR, SilentBid, bids_for_rank, escalated_at,
+                         load_bid_history, observations_at, ranks_for_bid,
+                         tie_rate_at, winning_bumps_at)
+
+HEADER = "year,rank,franchise,bid,bump,cap_cost,player,note\n"
 
 FIXTURE = "tests/fixtures/silent_bids_sample.csv"
 REAL = "data/league/silent-auction-bids.csv"
@@ -32,11 +35,13 @@ def test_a_bid_below_the_floor_raises():
     assert "26" in str(e.value)
 
 
-def test_a_bid_never_observed_reports_the_neighbouring_ranks():
-    # $30 was never bid in the fixture; it sits between $26 and $39
+def test_a_bid_never_observed_is_placed_against_every_year():
+    # $30 was never bid in the fixture; it sits between $26 and $39. Both years
+    # still get a vote: it clears three bids in 2024 and two in 2025.
     h = load_bid_history(FIXTURE)
     best, worst, median = ranks_for_bid(h, 30)
     assert best <= median <= worst
+    assert (best, worst) == (3, 4)
 
 
 def test_bids_for_rank_reports_the_range_that_bought_it():
@@ -85,21 +90,137 @@ def test_the_module_floor_matches_the_league_profile():
     assert raw["silent_auction"]["bid_floor"] == BID_FLOOR
 
 
-def test_a_bid_above_everything_ever_observed_clamps():
-    # Nobody has bid $60. Do not invent a rank for it - clamp to the best bid
-    # that was actually observed rather than extrapolating off the top.
+def test_a_bid_above_everything_ever_observed_is_rank_one():
+    # Nobody has bid $60. Rank 1 is not an extrapolation - it is what beating
+    # every bid on record means. There is no rank 0 to invent.
     h = load_bid_history(FIXTURE)
+    assert ranks_for_bid(h, 60) == (1, 1, 1.0)
     assert ranks_for_bid(h, 60) == ranks_for_bid(h, 43)
 
 
 def test_a_cap_cost_below_the_bid_is_rejected(tmp_path):
     bad = tmp_path / "bad.csv"
     bad.write_text(
-        "year,rank,franchise,bid,bump,cap_cost,player,note\n"
+        HEADER +
         "2025,1,Alpha,40,0,39,Player One,\n")
     with pytest.raises(ValueError) as e:
         load_bid_history(str(bad))
     assert "cap_cost" in str(e.value)
+
+
+def test_a_duplicate_rank_within_a_year_is_rejected(tmp_path):
+    bad = tmp_path / "dupe.csv"
+    bad.write_text(
+        HEADER +
+        "2025,1,Alpha,40,0,40,,\n"
+        "2025,1,Beta,38,0,38,,\n")
+    with pytest.raises(ValueError) as e:
+        load_bid_history(str(bad))
+    assert "rank" in str(e.value)
+
+
+def test_a_bid_that_rises_with_rank_is_rejected(tmp_path):
+    # A transposed row in a hand-maintained file: rank 2 outbids rank 1.
+    bad = tmp_path / "transposed.csv"
+    bad.write_text(
+        HEADER +
+        "2025,1,Alpha,38,0,38,,\n"
+        "2025,2,Beta,40,0,40,,\n")
+    with pytest.raises(ValueError) as e:
+        load_bid_history(str(bad))
+    assert "lower bid" in str(e.value)
+
+
+def test_ranks_are_monotone_in_the_bid():
+    # A larger bid can never buy a worse rank. The nearest-neighbour bracket
+    # this replaced claimed $36's best case was rank 6 and $35's was rank 5.
+    h = load_bid_history(REAL)
+    previous = None
+    for bid in range(BID_FLOOR, 46):
+        current = ranks_for_bid(h, bid)
+        if previous is not None:
+            assert current[0] <= previous[0], "best rank rose at $%d" % bid
+            assert current[1] <= previous[1], "worst rank rose at $%d" % bid
+            assert current[2] <= previous[2], "median rank rose at $%d" % bid
+        previous = current
+
+
+def test_every_year_votes_on_every_bid_not_just_the_years_that_bid_it():
+    # $39 took rank 1 in 2023's four-way tie, but would only have been rank 5
+    # in 2021. A lookup of observed ranks alone would never surface that.
+    h = load_bid_history(REAL)
+    best, worst, _ = ranks_for_bid(h, 39)
+    assert best == 1
+    assert worst == 5
+    # $32 was submitted exactly once in five years; it is still placed against
+    # all sixty bids rather than resting on that single observation.
+    assert observations_at(h, 32) == 1
+    assert ranks_for_bid(h, 32)[0] < ranks_for_bid(h, 32)[1]
+
+
+def test_winning_bumps_exclude_ties_that_escalated_to_a_live_auction():
+    h = load_bid_history(REAL)
+    # 2023's four-way at $39, 2021's shared $4 bump at $35, and 2025's shared
+    # $1 bump at $33 were all settled live. No bump won any of them.
+    for bid in (39, 35, 33):
+        assert winning_bumps_at(h, bid) == [], "$%d" % bid
+        assert escalated_at(h, bid) != []
+    # A real bump win is still reported: 2024 rank 8 outbumped EM 50s at $31.
+    assert winning_bumps_at(h, 31) == [2]
+    assert escalated_at(h, 31) == []
+
+
+def test_the_floor_still_needs_a_bump_and_one_year_escalated():
+    h = load_bid_history(REAL)
+    assert tie_rate_at(h, BID_FLOOR) == pytest.approx(1.0)
+    # Four of the five floor ties were settled by a $1-$2 bump.
+    assert winning_bumps_at(h, BID_FLOOR) == [1, 2, 2, 2]
+    # 2022's was not: both franchises bumped $0, so it escalated.
+    assert escalated_at(h, BID_FLOOR) == [2022]
+
+
+def test_the_structural_escalation_signal_agrees_with_every_note():
+    """Pin the equivalence rather than trusting it once.
+
+    Escalation is detected from a shared top bump inside a tie group. The
+    `note` column is five years of hand-written prose and must never be the
+    signal, but it is the only independent record of what happened, so the two
+    must agree on every tie group in the file.
+    """
+    from sffl.silent import _escalated, _tie_groups
+
+    h = load_bid_history(REAL)
+    groups = _tie_groups(h)
+    assert len(groups) == 15, "the real file holds fifteen tie groups"
+    escalations = 0
+    for key in sorted(groups):
+        rows = groups[key]
+        note_says = any("live" in b.note.lower() or "unresolved" in b.note.lower()
+                        for b in rows)
+        assert _escalated(rows) == note_says, "tie group %s" % (key,)
+        escalations += note_says
+    # Four escalated, eleven settled by a bump. Counted from the file, not
+    # from the review note, which put the split at five/ten.
+    assert escalations == 4
+    assert sorted(k for k in groups if _escalated(groups[k])) == [
+        (2021, 35), (2022, 26), (2023, 39), (2025, 33)]
+
+
+def test_a_bid_nobody_ever_submitted_refuses_to_summarise_itself():
+    # $36 sits mid-range with zero observations. "Tie rate 0%" would be a
+    # fabrication; the caller must be made to notice.
+    h = load_bid_history(REAL)
+    assert observations_at(h, 36) == 0
+    for fn in (tie_rate_at, winning_bumps_at, escalated_at):
+        with pytest.raises(ValueError) as e:
+            fn(h, 36)
+        assert "never been submitted" in str(e.value)
+    # A bid that WAS submitted and simply never tied still answers 0.0.
+    assert observations_at(h, 44) == 1
+    assert tie_rate_at(h, 44) == pytest.approx(0.0)
+    assert winning_bumps_at(h, 44) == []
+    # ranks_for_bid has no such gap - every year votes on every bid.
+    assert ranks_for_bid(h, 36)[0] >= 1
 
 
 def test_the_dataclass_carries_the_note():

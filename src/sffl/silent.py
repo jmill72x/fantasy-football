@@ -15,13 +15,29 @@ exactly when extra money was actually charged, so `cap_cost - bid` is the
 premium that won. 2024 rank 4 submitted `bump 2` and paid `cap_cost 39` on a
 `bid 39` - no tie, so nothing was charged. Inferring a charged bump from the
 `bump` column would have that team paying $41 it never spent.
+
+AND A CHARGED PREMIUM IS NOT ALWAYS A BUMP. When two franchises submit the
+SAME bump at the same bid, the bump cannot break the tie either, and the tie
+escalates to a live auction. The premium those rows paid is a live-auction
+settlement, not a sealed bump a bidder could have pre-committed to. Four of
+the fifteen ties on record escalated this way - 2021 at $35 (both bumped $4),
+2022 at $26 (both bumped $0), 2023's four-way at $39, 2025 at $33 - and at
+three of the six bid levels that show a charged premium, EVERY premium came
+from a live auction. `winning_bumps_at` therefore reports only ties a sealed
+bump actually settled; `escalated_at` reports the rest.
+
+Escalation is detected structurally - shared top bump inside a (year, bid) tie
+group - and NOT by reading the `note` column, which is five years of
+hand-written prose whose phrasing already varies ("bump tie -> live auction",
+"4-way tie at 39 -> live auction", "bumps equal, resolved live"). The two
+agree on all fifteen tie groups, and a test pins that.
 """
 
 import csv
 import os
 import statistics
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 # The silent-auction bid floor, and the fallback for history analysis, which
 # has no league object in scope. Where a LeagueProfile IS available, read
@@ -108,7 +124,35 @@ def load_bid_history(path=DEFAULT_BIDS):
             ))
     if not history:
         raise ValueError("%s holds no bids" % path)
+    _check_year_shape(history, path)
     return history
+
+
+def _check_year_shape(history, path):
+    """Each year must rank its bids uniquely, high bid to low.
+
+    This file is hand-maintained. Two rows sharing a rank, or a rank order that
+    disagrees with the bid order, means a transposed or mis-keyed row - and
+    every function here would go on producing confident numbers from it.
+    """
+    # type: (List[SilentBid], str) -> None
+    by_year = {}  # type: Dict[int, List[SilentBid]]
+    for b in history:
+        by_year.setdefault(b.year, []).append(b)
+    for year in sorted(by_year):
+        rows = sorted(by_year[year], key=lambda b: b.rank)
+        for i, b in enumerate(rows):
+            if i and b.rank == rows[i - 1].rank:
+                raise ValueError(
+                    "%s: %d has two bids at rank %d (%s and %s); ranks must be "
+                    "unique within a year"
+                    % (path, year, b.rank, rows[i - 1].franchise, b.franchise))
+            if i and b.bid > rows[i - 1].bid:
+                raise ValueError(
+                    "%s: %d ranks %s ($%d) at %d above %s ($%d) at %d, but a "
+                    "higher rank must never hold a lower bid"
+                    % (path, year, rows[i - 1].franchise, rows[i - 1].bid,
+                       rows[i - 1].rank, b.franchise, b.bid, b.rank))
 
 
 def _check_floor(bid):
@@ -127,22 +171,35 @@ def _require_history(history):
 
 
 def ranks_for_bid(history, bid):
-    """(best_rank, worst_rank, median_rank) this bid has historically bought.
+    """(best_rank, worst_rank, median_rank) this bid would have taken.
 
-    For a bid that WAS observed, these are simply the best (lowest), worst
-    (highest) and median rank it took across every year in the history.
+    COUNTERFACTUAL INSERTION, not a lookup of observed ranks. For each year on
+    record, this bid is placed against that year's twelve sealed bids:
 
-    For a bid that was NEVER observed, the answer is a bracket, not a point:
-    the nearest observed bid above sets the best rank (a strictly larger bid
-    has never done worse than that), and the nearest observed bid below sets
-    the worst rank. The median is interpolated between the two neighbours'
-    medians by where the bid sits between them.
+        best  = 1 + (bids strictly above it)      - it wins every tie
+        worst = best + (bids equal to it) - 1     - it loses every tie
+                (worst == best when nothing ties it)
 
-    NEVER EXTRAPOLATES PAST THE OBSERVED RANGE. A bid above everything ever
-    observed is CLAMPED to the highest observed bid, and a bid below
-    everything observed to the lowest. Nobody has ever bid $60, so this
-    reports what $45 - the most anyone has bid - actually bought, rather than
-    inventing a rank for a bid with no evidence behind it.
+    then best/worst/median are taken across the years. A tie is a real spread,
+    not a point: bidding the $26 floor has landed at rank 11 and at rank 12 in
+    the same year depending on the bump, and both are reported.
+
+    EVERY YEAR VOTES ON EVERY BID. Reading back only the ranks a bid was
+    actually observed at answers a different and much weaker question - $32 was
+    submitted exactly once in five years, so a lookup rests on n=1, while this
+    places $32 against all sixty bids. It also removes the need to interpolate
+    or clamp anything: there is no unobserved bid, only bids no one happened to
+    submit, and those are placed on the same evidence as the rest.
+
+    MONOTONE BY CONSTRUCTION. Both bounds are counts of bids beating (or
+    matching) the candidate, so raising the bid can never worsen any of the
+    three figures. The earlier nearest-neighbour bracket was not monotone: it
+    claimed $36's best case was rank 6 while $35's was rank 5, which the data
+    contradicts - $36 beats $35 in every year it could be compared.
+
+    A bid above everything ever submitted correctly reports rank 1, which is
+    an observation about the field and not an extrapolation past it. There is
+    no rank 0 to invent.
 
     Raises ValueError for a bid below the floor, or on an empty history.
     """
@@ -150,35 +207,23 @@ def ranks_for_bid(history, bid):
     _require_history(history)
     _check_floor(bid)
 
-    by_bid = {}  # type: Dict[int, List[int]]
+    by_year = {}  # type: Dict[int, List[int]]
     for b in history:
-        by_bid.setdefault(b.bid, []).append(b.rank)
+        by_year.setdefault(b.year, []).append(b.bid)
 
-    exact = by_bid.get(bid)
-    if exact is not None:
-        return (min(exact), max(exact), float(statistics.median(exact)))
-
-    observed = sorted(by_bid)
-    below = None  # type: Optional[int]
-    above = None  # type: Optional[int]
-    for value in observed:
-        if value < bid:
-            below = value
-        elif above is None:
-            above = value
-
-    # Clamp rather than extrapolate: off either end, report the nearest bid
-    # that was actually observed.
-    if below is None:
-        return ranks_for_bid(history, observed[0])
-    if above is None:
-        return ranks_for_bid(history, observed[-1])
-
-    lo_best, lo_worst, lo_median = ranks_for_bid(history, below)
-    hi_best, hi_worst, hi_median = ranks_for_bid(history, above)
-    frac = float(bid - below) / float(above - below)
-    median = lo_median + frac * (hi_median - lo_median)
-    return (hi_best, lo_worst, median)
+    bests = []  # type: List[int]
+    worsts = []  # type: List[int]
+    mids = []  # type: List[float]
+    for year in sorted(by_year):
+        bids = by_year[year]
+        above = sum(1 for other in bids if other > bid)
+        tied = sum(1 for other in bids if other == bid)
+        best = above + 1
+        worst = above + max(tied, 1)
+        bests.append(best)
+        worsts.append(worst)
+        mids.append((best + worst) / 2.0)
+    return (min(bests), max(worsts), float(statistics.median(mids)))
 
 
 def bids_for_rank(history, rank):
@@ -198,6 +243,65 @@ def bids_for_rank(history, rank):
     return (min(bids), max(bids), float(statistics.median(bids)))
 
 
+def observations_at(history, bid):
+    """How many times this exact bid has ever been submitted.
+
+    ZERO EVIDENCE AND STRONG EVIDENCE MUST NOT LOOK ALIKE. `tie_rate_at` and
+    `winning_bumps_at` refuse to answer for a bid nobody has ever submitted,
+    precisely so a never-looked-at bid cannot be reported as a confident
+    "never tied". Call this first to find out which case you are in without
+    handling an exception: $36 sits in the middle of the plausible range and
+    has never been bid, while $39 has been bid six times.
+
+    Unlike the other functions here this one is a pure count of the record,
+    so it neither raises on an unobserved bid nor checks the floor.
+    """
+    # type: (List[SilentBid], int) -> int
+    return sum(1 for b in history if b.bid == bid)
+
+
+def _require_observed(history, bid):
+    """Refuse to summarise a bid level nobody has ever submitted."""
+    # type: (List[SilentBid], int) -> None
+    if observations_at(history, bid):
+        return
+    submitted = sorted(set(b.bid for b in history))
+    below = [v for v in submitted if v < bid]
+    above = [v for v in submitted if v > bid]
+    raise ValueError(
+        "$%d has never been submitted in %d years of bids, so there is no "
+        "evidence to summarise - the nearest bids on record are %s and %s. "
+        "Call observations_at() to test for this rather than reading a zero "
+        "as 'never happened'"
+        % (bid, len(set(b.year for b in history)),
+           ("$%d" % below[-1]) if below else "nothing below",
+           ("$%d" % above[0]) if above else "nothing above"))
+
+
+def _tie_groups(history):
+    """Every (year, bid) at which two or more franchises tied, keyed by both."""
+    # type: (List[SilentBid]) -> Dict[Tuple[int, int], List[SilentBid]]
+    groups = {}  # type: Dict[Tuple[int, int], List[SilentBid]]
+    for b in history:
+        groups.setdefault((b.year, b.bid), []).append(b)
+    return dict((key, rows) for key, rows in groups.items() if len(rows) >= 2)
+
+
+def _escalated(group):
+    """True when a sealed bump could not settle this tie either.
+
+    STRUCTURAL, from the league rule, not from the `note` prose. The bump only
+    breaks a tie if one franchise submitted a strictly larger one; when the top
+    bump inside a tie group is shared, the tie escalates to a live auction and
+    whatever those rows paid is a live settlement, not a bump anyone could have
+    committed to in advance. Agrees with the notes on all fifteen tie groups -
+    see `test_the_structural_escalation_signal_agrees_with_every_note`.
+    """
+    # type: (List[SilentBid]) -> bool
+    top = max(b.bump for b in group)
+    return sum(1 for b in group if b.bump == top) >= 2
+
+
 def tie_rate_at(history, bid):
     """Fraction of YEARS in which two or more franchises submitted this bid.
 
@@ -205,11 +309,14 @@ def tie_rate_at(history, bid):
     chances to tie, so a bid tied in all five scores 1.0. Ranks 11-12 have
     tied at the $26 floor in every year on record.
 
-    Raises ValueError for a bid below the floor, or on an empty history.
+    Raises ValueError for a bid below the floor, for a bid nobody has ever
+    submitted (see `observations_at` - 0.0 must mean "never tied", never "never
+    looked"), or on an empty history.
     """
     # type: (List[SilentBid], int) -> float
     _require_history(history)
     _check_floor(bid)
+    _require_observed(history, bid)
     per_year = {}  # type: Dict[int, int]
     for b in history:
         per_year.setdefault(b.year, 0)
@@ -220,19 +327,56 @@ def tie_rate_at(history, bid):
 
 
 def winning_bumps_at(history, bid):
-    """Every premium actually charged on top of this bid, ascending.
+    """Bumps that actually settled a tie at this bid level, ascending.
 
-    Derived from `cap_cost - bid`, NOT from the `bump` column: a bump is
-    charged only when it wins a tie, so a submitted bump that lost - or that
-    was never tested - cost nothing and does not appear here. See the module
-    docstring.
+    Two filters, and both matter:
 
-    An empty list means this bid level either never tied, or never won a tie.
+    1. The amount is `cap_cost - bid`, NOT the `bump` column. A bump is charged
+       only when it wins, so a bump that lost - or was never tested - cost
+       nothing and does not appear here.
+    2. TIES THAT ESCALATED TO A LIVE AUCTION ARE EXCLUDED. When the top bump in
+       a tie group is shared, no bump settled anything and the premium those
+       rows paid was set live. Reporting those as bumps is how the $35 tie of
+       2021 gets misread as "the largest charged bump in the file" when its own
+       note says live auction. Use `escalated_at` for that exposure - it is
+       real money, but it is not a bump a bidder can plan.
 
-    Raises ValueError for a bid below the floor, or on an empty history.
+    An empty list means this bid level either never tied, or every tie it drew
+    escalated rather than being settled by a bump. It never means "never
+    submitted" - that raises.
+
+    Raises ValueError for a bid below the floor, for a bid nobody has ever
+    submitted, or on an empty history.
     """
     # type: (List[SilentBid], int) -> List[int]
     _require_history(history)
     _check_floor(bid)
-    return sorted(b.charged_bump for b in history
-                  if b.bid == bid and b.charged_bump > 0)
+    _require_observed(history, bid)
+    bumps = []  # type: List[int]
+    for (_, group_bid), rows in _tie_groups(history).items():
+        if group_bid != bid or _escalated(rows):
+            continue
+        bumps.extend(b.charged_bump for b in rows if b.charged_bump > 0)
+    return sorted(bumps)
+
+
+def escalated_at(history, bid):
+    """Years in which a tie at this bid escalated to a live auction, sorted.
+
+    The complement of `winning_bumps_at`: these are the ties no sealed bump
+    could settle, because the top bump was shared. Half the bid levels showing
+    a charged premium are entirely of this kind ($39, $35, $33), and the $26
+    floor has one such year too - 2022, where both franchises bumped $0.
+
+    A bidder can pre-commit a bump; a bidder cannot pre-commit to winning a
+    live auction. Report this as escalation risk, never as a bump.
+
+    Raises ValueError for a bid below the floor, for a bid nobody has ever
+    submitted, or on an empty history.
+    """
+    # type: (List[SilentBid], int) -> List[int]
+    _require_history(history)
+    _check_floor(bid)
+    _require_observed(history, bid)
+    return sorted(year for (year, group_bid), rows in _tie_groups(history).items()
+                  if group_bid == bid and _escalated(rows))
