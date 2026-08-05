@@ -13,10 +13,12 @@ from sffl.fit import DEFAULT_TQB_STARTERS, choose_policy, load_prices
 from sffl.identity import NFL_TEAMS, normalize_name
 from sffl.league import load_league
 from sffl.market import assign_expected_prices, fit_price_curve
+from sffl.plan import pick_range, plan_bids, tie_cells
 from sffl.pool import build_pool, score_season_calibrated
 from sffl.render.pdf import render_pdf
 from sffl.render.rows import DEFAULT_BYES, build_rows, load_byes
 from sffl.render.xlsx import render_xlsx
+from sffl.silent import DEFAULT_BIDS, load_bid_history
 from sffl.value import _pool_of, assign_dollars, assign_vorp, replacement_levels
 
 DEFAULT_LEAGUE = "leagues/sffl/2026.yaml"
@@ -115,6 +117,73 @@ def _value_pool(lg, args):
     print("  $%.4f per VORP point\n" % rate)
 
     return pool, curve, prices
+
+
+def _board_rows(lg, pool, args):
+    """A valued pool turned into render-ready rows, minus the unrostered.
+
+    Shared by cmd_render and cmd_plan so the board the PDF draws and the board
+    the tradeoff table illustrates from are the same board, ranked the same
+    way. Two copies of this filter would let one command's "rank 3" mean a
+    different player from the other's.
+
+    23 of 543 real Draft Sharks rows carry a placeholder team code (UNS x22
+    unsigned free agents, RK x1) - not real NFL franchises, so they have no
+    bye week. build_rows correctly raises on an unknown team code rather than
+    rendering a blank bye, so filter them out here, at the render layer, using
+    sffl.identity.NFL_TEAMS as the authority on what counts as a real
+    franchise. All of them sit below replacement, so dropping them changes no
+    dollar value on the board - but dropping them silently would be exactly
+    the kind of quiet data loss this project's raise-don't-guess rule exists
+    to prevent, so the count is always printed. A team code that IS a real
+    franchise but is still missing from the bye file is left alone here and
+    reaches build_rows, which still raises - that is a genuine data gap, not a
+    free agent, and must not be swallowed the same way.
+    """
+    rosterable = [p for p in pool if p.team in NFL_TEAMS]
+    dropped = [p for p in pool if p.team not in NFL_TEAMS]
+    if dropped:
+        codes = sorted(set(p.team for p in dropped))
+        print("dropped %d unrostered player(s) with a non-NFL team code (%s) "
+              "- not real franchises, so no bye week and not draftable"
+              % (len(dropped), ", ".join(codes)))
+    return build_rows(lg, rosterable, load_byes(args.byes))
+
+
+# The header, row format and legend of the silent-auction tradeoff table, in
+# the terminal. Deliberately the same columns, the same order and the same
+# three tie states as the PDF's management page - `sffl.plan.tie_cells` and
+# `pick_range` are the single source for the wording of both.
+_PLAN_ROW = "  %-5s %-7s %-8s %-9s %-6s %-6s %-7s %s"
+
+
+def _print_plan(outcomes, bid_floor):
+    print("silent auction (rd 1): what each bid has historically bought, and "
+          "what it leaves")
+    print("  a bid under $%d is DISCARDED and forfeits the silent pick "
+          "entirely" % bid_floor)
+    print("  PICK is an ILLUSTRATION - our own board read at each end of the "
+          "rank span,")
+    print("  assuming the room drafts in that order, which it will not. RANK "
+          "is a fact and")
+    print("  is priced at nothing here; whether finishing first is worth "
+          "anything is unmeasured.")
+    print(_PLAN_ROW % ("BID", "RANK", "TIE", "BUMP", "LIVE", "LEFT", "DISCR",
+                       "PICK RANGE (ILLUSTRATION)"))
+    for o in outcomes:
+        tie, bump, live = tie_cells(o)
+        span = ("%d" % o.best_rank if o.best_rank == o.worst_rank
+                else "%d-%d" % (o.best_rank, o.worst_rank))
+        print(_PLAN_ROW % ("$%d" % o.bid, span, tie, bump, live,
+                           "$%d" % o.budget_left, "$%d" % o.discretionary,
+                           pick_range(o)))
+    print("  TIE = share of years 2+ teams bid this. \"no data\" = never bid, "
+          "so nothing is")
+    print("  known there - it is NOT a measured 0%. BUMP = bumps actually "
+          "charged to win a")
+    print("  tie. LIVE = a year the tie escalated to a live auction, where "
+          "money was paid")
+    print("  above the bid: an empty BUMP beside a LIVE year is not a free tie.")
 
 
 def cmd_ingest(args):
@@ -251,31 +320,20 @@ def cmd_render(args):
         return 1
     pool, _curve, _prices = result
 
-    # 23 of 543 real Draft Sharks rows carry a placeholder team code (UNS x22
-    # unsigned free agents, RK x1) - not real NFL franchises, so they have no
-    # bye week. build_rows correctly raises on an unknown team code rather
-    # than rendering a blank bye, so filter them out here, at the render
-    # layer, using sffl.identity.NFL_TEAMS as the authority on what counts as
-    # a real franchise. All of them sit below replacement, so dropping them
-    # changes no dollar value on the board - but dropping them silently would
-    # be exactly the kind of quiet data loss this project's raise-don't-guess
-    # rule exists to prevent, so the count is always printed. A team code
-    # that IS a real franchise but is still missing from the bye file is left
-    # alone here and reaches build_rows, which still raises - that is a
-    # genuine data gap, not a free agent, and must not be swallowed the same way.
-    rosterable = [p for p in pool if p.team in NFL_TEAMS]
-    dropped = [p for p in pool if p.team not in NFL_TEAMS]
-    if dropped:
-        codes = sorted(set(p.team for p in dropped))
-        print("dropped %d unrostered player(s) with a non-NFL team code (%s) "
-              "- not real franchises, so no bye week and not draftable"
-              % (len(dropped), ", ".join(codes)))
+    rows = _board_rows(lg, pool, args)
 
-    byes = load_byes(args.byes)
-    rows = build_rows(lg, rosterable, byes)
-
+    # The board is the artifact that MUST exist on auction day, so a missing
+    # or malformed bid history degrades one block of one page rather than
+    # failing the render - loudly, never silently, and never into the
+    # hardcoded sub-floor grid this replaced.
     if args.pdf:
-        pages = render_pdf(lg, rows, args.pdf)
+        outcomes = None
+        try:
+            outcomes = plan_bids(lg, rows, load_bid_history(args.bids))
+        except (OSError, ValueError) as e:
+            print("  WARNING: silent-auction table not built (%s); the "
+                  "management page falls back to budget arithmetic only" % e)
+        pages = render_pdf(lg, rows, args.pdf, outcomes=outcomes)
         print("wrote %s (%d pages)" % (args.pdf, pages))
     if args.xlsx:
         stats = render_xlsx(lg, rows, args.xlsx)
@@ -300,6 +358,30 @@ def cmd_render(args):
             else:
                 print("  %s: all %d shown, nothing cut" % (title, sec["shown"]))
 
+    return 0
+
+
+def cmd_plan(args):
+    """The management page's silent-auction table, in the terminal.
+
+    Same numbers, same wording, no PDF. Unlike cmd_render this does NOT
+    degrade when the bid history cannot be read: the table IS the output here,
+    so an unreadable history is a hard failure rather than a blank page.
+    """
+    lg = load_league(args.league)
+    result = _value_pool(lg, args)
+    if result is None:
+        return 1
+    pool, _curve, _prices = result
+
+    try:
+        history = load_bid_history(args.bids)
+    except OSError as e:
+        print("error: cannot read the bid history: %s" % e, file=sys.stderr)
+        return 1
+
+    rows = _board_rows(lg, pool, args)
+    _print_plan(plan_bids(lg, rows, history), lg.silent_auction["bid_floor"])
     return 0
 
 
@@ -353,9 +435,35 @@ def main(argv=None):
                            "(default: the 2025 map; a new season needs its own file)")
     ren.add_argument("--byes", default=DEFAULT_BYES,
                       help="team code -> bye week YAML (default: %s)" % DEFAULT_BYES)
+    ren.add_argument("--bids", default=DEFAULT_BIDS,
+                      help="silent-auction bid history CSV driving the "
+                           "management page's tradeoff table (default: %s)"
+                           % DEFAULT_BIDS)
     ren.add_argument("--pdf", default=None, help="path to write the iPad board PDF")
     ren.add_argument("--xlsx", default=None, help="path to write the printed workbook")
     ren.set_defaults(func=cmd_render)
+
+    pln = sub.add_parser("plan", help="print the silent-auction tradeoff table")
+    pln.add_argument("--source", required=True)
+    pln.add_argument("--file", required=True)
+    pln.add_argument("--year", type=int, required=True)
+    pln.add_argument("--set", default=None)
+    pln.add_argument("--league", default=DEFAULT_LEAGUE)
+    pln.add_argument("--curves", default=None,
+                      help="calibration curves YAML from `sffl.calibrate`")
+    pln.add_argument("--policy", default="starter",
+                      choices=["starter", "draftable", "fit"])
+    pln.add_argument("--prices", default=None,
+                      help="observed auction prices CSV; required with --policy fit")
+    pln.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
+                      help="year-bound map of starting QB name -> franchise code, "
+                           "used to join --prices' Team QB rows to the pool "
+                           "(default: the 2025 map; a new season needs its own file)")
+    pln.add_argument("--byes", default=DEFAULT_BYES,
+                      help="team code -> bye week YAML (default: %s)" % DEFAULT_BYES)
+    pln.add_argument("--bids", default=DEFAULT_BIDS,
+                      help="silent-auction bid history CSV (default: %s)" % DEFAULT_BIDS)
+    pln.set_defaults(func=cmd_plan)
 
     args = ap.parse_args(argv)
     if not getattr(args, "func", None):
