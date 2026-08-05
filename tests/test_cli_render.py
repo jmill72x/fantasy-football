@@ -1,6 +1,9 @@
+import argparse
 import os
 
-from sffl.cli import main
+from sffl.cli import _value_pool, main
+from sffl.identity import NFL_TEAMS
+from sffl.league import load_league
 
 DS = "sources/draftsharks.yaml"
 FIXTURE = "tests/fixtures/draftsharks_value_sample.csv"
@@ -40,3 +43,31 @@ def test_render_drops_unrostered_players_and_reports_the_count(tmp_path, capsys)
     assert rc == 0
     assert "dropped 1" in out
     assert "UNS" in out
+
+
+def test_dropping_unrostered_players_changes_no_dollar_value():
+    # cmd_render drops non-NFL team codes AFTER _value_pool has priced the
+    # whole pool, so removing them cannot move anyone's _dollars or
+    # _est_price - replacement levels and the market curve are already
+    # fixed by then. That is true by structure today and the ordering is
+    # deliberate: filtering first would shrink the pool the replacement
+    # level is computed from and quietly reprice the entire board. Nothing
+    # enforced it, and this exact class of "obviously true" invariant has
+    # broken three times in the renderers' history, so pin it: value, then
+    # filter, then assert every survivor's numbers are byte-identical.
+    args = argparse.Namespace(
+        source=DS, file=UNROSTERED_FIXTURE, year=2026, set=None,
+        curves=None, prices=None, policy="starter", tqb_starters=None)
+    pool, _curve, _prices = _value_pool(load_league("leagues/sffl/2026.yaml"), args)
+
+    before = dict((p.name, (p.stats["_dollars"], p.stats.get("_est_price")))
+                  for p in pool)
+    rosterable = [p for p in pool if p.team in NFL_TEAMS]
+    assert len(rosterable) < len(pool), (
+        "the fixture must contain at least one unrostered player, or this "
+        "test filters nothing and proves nothing"
+    )
+
+    for p in rosterable:
+        assert (p.stats["_dollars"], p.stats.get("_est_price")) == before[p.name], (
+            "%s was repriced by dropping unrostered players" % p.name)
