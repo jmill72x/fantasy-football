@@ -1,0 +1,10 @@
+year,rank,franchise,bid,bump,cap_cost,player,note
+2024,1,Alpha,41,1,42,Player One,won tie vs Beta on bump
+2024,2,Beta,41,0,41,Player Two,lost tie on bump
+2024,3,Gamma,39,2,39,Player Three,no tie; bump not charged
+2024,4,Delta,26,2,28,Player Four,won tie vs Epsilon on bump
+2024,5,Epsilon,26,1,26,Player Five,lost tie on bump
+2025,1,Alpha,43,0,43,Player Six,
+2025,2,Beta,39,0,39,Player Seven,
+2025,3,Gamma,26,1,27,Player Eight,won tie vs Delta on bump
+2025,4,Delta,26,0,26,Player Nine,lost tie on bump
