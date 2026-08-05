@@ -5,9 +5,12 @@ each candidate bid it answers three questions and stops:
 
     Where would I pick?      best/worst/median rank, by counterfactual
                              insertion against all five years.
-    Who is likely there?     an ILLUSTRATION - the board row at the median
-                             rank, assuming the room drafts in our board's
-                             order, which it will not exactly.
+    Who is likely there?     an ILLUSTRATION - the board rows at the best,
+                             median and worst rank, assuming the room drafts
+                             in our board's order, which it will not exactly.
+                             Read it as the RANGE it is: at $39 that is ranks
+                             1 through 5, and quoting the median row alone
+                             would hide four of them.
     What is left over?       budget after the bid, and how much of that is
                              discretionary once every other roster spot is
                              covered at the $1 minimum.
@@ -32,7 +35,7 @@ are in, and a renderer must print "no data" rather than a number when it is 0.
 
 import math
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from sffl.league import LeagueProfile
 from sffl.render.rows import BoardRow, overall_board
@@ -59,6 +62,17 @@ class BidOutcome(object):
     likely_player: Optional[str]
     likely_my_dollars: Optional[float]
     likely_est_price: Optional[float]
+
+    # The SAME illustration read at the two ends of the rank span, because the
+    # median row alone is a lie by omission wherever the span is wide. $39 has
+    # finished anywhere from 1st to 5th in five years; naming only the rank-4
+    # player throws four ranks away and reads as precision the evidence does
+    # not have. Equal to each other, and to `likely_player`, when the span is a
+    # single rank ($45 -> 1-1). None on a board shallower than the rank, on the
+    # same rule as `likely_player` - and independently, so a board deep enough
+    # for rank 1 but not rank 5 names the best end and blanks the worst.
+    best_player: Optional[str]
+    worst_player: Optional[str]
 
     # BEFORE ANY BUMP. A bump is chosen by the bidder and charged only on a
     # winning tie, so it cannot be subtracted here without guessing - read
@@ -127,6 +141,8 @@ def plan_bids(lg, rows, history, candidates=None):
     for bid in sorted(set(candidates)):
         best, worst, median = ranks_for_bid(history, bid)
         pick = _row_at(ranked, median)
+        best_pick = _row_at(ranked, best)
+        worst_pick = _row_at(ranked, worst)
         budget_left = lg.budget - bid
         seen = observations_at(history, bid)
         out.append(BidOutcome(
@@ -137,6 +153,8 @@ def plan_bids(lg, rows, history, candidates=None):
             likely_player=(pick.name if pick else None),
             likely_my_dollars=(pick.my_dollars if pick else None),
             likely_est_price=(pick.est_price if pick else None),
+            best_player=(best_pick.name if best_pick else None),
+            worst_player=(worst_pick.name if worst_pick else None),
             budget_left=budget_left,
             per_remaining_spot=float(budget_left) / spots_left,
             discretionary=budget_left - spots_left,
@@ -146,6 +164,63 @@ def plan_bids(lg, rows, history, candidates=None):
             escalated_years=(escalated_at(history, bid) if seen else None),
         ))
     return out
+
+
+def tie_cells(o):
+    """(tie, bump, live) as any surface must print them. Never three numbers.
+
+    Lives here rather than in a renderer for the same reason
+    `sffl.render.rows.overall_board` does: the PDF and the terminal must not
+    be able to disagree about what the evidence says. There are THREE states
+    and no two of them may be collapsed:
+
+      never submitted   `observations == 0`, so tie_rate/winning_bumps/
+                        escalated_years are all None. Reads "no data", and the
+                        bump and live cells stay EMPTY - an em dash there would
+                        claim "none happened", which is evidence nobody has.
+                        $28, $29 and $36 are in this state.
+      submitted, never tied
+                        `tie_rate == 0.0`, a real measurement over five years
+                        ($27, $32, $37, $42-$45). Reads "0%", em dashes beside.
+      tied, settled by a bump
+                        the bumps actually charged, e.g. 1,2,2,2 at the floor.
+      tied, escalated to a LIVE auction
+                        an EMPTY bump list with years beside it ($35 in 2021,
+                        $39 in 2023, $33 in 2025). Real money was paid above
+                        the bid in those years; it simply was not paid as a
+                        bump anyone could pre-commit. Printing the empty bump
+                        list without the years reads as a free tie.
+    """
+    # type: (BidOutcome) -> Tuple[str, str, str]
+    if not o.observations:
+        return ("no data", "", "")
+    return (
+        "%.0f%%" % (o.tie_rate * 100.0),
+        ",".join(str(b) for b in o.winning_bumps) if o.winning_bumps else "—",
+        " ".join("'%02d" % (y % 100) for y in o.escalated_years)
+        if o.escalated_years else "—",
+    )
+
+
+def pick_range(o):
+    """The illustration's two ends as one string, or "" when nothing is known.
+
+    NEVER THE MEDIAN ROW ON ITS OWN. At $39 the span is ranks 1 to 5, and
+    naming only the rank-4 player would present a four-rank spread as a single
+    pick - precisely where the illustration is least trustworthy. It collapses
+    to one name only where the evidence really is that tight: $45 has never
+    been anything but rank 1.
+    """
+    # type: (BidOutcome) -> str
+    if o.best_player is None:
+        return ""
+    if o.worst_player is None:
+        # Board deeper than the best rank but not the worst. Say so rather
+        # than stretching the one name we do have across the whole span.
+        return "%s - (off board)" % o.best_player
+    if o.best_player == o.worst_player:
+        return o.best_player
+    return "%s - %s" % (o.best_player, o.worst_player)
 
 
 def _row_at(ranked, median_rank):

@@ -1,5 +1,6 @@
 import argparse
 import os
+import re
 
 import openpyxl
 
@@ -98,3 +99,38 @@ def test_dropping_unrostered_players_reprices_nobody_on_the_rendered_board(tmp_p
         assert my_dollars == priced[name], (
             "%s was repriced by dropping unrostered players: the board says "
             "$%s, the valuation said $%s" % (name, my_dollars, priced[name]))
+
+
+def test_plan_prints_the_tradeoff_table_and_keeps_the_three_tie_states(capsys):
+    rc = main(["plan", "--source", DS, "--file", FIXTURE, "--year", "2026"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    # The floor and its penalty, in words.
+    assert "under $26" in out and "forfeits" in out
+    # The illustration, labelled.
+    assert "ILLUSTRATION" in out
+    # All three tie states, distinct. "no data" is $28/$29/$36 - never
+    # submitted - and must never be printed as the measured 0% that $27 is.
+    assert "no data" in out and "0%" in out and "100%" in out
+    # An escalated tie is money paid above the bid, not a free tie.
+    assert "LIVE" in out
+    # Bids run in bid order, from the floor. Nothing is ranked, starred or
+    # recommended: this table shows the tradeoff, it does not answer it.
+    bids = [int(m.group(1)) for m in
+            (re.match(r"  \$(\d+) +\d", line) for line in out.splitlines())
+            if m]
+    assert len(bids) == 20, "the floor $26 to the record high $45"
+    assert bids == sorted(bids) and min(bids) == 26
+
+
+def test_render_degrades_loudly_when_the_bid_history_cannot_be_read(tmp_path, capsys):
+    # The board is the artifact that must exist on auction day, so a bad
+    # --bids path costs one block of one page - never the whole render, and
+    # never silently.
+    pdf = str(tmp_path / "board.pdf")
+    rc = main(["render", "--source", DS, "--file", FIXTURE, "--year", "2026",
+               "--pdf", pdf, "--bids", str(tmp_path / "nope.csv")])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "WARNING" in out and "budget arithmetic only" in out
+    assert os.path.getsize(pdf) > 0
