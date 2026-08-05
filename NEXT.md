@@ -365,6 +365,64 @@ This is a value-engine change, so like the lineup floors it lands **before** the
   must not be carried forward: it predates flat-priced K/DST, the TQB/DST price joins, and
   the calibration curves.
 
+## SILENT AUCTION — mechanic and data (confirmed with Jeff 2026-08-04)
+
+**`data/league/silent-auction-bids.csv` is tracked and holds 5 complete years, 60 rows.**
+Columns: `year, rank, franchise, bid, bump, cap_cost, player, note`.
+
+**Mechanic:** sealed bid, floor **$26**. Bids ranked; you pay your own bid; you pick a
+player in bid order, highest first. That order also governs nomination for the rest of the
+draft. Ties are broken by a sealed **bump**, charged only if it wins the tie (matches
+`bump_charged_only_on_winning_tie` in the league YAML).
+
+**A sub-$26 bid is DISCARDED and the team forfeits its silent pick.** Hard constraint with
+teeth — the planner must never suggest less.
+
+**Jeff does not know whether finishing first buys a real advantage beyond the silent round.**
+Do not assume it does. Present the order consequence factually and let him weigh it.
+
+**Jeff wants the tradeoff shown, not a recommendation.** A table of candidate bids with what
+each likely wins and what it leaves.
+
+Empirical rank -> bid, all five years:
+
+| rank | 2021 | 2022 | 2023 | 2024 | 2025 |
+|---|---|---|---|---|---|
+| 1 | 44 | 45 | 39 | 41 | 43 |
+| 2 | 41 | 42 | 39 | 41 | 40 |
+| 3 | 40 | 39 | 39 | 40 | 40 |
+| 4 | 40 | 38 | 39 | 39 | 39 |
+| 5 | 38 | 38 | 38 | 35 | 38 |
+| 6 | 37 | 35 | 35 | 34 | 37 |
+| 7 | 35 | 33 | 33 | 33 | 33 |
+| 8 | 35 | 30 | 31 | 31 | 33 |
+| 9 | 32 | 30 | 30 | 31 | 30 |
+| 10 | 30 | 27 | 30 | 30 | 27 |
+| 11 | 26 | 26 | 26 | 26 | 26 |
+| 12 | 26 | 26 | 26 | 26 | 26 |
+
+Total spent is stable at **$412-432** of the league's $1,320 — roughly a third of all capital
+goes in round one. Ranks 11-12 tie at the floor every single year, so the bump decides them.
+
+### THIS CHANGES HOW TO READ EST$ AT THE TOP
+
+**The top 12 prices in `auction-rosters-2025.csv` ARE the silent auction results.** Verified
+by matching `cap_cost` exactly: Bijan $41, Henry $39, Barkley $38, Lamb $37, McCaffrey $34,
+Jeanty $33, Jefferson $30, St. Brown $27, Nabers $27, Collins $26.
+
+So the market curve `price = 2.248 * value^0.551` was fitted on data whose top end is
+**sealed-bid prices, not open-auction prices** — formed by a $26 floor, competition for pick
+order rather than for the player, and first-price sealed bidding that induces shading.
+
+Consequences:
+1. **EST$ at the top is more trustworthy than the earlier "it under-predicts the $43 record"
+   note suggested** — the top players genuinely ARE bought in the silent auction, so EST$
+   approximates what you must bid there.
+2. **The tail compression is substantially the MECHANISM, not just curve concavity.** The
+   twelve best players span only $26-$43 because the floor compresses from below and sealed
+   bidding from above.
+3. **Plan 4 should quote the empirical rank->bid table above, not infer from the curve.**
+
 ## TODO B — widen the weekly collection (a data chore, NOT a plan)
 
 **Full detail is in the spec** under *"TODO: Widen the Weekly Collection"* — target,
