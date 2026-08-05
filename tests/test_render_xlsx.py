@@ -110,13 +110,35 @@ def test_render_xlsx_reports_what_it_truncated(tmp_path):
     stats = render_xlsx(LG, rows, path)
 
     assert stats["total"] == len(rows)
-    assert stats["made"] + stats["cut"] == stats["total"]
-    assert stats["overall_shown"] + stats["overall_cut"] == overall_total
-    assert stats["overall_cut"] > 0, "this board was built to overflow the budget"
-    assert stats["cut"] > 0
-    assert stats["last_dollar"] is not None
-    # "made" is everyone shown anywhere on the sheet - the Overall Board and
-    # the position blocks are truncated independently, so a player cut from
-    # one can still appear via the other, making "made" >= the Overall
-    # Board's own count on its own.
-    assert stats["made"] >= stats["overall_shown"]
+    assert stats["overall"]["shown"] + stats["overall"]["cut"] == overall_total
+    assert stats["overall"]["cut"] > 0, "this board was built to overflow the budget"
+
+    # Every position with real members must be reported, and shown > 0 -
+    # a section present with zero rows is the exact bug a first version of
+    # this module had (see test_every_position_appears_on_the_printed_sheet).
+    for title in ("TEAM QB", "RUNNING BACKS", "RECEIVERS (WR + TE)", "KICKERS", "TEAM DEFENSE"):
+        assert title in stats["sections"], "%s missing from the truncation report" % title
+        assert stats["sections"][title]["shown"] > 0, "%s got zero rows" % title
+
+
+def test_every_position_appears_on_the_printed_sheet(tmp_path):
+    # The regression this guards against: a first version of this module
+    # filled group 3 greedily in POSITION_BLOCKS order and spent the whole
+    # row budget on Team QB plus part of Running Backs, leaving Receivers -
+    # the largest position group in this league - Kickers and Team Defense
+    # off the sheet entirely (not even a title). This must fail against
+    # that code.
+    from sffl.render.xlsx import POSITION_BLOCKS
+
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, big_board(), path)
+    ws = openpyxl.load_workbook(path).active
+
+    titles_present = set()
+    for row_cells in ws.iter_rows():
+        for cell in row_cells:
+            if isinstance(cell.value, str):
+                titles_present.add(cell.value)
+
+    for title, _positions in POSITION_BLOCKS:
+        assert title in titles_present, "%s is missing from the printed sheet" % title

@@ -283,23 +283,22 @@ def cmd_render(args):
         # render_xlsx truncates to a hard two-page row budget (derived from
         # page geometry, not a hardcoded player count - see
         # sffl.render.xlsx.ROW_BUDGET) because a full board cannot fit in
-        # two printed pages. Report exactly what that cut, rather than
-        # letting the sheet quietly show fewer players than the board has:
-        # the last-dollar figure is what tells Jeff "everyone worth more
-        # than $X made the sheet."
-        if stats["cut"]:
-            print("  %d of %d players made the printed sheet (%d cut) - "
-                  "lowest $ on the sheet is $%.0f"
-                  % (stats["made"], stats["total"], stats["cut"], stats["last_dollar"]))
-        else:
-            print("  all %d players made the printed sheet, nothing cut" % stats["made"])
-        if stats["overall_cut"]:
+        # two printed pages. Report it per section, not as one combined
+        # number - a single global count once hid an entire position
+        # (Receivers) getting cut to zero while the total still looked
+        # reasonable.
+        ov = stats["overall"]
+        if ov["cut"]:
             print("  Overall Board: %d of %d shown (%d cut)"
-                  % (stats["overall_shown"], stats["overall_shown"] + stats["overall_cut"],
-                     stats["overall_cut"]))
-        if stats["block_cut"]:
-            print("  position blocks cut for space: %s"
-                  % ", ".join("%s (%d)" % (t, n) for t, n in sorted(stats["block_cut"].items())))
+                  % (ov["shown"], ov["shown"] + ov["cut"], ov["cut"]))
+        else:
+            print("  Overall Board: all %d shown, nothing cut" % ov["shown"])
+        for title, sec in sorted(stats["sections"].items()):
+            total = sec["shown"] + sec["cut"]
+            if sec["cut"]:
+                print("  %s: %d of %d shown (%d cut)" % (title, sec["shown"], total, sec["cut"]))
+            else:
+                print("  %s: all %d shown, nothing cut" % (title, sec["shown"]))
 
     return 0
 
