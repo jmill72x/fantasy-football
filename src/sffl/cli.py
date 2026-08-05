@@ -278,11 +278,28 @@ def cmd_render(args):
         pages = render_pdf(lg, rows, args.pdf)
         print("wrote %s (%d pages)" % (args.pdf, pages))
     if args.xlsx:
-        # render_xlsx returns nothing - its two-page print constraint is an
-        # analytic estimate (no PDF conversion tool is available to count
-        # real pages), not a number this command can honestly report.
-        render_xlsx(lg, rows, args.xlsx)
+        stats = render_xlsx(lg, rows, args.xlsx)
         print("wrote %s" % args.xlsx)
+        # render_xlsx truncates to a hard two-page row budget (derived from
+        # page geometry, not a hardcoded player count - see
+        # sffl.render.xlsx.ROW_BUDGET) because a full board cannot fit in
+        # two printed pages. Report exactly what that cut, rather than
+        # letting the sheet quietly show fewer players than the board has:
+        # the last-dollar figure is what tells Jeff "everyone worth more
+        # than $X made the sheet."
+        if stats["cut"]:
+            print("  %d of %d players made the printed sheet (%d cut) - "
+                  "lowest $ on the sheet is $%.0f"
+                  % (stats["made"], stats["total"], stats["cut"], stats["last_dollar"]))
+        else:
+            print("  all %d players made the printed sheet, nothing cut" % stats["made"])
+        if stats["overall_cut"]:
+            print("  Overall Board: %d of %d shown (%d cut)"
+                  % (stats["overall_shown"], stats["overall_shown"] + stats["overall_cut"],
+                     stats["overall_cut"]))
+        if stats["block_cut"]:
+            print("  position blocks cut for space: %s"
+                  % ", ".join("%s (%d)" % (t, n) for t, n in sorted(stats["block_cut"].items())))
 
     return 0
 
