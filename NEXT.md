@@ -73,6 +73,23 @@ Update this block at the end of every session so the next one can resume blind.
          contiguous space instead of interleaving.
       Widths, fonts and the three column groups stay as they are.
 - [ ] Any further PDF/Excel changes from Jeff's iPad review
+- [ ] **Dry-run the PDF in iAnnotate 4** ($9.99 one-time, researched 2026-08-08). Verify:
+      (1) all six bookmarks appear as tappable navigation — if they do NOT, the bookmarks
+      are dead weight and should come out of `pdf.py`; (2) the 33pt PAID box holds a
+      legible two-digit price at speed; (3) ink survives backgrounding the app, since the
+      CBS app gets switched to during the draft.
+
+      **Why iAnnotate over the obvious choices.** The decisive requirement is navigating
+      the PDF's OWN embedded outline. GoodNotes 6 ($29.99 lifetime — cost was not the
+      objection) is a notebook app: it imports a PDF as pages under its own bookmark
+      system, and its own feedback thread has users reporting imported outlines are lost,
+      with ordering bugs still open years after the request was closed. PDF Expert handles
+      outlines properly but is $79.99/yr or $199.99 lifetime. Apple's built-in Markup is
+      free and Pencil-capable but has no outline sidebar — fine as a fallback.
+      iAnnotate 4 navigates by thumbnails/bookmarks/annotations/search with an outline
+      view, and auto-detects the Pencil with no tool switching: annotate with the Pencil,
+      pan and scroll with fingers. Known nit: erasing needs a finger tap first.
+      NOT VERIFIED — researched only; no iPad available to this session.
 - [ ] TODO B — widen the weekly collection to ~120 players (needs `claude --chrome`)
       **Jeff confirmed 2026-08-04 this IS still needed** — first pass with this scoring
       model, so 18 players is too thin to trust curves that shape every value
