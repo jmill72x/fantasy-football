@@ -39,10 +39,10 @@ part of Running Backs (90 of 122) and left Receivers - the single largest
 position group in this league - Kickers and Team Defense with zero rows:
 not even a title. A cheat sheet missing the receiver breakout entirely is
 not usable, so this module now allocates ROW_BUDGET across the five blocks
-deliberately (see _block_capacities): Team QB gets one row per real NFL
+deliberately (see _allocate_page): Team QB gets one row per real NFL
 franchise (bounded and small - it always fits whole), Kickers and Team
-Defense each get one row per drafting team (`lg.teams` - what actually
-matters for a pool priced flat at $1), and whatever budget remains is split
+Defense each get K_DST_DEPTH rows (the one dial for how deep those two
+flat-priced $1 pools print), and whatever budget remains is split
 between Running Backs and Receivers in proportion to their real relative
 pool sizes in the run being rendered, not a fixed historical ratio. This
 mirrors the 2022 template's own choice to give every position some room
@@ -55,15 +55,15 @@ carrying supplementary position content. A first pass left that freed half
 blank - 124 rows, close to half the printed sheet, while the same run was
 cutting 105 Running Backs and 256 Receivers. That is not an acceptable
 trade: this module now snakes the two positions absorbing the most
-truncation into that space exactly as 2022 does - Running Backs continuing
-below group 1's Overall Board, Receivers (WR+TE) continuing below group 2's
-- picking up where group 3's own allocation for that position left off
-(see _write_continuation_block), never re-listing players already shown
-elsewhere. Kickers, Team Defense and Team QB are not continued: their group
-3 allocation already covers everyone that matters (one row per team, or the
+truncation into that space exactly as 2022 does - Running Backs sharing
+group 1's column with its Overall Board, Receivers (WR+TE) sharing group
+2's - so each of those two positions occupies TWO blocks on the sheet, one
+in group 3 and one under an Overall Board, and no player is ever listed in
+both. Kickers, Team Defense and Team QB get one block each: their group 3
+allocation already covers everyone that matters (K_DST_DEPTH rows, or the
 whole bounded pool), so extra rows there would not reduce any real cut.
 
-Each continuation starts at the first row its own column actually left
+The second block starts at the first row its own column actually left
 free, reported by _write_overall_columns - never at a fixed fraction of
 ROW_BUDGET. The two agree only while the Overall pool exceeds its capacity,
 as the production extract does (453 against 122); a leaner extract, a
@@ -71,6 +71,49 @@ different --policy or a filtered pool puts it under, and a fixed start row
 would then print a band of blank rows in the middle of the column while the
 blocks below were still cutting players. Same failure class as the two
 above, different trigger.
+
+READING ORDER ACROSS A SPLIT POSITION. A position that occupies two blocks
+has to decide which block gets its best players. The first version answered
+"group 3 always", because group 3's block was written first and the other
+one was merely its continuation - and on page 2 that printed group 3, the
+RIGHTMOST column, opening at WR1 while group 2 to its LEFT opened at WR29.
+Jeff, correctly: "you have the WR columns out of order, the first WRs are
+on the right of the 2nd column of WRs."
+
+The sheet is read the way any two-page printout is read: all of page 1 left
+to right (group 1, group 2, group 3), then all of page 2 left to right. So
+a block's place in that order is (the page it opens on, its column group) -
+_reading_order_key - and a split position hands its players out strictly in
+that order, filling each block to the size the layout already gave it. Two
+consequences, both intended:
+
+  - RUNNING BACKS does not move. Its group 3 block opens on page 1 and its
+    group 1 block on page 2, so (page 0, group 3) still sorts before (page
+    1, group 1): RB1-27 in group 3 on page 1, RB28+ in group 1 overleaf.
+    The page outranks the column because the reader finishes page 1 before
+    starting page 2 - sorting on the column alone would have "fixed" this
+    one into being wrong.
+  - RECEIVERS flips. Both its blocks open on page 2, so the column decides:
+    group 2 takes WR1 onward and group 3 picks up where group 2 stops.
+
+The same rule already governed the Overall Board's own split across groups
+1 and 2 (both on page 1, so the left column takes the higher ranks); it is
+now stated once, in one function, instead of being implied by the order two
+different writers happened to run in.
+
+SECTION TITLES ARE MERGED ACROSS THEIR GROUP. A title is written into the
+group's first cell, which is the Rank column - 2.8 width units, narrower
+than any of the five titles. Excel spills a too-long string rightwards
+through whatever cells are empty, and on a title row all eight of the
+group's cells are empty (they carry a fill, and a fill does not stop a
+spill), as is the spacer beyond them. The only thing that bounds the spill
+is content in the NEXT group's first cell on that same row, and that
+content is not guaranteed: a group whose column ends higher than its
+neighbour's leaves the whole row open to the right. _write_title therefore
+merges the title across exactly its own eight columns, which clips it
+structurally rather than relying on what happens to sit beside it. The 2022
+template does not merge - it does not have to, with six narrower columns
+and titles as short as "WR" to place.
 
 SECTION BOUNDARIES LAND ON THE PAGE BREAK. The first version of this module
 sized every block from the row BUDGET (126) and never from the page it
@@ -115,7 +158,7 @@ the only place they are counted separately, exactly as the template does.
 
 from openpyxl import Workbook
 from openpyxl.formatting.rule import CellIsRule
-from openpyxl.styles import Border, Font, PatternFill, Side
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from sffl.identity import NFL_TEAMS
@@ -229,9 +272,80 @@ POSITION_BLOCKS = [
 
 # The two blocks whose real pool has no natural ceiling, so they are the
 # ones that absorb whatever room a page has left over. Team QB is bounded by
-# the number of NFL franchises; Kickers and Team Defense by the number of
-# drafting teams (a $1 flat-priced pool needs no more than one per team).
+# the number of NFL franchises; Kickers and Team Defense by K_DST_DEPTH.
 FLEX_BLOCKS = ("RUNNING BACKS", "RECEIVERS (WR + TE)")
+
+# How deep the Kickers and Team Defense blocks run - THE ONE NUMBER TO EDIT
+# to trade kicker/defense depth against receiver depth.
+#
+# It used to be `lg.teams` (12): one row per drafting team, the argument
+# being that a pool priced flat at $1 needs no more than one per roster
+# spot. Jeff wants more than that - the pool holds 35 K and 32 DST, and the
+# useful thing on auction day is seeing who is left, not just twelve names.
+#
+# The page is full, so this is a straight exchange and the rate is 1:1.
+# Group 3's page 2 carries RECEIVERS, KICKERS and TEAM DEFENSE; the two
+# bounded blocks are served to their `want` before the flex block gets
+# anything (see _allocate_page), so every row added here is a row taken off
+# group 3's RECEIVERS block - and since both K and DST move together, one
+# step of K_DST_DEPTH costs TWO receiver rows. Receivers is the right place
+# to borrow from: it is the deepest of the split positions, so a row cut
+# from group 3 comes off the very bottom of a 78-deep list rather than off
+# a position that is only shown once. TEAM QB is never touched - all 32 are
+# shown and that is a complete position, not a top-N.
+#
+# Measured against the real 2026 pool, one step of this constant moves
+# exactly two rows: K 12/DST 12 shows 94 receivers, 20/20 shows 78, 26/26
+# shows 66. Group 3's own receiver block is the whole of what moves (33 ->
+# 17 -> 5); group 2's receiver block is 61 rows either way, because it is
+# sized by what its column has left below the Overall Board and nothing
+# here touches that.
+#
+# CEILING = 28, and it is hard. Group 3's page 2 carries RECEIVERS, KICKERS
+# and TEAM DEFENSE: ROWS_PER_PAGE - 3 * HEADER_ROWS = 57 data rows, of which
+# _allocate_page reserves one for each block before serving the bounded ones,
+# so K and DST can take 1 + 54/2 = 28 each and RECEIVERS is down to its
+# guaranteed single row - already past useful. Set it higher and K (served
+# first) keeps growing while TEAM DEFENSE starts LOSING rows to it: 29 gives
+# K 29 and DST 27. Showing all 35 kickers is therefore not reachable at all
+# without cutting defenses; the per-section truncation report render_xlsx
+# returns says so out loud, but do not set this above 28 expecting depth.
+K_DST_DEPTH = 20
+
+# Which column group carries each split position's SECOND block, in the
+# space its Overall Board leaves below itself: Running Backs under group 1,
+# Receivers under group 2, exactly where the 2022 template puts them. Which
+# of a position's two blocks gets its best players is NOT decided here - see
+# _reading_order_key.
+CONTINUED_IN = (
+    (1, "RUNNING BACKS"),
+    (1 + GROUP_GAP, "RECEIVERS (WR + TE)"),
+)
+
+# Total width of one column group, in the same Excel width units as WIDTHS -
+# the ceiling a section title has to stay inside. See _title_width_units.
+GROUP_WIDTH = (WIDTHS["rank"] + WIDTHS["name"] + WIDTHS["team_bye"]
+               + WIDTHS["pos"] + WIDTHS["tier"] + 3 * WIDTHS["numeric"])
+
+# An Excel column-width unit is the width of the '0' glyph in the workbook's
+# Normal-style font, which openpyxl leaves at Calibri 11 - 7 pixels at
+# 96dpi. A title is drawn in Calibri 8 BOLD, whose widest glyph is under one
+# em: 8pt = 10.667px at 96dpi, so no character can exceed 10.667 / 7 width
+# units. That is a deliberate over-estimate (real bold Calibri averages
+# nearer half of it) chosen so the check below needs no font file to be
+# installed and cannot pass by accident on a machine that happens to have a
+# narrow substitute for Calibri.
+TITLE_MAX_CHAR_WIDTH_UNITS = (8.0 * 96.0 / 72.0) / 7.0
+
+
+def _title_width_units(title):
+    """A hard upper bound on a section title's drawn width, in Excel column
+    width units, so it can be compared against GROUP_WIDTH.
+
+    Upper bound, not an estimate: nothing here should depend on which fonts
+    a particular machine has installed, and a bound that is too generous can
+    only ever make the check stricter."""
+    return len(title) * TITLE_MAX_CHAR_WIDTH_UNITS
 
 
 def _set_widths(ws, col0):
@@ -255,8 +369,35 @@ def _write_header(ws, row, col0):
 
 
 def _write_title(ws, row, col0, title):
+    """Write a section title across the full width of one column group.
+
+    MERGED, not just written into the group's first cell. That first cell is
+    the Rank column at 2.8 width units and every title this module writes is
+    longer than that, so Excel spills the text rightwards through the empty
+    cells beside it - and "empty" includes the seven filled-but-valueless
+    cells of the group and the spacer past them. What stops the spill is
+    content in the next group's Rank cell on the same row, which is not
+    something this layout guarantees. Merging bounds the title to its own
+    group structurally instead. See the module docstring's SECTION TITLES
+    note.
+
+    Merging FIRST and styling afterwards is deliberate: openpyxl replaces
+    the merged-away cells with fresh, unstyled MergedCell objects, so a fill
+    or a border applied before the merge is discarded. Applied after, both
+    are kept and written out (the grid in _apply_grid runs later still, for
+    the same reason).
+    """
     ws.row_dimensions[row].height = ROW_HEIGHT
-    ws.cell(row, col0, title).font = FONT_BOLD
+    if N_COLS > 1:
+        ws.merge_cells(start_row=row, start_column=col0,
+                       end_row=row, end_column=col0 + N_COLS - 1)
+    cell = ws.cell(row, col0)
+    cell.value = title
+    cell.font = FONT_BOLD
+    # Left, explicitly: a merged cell is where Excel's default centring
+    # would otherwise become visible, and these titles head a left-aligned
+    # column of ranks.
+    cell.alignment = Alignment(horizontal="left")
     # The template fills the whole width of the group on a title row, not
     # just the cell carrying the words.
     for i in range(N_COLS):
@@ -344,7 +485,7 @@ def _write_overall_columns(ws, overall, pos_labels):
                    pool fills its capacity (the production case); when it is
                    smaller, or odd-sized, the columns end at different rows
                    and a fixed start row would leave one or both of them
-                   holed. See _write_continuation_block.
+                   holed. See _plan_split_positions.
     """
     col1, col2 = 1, 1 + GROUP_GAP
     for col0 in (col1, col2):
@@ -366,7 +507,7 @@ def _write_overall_columns(ws, overall, pos_labels):
     return shown, cut, next_rows
 
 
-def _block_members(lg, rows):
+def _block_members(rows):
     """The group 3 blocks that have any real members, in POSITION_BLOCKS
     order, as (title, members, want, flex).
 
@@ -375,8 +516,8 @@ def _block_members(lg, rows):
       Team QB       - one per real NFL franchise (len(NFL_TEAMS), the same
                       authority `sffl.cli.cmd_render` uses for what counts
                       as a franchise), so it always fits whole;
-      Kickers, DST  - one per drafting team (`lg.teams`), the number that
-                      actually matters for a pool priced flat at $1;
+      Kickers, DST  - K_DST_DEPTH, the single dial for how deep those two
+                      flat-priced $1 pools are printed;
       the other two - everyone, i.e. no natural ceiling, which is what makes
                       them the FLEX_BLOCKS that absorb a page's leftover
                       room.
@@ -390,7 +531,7 @@ def _block_members(lg, rows):
         if title == "TEAM QB":
             want = min(len(members), len(NFL_TEAMS))
         elif title in ("KICKERS", "TEAM DEFENSE"):
-            want = min(len(members), lg.teams)
+            want = min(len(members), K_DST_DEPTH)
         else:
             want = len(members)
         out.append((title, members, want, title in FLEX_BLOCKS))
@@ -465,7 +606,7 @@ def _page_partitions(n_blocks, n_pages):
     return out
 
 
-def _plan_position_blocks(lg, rows):
+def _plan_position_blocks(rows):
     """Choose where each of group 3's position blocks starts and how many
     data rows it gets, one whole printed page at a time.
 
@@ -488,7 +629,7 @@ def _plan_position_blocks(lg, rows):
     and Receivers + Kickers + Team Defense on page 2 - the same split the
     2022 template makes, and with no gap on either page.
     """
-    blocks = _block_members(lg, rows)
+    blocks = _block_members(rows)
     if not blocks:
         return []
 
@@ -528,42 +669,6 @@ def _plan_position_blocks(lg, rows):
             "printed pages of %d rows even at one row each"
             % (len(blocks), N_PAGES, ROWS_PER_PAGE))
     return best[1]
-
-
-def _write_position_blocks(lg, ws, rows, pos_labels):
-    """Stack position blocks in group 3, exactly as the 2022 file stacks
-    QUARTERBACKS / RUNNING BACKS / WIDE RECEIVERS / TIGHT ENDS / KICKERS /
-    TEAM DEFENSE - collapsed to five blocks here since WR and TE share one
-    pool in this league.
-
-    Placement comes from _plan_position_blocks, which fits each block whole
-    inside one printed page rather than letting the blocks fall wherever a
-    running row counter leaves them.
-
-    Returns (shown, cut): dicts of block title -> list of BoardRow, both
-    always present together for a title with any real members (cut may be
-    an empty list). `cut` is the list of members this block's capacity
-    couldn't fit - kept as the actual rows, not just a count, so the caller
-    can continue showing them elsewhere (see _write_continuation_block)
-    instead of just reporting how many were dropped.
-    """
-    col0 = 1 + 2 * GROUP_GAP
-    shown = {}
-    cut = {}
-    for title, members, start_row, n_data in _plan_position_blocks(lg, rows):
-        _write_title(ws, start_row, col0, title)
-        _write_header(ws, start_row + 1, col0)
-
-        block_shown, block_cut = members[:n_data], members[n_data:]
-        row = start_row + HEADER_ROWS
-        for r in block_shown:
-            _write_data_row(ws, row, col0, r, pos_labels)
-            row += 1
-
-        shown[title] = block_shown
-        cut[title] = block_cut
-
-    return shown, cut
 
 
 def _continuation_capacity(start_row):
@@ -606,49 +711,109 @@ def _continuation_start(start_row, n_members):
     return ROWS_PER_PAGE + 1
 
 
-def _write_continuation_block(ws, col0, title, members, start_row, pos_labels):
-    """Write a continuation position block below the Overall Board in group
-    1 or group 2, picking up exactly where group 3's own allocation for
-    this position left off - `members` is that position's own cut list, so
-    this never re-lists a player already shown elsewhere on the sheet.
+def _reading_order_key(col0, start_row):
+    """Where a block sits in the order a human reads the printed sheet.
 
-    `start_row` is the first free row in this column, reported by
-    _write_overall_columns from what it actually wrote. It must NOT be a
-    fixed fraction of ROW_BUDGET: that is only equal to the real first free
-    row while the Overall pool exceeds its capacity (453 against 124 in the
-    production extract). A leaner extract, a different --policy or a
-    filtered pool puts it under, and a fixed start row then leaves a band of
-    blank printed rows in the middle of the column while the position blocks
-    below are still cutting players - the same allocation failure this
-    module's history shipped three times. See
-    test_a_short_overall_board_leaves_no_blank_gap_above_the_continuation.
+    Two landscape sheets, three column groups on each. A reader takes all of
+    page 1 left to right - group 1, group 2, group 3 - and only then starts
+    page 2, again left to right. So a block's place in that order is (the
+    page it opens on, its column group), page first.
 
-    Writes nothing (and returns two empty lists) if there is nothing left
-    to continue - a position group 3 already covered in full has no cut
-    members to place here.
+    Page BEFORE column is the whole subtlety, and getting it backwards would
+    have swapped a defect for its mirror image. Running Backs occupies group
+    3 on page 1 and group 1 on page 2; ordering on the column alone would
+    have declared group 1 "first" and printed RB1 overleaf from RB28. It is
+    Receivers, whose two blocks BOTH open on page 2, where the column
+    decides - and that is the pair Jeff found backwards. See the module
+    docstring's READING ORDER note.
 
-    Returns (shown, cut): the slice of `members` this call wrote, and
-    whatever was still left over after this block's own capacity.
+    A block that opens on page 1 and runs over the fold is keyed on the page
+    it opens on: that is where the reader meets its title and its first row,
+    which is what the ordering is about.
     """
-    if not members:
-        return [], []
+    page = (start_row - 1) // ROWS_PER_PAGE
+    return (page, col0)
 
-    start_row = _continuation_start(start_row, len(members))
-    capacity = _continuation_capacity(start_row)
-    if capacity <= 0:
-        # No room even for a title: the Overall Board filled this column to
-        # the budget. Write nothing rather than a headed but empty block.
-        return [], list(members)
 
+def _plan_split_positions(rows, next_rows):
+    """Every position block on the sheet, in the order it will be READ, as
+    (col0, title, start_row, members) with each block's slice of that
+    position already cut.
+
+    Group 3 stacks all five blocks (_plan_position_blocks). Two of those
+    positions - the FLEX_BLOCKS, which absorb nearly all the truncation -
+    additionally get a second block in the space group 1 and group 2 have
+    left below their Overall Board, at whichever row those columns actually
+    reached (`next_rows`, see _write_overall_columns for why that must not
+    be a fixed fraction of ROW_BUDGET).
+
+    Two decisions live here and they are independent:
+
+      SIZE. Each block's row count is exactly what the layout already gave
+      it - group 3's from _plan_position_blocks, the second block's from
+      whatever its column has left. This function does not change any block's
+      size, so no page can grow a hole because of it. In particular group
+      3's block is always filled to its planned n_data: it has other blocks
+      stacked under it, so a block short of its allocation is blank printed
+      rows in the middle of a column.
+
+      WHICH PLAYERS. The blocks are then sorted by _reading_order_key and
+      served the position's members in that order - so the block a reader
+      reaches first holds the higher-valued players, whichever group it
+      happens to be in. That is the fix for Jeff's WR ordering complaint;
+      before it, group 3 was always served first because it was written
+      first.
+    """
+    col3 = 1 + 2 * GROUP_GAP
+    placements = _plan_position_blocks(rows)
+
+    members_by_title = {}
+    slots = {}          # title -> [(col0, start_row, n_data)]
+    order = []          # titles, in POSITION_BLOCKS order, for determinism
+    for title, members, start_row, n_data in placements:
+        members_by_title[title] = members
+        slots[title] = [(col3, start_row, n_data)]
+        order.append(title)
+
+    for col0, title in CONTINUED_IN:
+        members = members_by_title.get(title)
+        if not members:
+            continue
+        placed = sum(n for _c, _r, n in slots[title])
+        remaining = len(members) - placed
+        if remaining <= 0:
+            # Group 3 already showed this position whole; a second block
+            # would be a title over nothing.
+            continue
+        start_row = _continuation_start(next_rows[col0], remaining)
+        n_data = min(_continuation_capacity(start_row), remaining)
+        if n_data <= 0:
+            # No room even for a title - the Overall Board filled this
+            # column to the budget. Write nothing rather than a headed but
+            # empty block.
+            continue
+        slots[title].append((col0, start_row, n_data))
+
+    plan = []
+    for title in order:
+        members = members_by_title[title]
+        taken = 0
+        for col0, start_row, n_data in sorted(
+                slots[title],
+                key=lambda s: _reading_order_key(s[0], s[1])):
+            plan.append((col0, title, start_row, members[taken:taken + n_data]))
+            taken += n_data
+    return plan, members_by_title
+
+
+def _write_block(ws, col0, title, start_row, members, pos_labels):
+    """Title row, column-header row, then one data row per member."""
     _write_title(ws, start_row, col0, title)
     _write_header(ws, start_row + 1, col0)
-
-    shown, cut = members[:capacity], members[capacity:]
     row = start_row + HEADER_ROWS
-    for r in shown:
+    for r in members:
         _write_data_row(ws, row, col0, r, pos_labels)
         row += 1
-    return shown, cut
 
 
 def _group_col0s():
@@ -732,7 +897,7 @@ def render_xlsx(lg, rows, path):
                    real member; a position absent from `rows` entirely does
                    not get an entry (there is nothing to report), but every
                    position that DID have members is guaranteed "shown" > 0
-                   by _block_capacities - if this call fails to write a
+                   by _allocate_page - if this call fails to write a
                    position's title at all, that is the bug this stats dict
                    is here to catch, not a valid outcome.
     A full board never needs this - see the caller (`sffl.cli.cmd_render`)
@@ -779,21 +944,14 @@ def render_xlsx(lg, rows, path):
         overall_shown, overall_cut, next_rows = _write_overall_columns(
             ws, overall, pos_labels)
 
-    block_shown, block_cut = _write_position_blocks(lg, ws, rows, pos_labels)
-
-    # Running Backs and Receivers are what absorb almost all of group 3's
-    # truncation (Team QB is always complete; Kickers and Team Defense's
-    # guaranteed one-per-team allocation already covers what matters for a
-    # flat-$1 pool), so they're the two that continue into the space freed
-    # by capping the Overall Board at half of groups 1 and 2 - Running Backs
-    # below group 1's Overall, Receivers below group 2's, matching where the
-    # 2022 template put them.
-    rb_extra_shown, rb_extra_cut = _write_continuation_block(
-        ws, col1, "RUNNING BACKS", block_cut.get("RUNNING BACKS", []),
-        next_rows[col1], pos_labels)
-    recv_extra_shown, recv_extra_cut = _write_continuation_block(
-        ws, col2, "RECEIVERS (WR + TE)", block_cut.get("RECEIVERS (WR + TE)", []),
-        next_rows[col2], pos_labels)
+    # Every position block on the sheet - group 3's stack plus the second
+    # block Running Backs and Receivers each get below an Overall Board -
+    # planned together, so the two blocks a split position owns can be
+    # served its players in the order they will be READ rather than in the
+    # order they happen to be written. See _plan_split_positions.
+    plan, members_by_title = _plan_split_positions(rows, next_rows)
+    for col0, title, start_row, members in plan:
+        _write_block(ws, col0, title, start_row, members, pos_labels)
 
     # Last, over whatever the writes above actually produced: the ruled grid
     # and the Pos-column colouring both need the sheet's real extent.
@@ -803,16 +961,17 @@ def render_xlsx(lg, rows, path):
 
     wb.save(path)
 
-    extra_shown = {"RUNNING BACKS": rb_extra_shown, "RECEIVERS (WR + TE)": recv_extra_shown}
-    extra_cut = {"RUNNING BACKS": rb_extra_cut, "RECEIVERS (WR + TE)": recv_extra_cut}
+    written = {}
+    for _col0, title, _start_row, members in plan:
+        written[title] = written.get(title, 0) + len(members)
 
     sections = {}
     for title, _positions in POSITION_BLOCKS:
-        if title not in block_shown:
+        if title not in members_by_title:
             continue
-        shown_n = len(block_shown[title]) + len(extra_shown.get(title, []))
-        cut_n = len(extra_cut.get(title, block_cut[title]))
-        sections[title] = {"shown": shown_n, "cut": cut_n}
+        shown_n = written.get(title, 0)
+        sections[title] = {"shown": shown_n,
+                           "cut": len(members_by_title[title]) - shown_n}
 
     return {
         "total": len(rows),

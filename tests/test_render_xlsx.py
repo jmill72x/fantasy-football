@@ -1,13 +1,42 @@
 import re
+import xml.etree.ElementTree as ET
+import zipfile
 
 import openpyxl
 import pytest
+from openpyxl.utils import coordinate_to_tuple
 
 from sffl.league import load_league
 from sffl.render.rows import BoardRow
 from sffl.render.xlsx import render_xlsx
 
 LG = load_league("leagues/sffl/2026.yaml")
+
+SHEET_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+
+
+def disk_styles(path):
+    """{(row, col): (Border, PatternFill)} read from the saved FILE, not from
+    openpyxl's in-memory view of it.
+
+    Needed because the section titles are merged across their column group
+    (see sffl.render.xlsx._write_title) and openpyxl's READER throws the
+    style of every merged-away cell away: it replaces those cells with fresh,
+    default-styled MergedCell objects on load. The styles are still in the
+    .xlsx - each cell carries its `s=` index into xl/styles.xml, which is
+    what Excel draws from - so the border and fill assertions below resolve
+    that index themselves rather than believing openpyxl's reconstruction.
+    Checking the bytes on disk is what the invariant was always about.
+    """
+    wb = openpyxl.load_workbook(path)
+    with zipfile.ZipFile(path) as z:
+        root = ET.fromstring(z.read("xl/worksheets/sheet1.xml"))
+    out = {}
+    for c in root.iter(SHEET_NS + "c"):
+        r, col = coordinate_to_tuple(c.get("r"))
+        style = wb._cell_styles[int(c.get("s") or 0)]
+        out[(r, col)] = (wb._borders[style.borderId], wb._fills[style.fillId])
+    return out
 
 
 def row(rank, name, pos, dollars, est=None):
@@ -485,13 +514,15 @@ def test_every_cell_in_the_used_rectangle_carries_the_ruled_border(tmp_path):
                    for c in (1, 1 + GROUP_GAP, 1 + 2 * GROUP_GAP))
     assert last_row > 1 and last_col == 26
 
+    styles = disk_styles(path)
     missing = []
     for r in range(1, last_row + 1):
         for c in range(1, last_col + 1):
-            b = ws.cell(r, c).border
-            if not all(getattr(b, side) is not None
-                       and getattr(b, side).style == "thin"
-                       for side in ("left", "right", "top", "bottom")):
+            entry = styles.get((r, c))
+            b = entry[0] if entry else None
+            if b is None or not all(getattr(b, side) is not None
+                                    and getattr(b, side).style == "thin"
+                                    for side in ("left", "right", "top", "bottom")):
                 missing.append((r, c))
     assert not missing, (
         "%d cell(s) in the used rectangle carry no thin border, e.g. %s"
@@ -499,7 +530,7 @@ def test_every_cell_in_the_used_rectangle_carries_the_ruled_border(tmp_path):
 
     # Spacer columns too - the template rules them like everything else.
     for spacer in (1 + N_COLS, 1 + GROUP_GAP + N_COLS):
-        assert ws.cell(5, spacer).border.left.style == "thin"
+        assert styles[(5, spacer)][0].left.style == "thin"
 
 
 def test_a_bordered_blank_row_still_carries_the_measured_row_height(tmp_path):
@@ -531,12 +562,13 @@ def test_section_title_and_header_rows_carry_the_white_fill(tmp_path):
     render_xlsx(LG, big_board(), path)
     ws = openpyxl.load_workbook(path).active
 
+    styles = disk_styles(path)
     checked = 0
     for col0 in (1, 1 + GROUP_GAP, 1 + 2 * GROUP_GAP):
         for title, start, _end in _sections(ws, col0):
             for r in (start, start + 1):
                 for i in range(N_COLS):
-                    fill = ws.cell(r, col0 + i).fill
+                    fill = styles[(r, col0 + i)][1]
                     assert fill.fill_type == "solid", (
                         "%s row %d col %d carries no fill"
                         % (title, r, col0 + i))
@@ -549,7 +581,7 @@ def test_section_title_and_header_rows_carry_the_white_fill(tmp_path):
     # ...and nowhere else. The template has no tier shading; an earlier note
     # claiming conditional formatting drove tier colour was wrong.
     for r in range(3, 20):
-        assert ws.cell(r, 1).fill.fill_type != "solid", (
+        assert styles[(r, 1)][1].fill_type != "solid", (
             "row %d is a data row and must carry no fill" % r)
 
 
@@ -688,3 +720,322 @@ def test_no_column_is_ever_gapped_across_the_overall_capacity_boundary(tmp_path)
         checked += 1
 
     assert checked == len(sizes)
+
+
+# --------------------------------------------------------------------------
+# Reading order across a position that occupies two blocks.
+# --------------------------------------------------------------------------
+
+def _blocks_by_title(ws):
+    """{title: [(page, col0, start_row, [Rank values in order])]} over all
+    three column groups, one entry per block written for that title.
+
+    Rank is the board's own overall rank, and every block writes its members
+    ordered by MY$ descending - which build_rows made the same ordering as
+    Rank ascending. So a block's Rank list rising, and the list of one block
+    sitting wholly below another's, is exactly "these players come first".
+    """
+    from sffl.render.xlsx import GROUP_GAP, ROWS_PER_PAGE
+
+    out = {}
+    for col0 in (1, 1 + GROUP_GAP, 1 + 2 * GROUP_GAP):
+        for title, start, end in _sections(ws, col0):
+            ranks = [ws.cell(r, col0).value for r in range(start + 2, end + 1)
+                     if ws.cell(r, col0 + 1).value not in (None, "")]
+            page = (start - 1) // ROWS_PER_PAGE
+            out.setdefault(title, []).append((page, col0, start, ranks))
+    return out
+
+
+def _assert_reading_order(ws):
+    """The defect Jeff reported, stated as an invariant.
+
+    "You have the WR columns out of order, the first WRs are on the right of
+    the 2nd column of WRs." Two statements, and the second is the sharp one:
+
+      1. GLOBALLY, a position's blocks taken in reading order - all of page 1
+         left to right, then all of page 2 left to right - must hand out its
+         players in descending value, with no block repeating or skipping
+         back. That is the whole list read the way the sheet is read.
+      2. WITHIN ONE PAGE, of two blocks of the same position, the one in the
+         left column must hold strictly earlier-ranked players. This is what
+         actually failed: on page 2 group 3 opened at WR1 while group 2, to
+         its left, opened at WR29.
+
+    Check 2 is not implied by check 1 as a matter of arithmetic, but the
+    reverse would let a fix that merely reversed the columns pass, so both
+    are asserted.
+    """
+    for title, blocks in _blocks_by_title(ws).items():
+        if title == "OVERALL":
+            # Same rule, and it is checked here too - the Overall Board is
+            # one list split across groups 1 and 2 exactly like a position.
+            pass
+        in_reading_order = sorted(blocks, key=lambda b: (b[0], b[1]))
+        seen = []
+        for _page, col0, _start, ranks in in_reading_order:
+            assert ranks == sorted(ranks), (
+                "%s: the block at column %d is not itself in board order"
+                % (title, col0))
+            seen.extend(ranks)
+        assert seen == sorted(seen), (
+            "%s: read page by page, left to right, its blocks give ranks out "
+            "of order - %s" % (title, [(b[1], b[3][:1], b[3][-1:]) for b in in_reading_order]))
+        assert len(set(seen)) == len(seen), (
+            "%s: a player is listed in more than one of its blocks" % title)
+
+        by_page = {}
+        for page, col0, _start, ranks in blocks:
+            by_page.setdefault(page, []).append((col0, ranks))
+        for page, cols in by_page.items():
+            cols.sort()
+            for i in range(1, len(cols)):
+                left_col, left = cols[i - 1]
+                right_col, right = cols[i]
+                if not left or not right:
+                    continue
+                assert max(left) < min(right), (
+                    "%s on page %d: column %d holds ranks %d-%d and column "
+                    "%d, to its RIGHT, holds %d-%d - the earlier players are "
+                    "in the right-hand column"
+                    % (title, page + 1, left_col, min(left), max(left),
+                       right_col, min(right), max(right)))
+
+
+def test_a_split_position_fills_its_blocks_in_reading_order(tmp_path):
+    # Jeff, on the shipped file: "you have the WR columns out of order, the
+    # first WRs are on the right of the 2nd column of WRs." Group 3's
+    # RECEIVERS block opened at WR1 on page 2 while group 2 - the column to
+    # its LEFT on the same page - opened at WR29.
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, big_board(), path)
+    ws = openpyxl.load_workbook(path).active
+
+    blocks = _blocks_by_title(ws)
+    # Not vacuous: both flex positions must really occupy two blocks here.
+    for title in ("RUNNING BACKS", "RECEIVERS (WR + TE)"):
+        assert len(blocks[title]) == 2, (
+            "%s should be split across two blocks, got %s"
+            % (title, [(b[1], b[2]) for b in blocks[title]]))
+    _assert_reading_order(ws)
+
+
+def test_receivers_lead_in_the_left_hand_column_of_page_two(tmp_path):
+    # The same defect pinned to the exact geometry it appeared in, so this
+    # test still fails if _reading_order_key is deleted and the generic
+    # invariant above is somehow satisfied another way. Both RECEIVERS
+    # blocks open on page 2; the left one (group 2) must lead.
+    from sffl.render.xlsx import GROUP_GAP, ROWS_PER_PAGE
+
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, big_board(), path)
+    ws = openpyxl.load_workbook(path).active
+
+    blocks = dict((b[1], b) for b in _blocks_by_title(ws)["RECEIVERS (WR + TE)"])
+    col2, col3 = 1 + GROUP_GAP, 1 + 2 * GROUP_GAP
+    assert set(blocks) == set([col2, col3])
+    assert blocks[col2][0] == blocks[col3][0] == 1, (
+        "this test only says anything while both receiver blocks open on "
+        "page 2, got start rows %d and %d against a %d-row page"
+        % (blocks[col2][2], blocks[col3][2], ROWS_PER_PAGE))
+    assert max(blocks[col2][3]) < min(blocks[col3][3]), (
+        "group 2 holds ranks %s and group 3 holds %s"
+        % (blocks[col2][3][:2], blocks[col3][3][:2]))
+
+
+def test_running_backs_keep_their_page_one_block_first(tmp_path):
+    # The mirror-image mistake, and the reason _reading_order_key sorts on
+    # the PAGE before the column. Running Backs occupies group 3 on page 1
+    # and group 1 on page 2; a reader finishes page 1 before starting page 2,
+    # so group 3's block leads even though group 1 is further left. Ordering
+    # on the column alone would print RB1 overleaf from RB28.
+    from sffl.render.xlsx import GROUP_GAP, ROWS_PER_PAGE
+
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, big_board(), path)
+    ws = openpyxl.load_workbook(path).active
+
+    blocks = dict((b[1], b) for b in _blocks_by_title(ws)["RUNNING BACKS"])
+    col1, col3 = 1, 1 + 2 * GROUP_GAP
+    assert set(blocks) == set([col1, col3])
+    assert blocks[col3][0] == 0 and blocks[col1][0] == 1, (
+        "this test only says anything while group 3's block is on page 1 and "
+        "group 1's on page 2 (start rows %d, %d; page is %d rows)"
+        % (blocks[col3][2], blocks[col1][2], ROWS_PER_PAGE))
+    assert max(blocks[col3][3]) < min(blocks[col1][3]), (
+        "page 1's group 3 block holds ranks %s but page 2's group 1 block "
+        "holds %s" % (blocks[col3][3][:2], blocks[col1][3][:2]))
+
+
+def test_reading_order_holds_for_any_pool_size(tmp_path):
+    # Which page a block opens on depends on how much sits above it, so one
+    # fixture proves little - the RB case and the WR case differ only by
+    # that. Sweep the pool size across the Overall Board's capacity.
+    from sffl.render.xlsx import _overall_capacity
+
+    cap = _overall_capacity()
+    for total in (8, 30, cap // 2, cap - 3, cap - 1, cap, cap + 1, cap * 2,
+                  cap * 4):
+        rb_n = total // 2
+        tqb_n = min(total // 8, 32)
+        wr_n = total - rb_n - tqb_n
+        rows, n = [], 1
+        for pos, count in (("RB", rb_n), ("WR", wr_n), ("TE", total // 10),
+                           ("TQB", tqb_n), ("K", 32), ("DST", 32)):
+            for i in range(count):
+                rows.append(row(n, "%s %d" % (pos, i), pos, 300.0 - 0.1 * n,
+                                est=150.0))
+                n += 1
+
+        path = str(tmp_path / ("order-%d.xlsx" % total))
+        render_xlsx(LG, rows, path)
+        ws = openpyxl.load_workbook(path).active
+        try:
+            _assert_reading_order(ws)
+        except AssertionError as e:
+            raise AssertionError("overall pool of %d: %s" % (total, e))
+
+
+# --------------------------------------------------------------------------
+# Section titles stay inside their own column group.
+# --------------------------------------------------------------------------
+
+def test_every_section_title_is_merged_across_exactly_its_own_group(tmp_path):
+    # Jeff's second defect: titles are written into the group's first cell -
+    # the Rank column, 2.8 width units - and Excel spills a too-long string
+    # rightwards through every empty cell beside it. "RECEIVERS (WR + TE)"
+    # is 19 characters. Merging is what bounds it structurally; nothing else
+    # in this layout does, because the neighbouring group's first cell is not
+    # guaranteed to be occupied on that row.
+    from sffl.render.xlsx import GROUP_GAP, N_COLS
+
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, big_board(), path)
+    ws = openpyxl.load_workbook(path).active
+
+    merged = dict(((m.min_row, m.min_col), m) for m in ws.merged_cells.ranges)
+    checked = 0
+    for col0 in (1, 1 + GROUP_GAP, 1 + 2 * GROUP_GAP):
+        for title, start, _end in _sections(ws, col0):
+            m = merged.get((start, col0))
+            assert m is not None, (
+                "%s at row %d column %d is not merged - it will spill into "
+                "the next column group" % (title, start, col0))
+            assert (m.max_col, m.min_row, m.max_row) == (col0 + N_COLS - 1,
+                                                         start, start), (
+                "%s at row %d spans %s, not exactly its group's %d columns"
+                % (title, start, m.coord, N_COLS))
+            assert ws.cell(start, col0).alignment.horizontal == "left", (
+                "%s is not left-aligned inside its merge" % title)
+            checked += 1
+    assert checked >= 7, "expected every block on the sheet to be checked"
+
+    # Nothing else on the sheet is merged - a stray merge over data cells
+    # would silently swallow a player.
+    assert len(ws.merged_cells.ranges) == checked
+
+
+def test_no_title_is_wider_than_the_group_it_sits_in(tmp_path):
+    # The width check behind the merge, so a future title cannot be added
+    # that the merge would have to CLIP rather than merely contain. Bounded
+    # above, deliberately: TITLE_MAX_CHAR_WIDTH_UNITS assumes every glyph is
+    # a full 8pt em, which no Calibri character reaches, so passing here
+    # needs no font installed and cannot happen by accident.
+    from sffl.render.xlsx import (GROUP_GAP, GROUP_WIDTH, POSITION_BLOCKS,
+                                  WIDTHS, _title_width_units)
+
+    # GROUP_WIDTH must be the widths this module actually applies, not a
+    # number typed beside them.
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, big_board(), path)
+    ws = openpyxl.load_workbook(path).active
+    from openpyxl.utils import get_column_letter
+    for col0 in (1, 1 + GROUP_GAP, 1 + 2 * GROUP_GAP):
+        applied = sum(ws.column_dimensions[get_column_letter(c)].width
+                      for c in range(col0, col0 + 8))
+        assert abs(applied - GROUP_WIDTH) < 1e-9, (
+            "group at column %d is %.2f units wide, GROUP_WIDTH says %.2f"
+            % (col0, applied, GROUP_WIDTH))
+    assert GROUP_WIDTH > WIDTHS["rank"]
+
+    titles = ["OVERALL"] + [t for t, _p in POSITION_BLOCKS]
+    # Every title the sheet actually wrote is one of these.
+    written = set()
+    for col0 in (1, 1 + GROUP_GAP, 1 + 2 * GROUP_GAP):
+        written.update(t for t, _s, _e in _sections(ws, col0))
+    assert written <= set(titles), "unexpected title(s): %s" % (written - set(titles))
+
+    for title in titles:
+        drawn = _title_width_units(title)
+        assert drawn <= GROUP_WIDTH, (
+            "%r needs up to %.1f width units, more than the %.1f its column "
+            "group has - it would be clipped by the merge"
+            % (title, drawn, GROUP_WIDTH))
+
+
+# --------------------------------------------------------------------------
+# Kicker / Team Defense depth.
+# --------------------------------------------------------------------------
+
+def test_k_and_dst_depth_follows_the_one_constant(tmp_path, monkeypatch):
+    # Jeff wants more than twelve of each. K_DST_DEPTH is the single dial;
+    # this is what proves editing it is all anyone has to do.
+    from sffl.render import xlsx as xlsx_mod
+
+    for depth in (8, 12, 20, 26):
+        monkeypatch.setattr(xlsx_mod, "K_DST_DEPTH", depth)
+        path = str(tmp_path / ("depth-%d.xlsx" % depth))
+        stats = render_xlsx(LG, big_board(), path)
+        for title in ("KICKERS", "TEAM DEFENSE"):
+            assert stats["sections"][title]["shown"] == depth, (
+                "K_DST_DEPTH=%d gave %s %d rows"
+                % (depth, title, stats["sections"][title]["shown"]))
+
+
+def test_the_default_depth_is_twenty_not_the_team_count(tmp_path):
+    # The regression: `lg.teams` (12) used to set this, on the argument that
+    # a flat-$1 pool needs no more than one per roster spot. Jeff disagreed -
+    # what matters at the table is seeing who is left.
+    from sffl.render.xlsx import K_DST_DEPTH
+
+    assert K_DST_DEPTH == 20 and K_DST_DEPTH != LG.teams
+    path = str(tmp_path / "board.xlsx")
+    stats = render_xlsx(LG, big_board(), path)
+    assert stats["sections"]["KICKERS"]["shown"] == 20
+    assert stats["sections"]["TEAM DEFENSE"]["shown"] == 20
+
+
+def test_kicker_depth_is_bought_one_for_one_from_group_three_receivers(tmp_path,
+                                                                       monkeypatch):
+    # The exchange rate Jeff needs to dial this: the page is full, so every
+    # row K or TEAM DEFENSE gains comes off group 3's RECEIVERS block and
+    # nothing else. One step of K_DST_DEPTH moves two rows, because K and
+    # DST move together. TEAM QB must never pay - all 32 are shown and that
+    # is a complete position, not a top-N.
+    from sffl.render import xlsx as xlsx_mod
+    from sffl.render.xlsx import GROUP_GAP
+
+    col3 = 1 + 2 * GROUP_GAP
+    seen = {}
+    for depth in (12, 16, 20, 24):
+        monkeypatch.setattr(xlsx_mod, "K_DST_DEPTH", depth)
+        path = str(tmp_path / ("rate-%d.xlsx" % depth))
+        stats = render_xlsx(LG, big_board(), path)
+        ws = openpyxl.load_workbook(path).active
+        g3 = dict((t, e - (s + 1)) for t, s, e in _sections(ws, col3))
+        seen[depth] = (stats["sections"]["RECEIVERS (WR + TE)"]["shown"],
+                       g3["RECEIVERS (WR + TE)"], g3["TEAM QB"],
+                       stats["sections"]["RUNNING BACKS"]["shown"])
+
+    base_depth = 12
+    base = seen[base_depth]
+    for depth, (recv, g3_recv, tqb, rb) in sorted(seen.items()):
+        step = depth - base_depth
+        assert recv == base[0] - 2 * step, (
+            "K_DST_DEPTH %d -> %d shown receivers; a 1:1 exchange from %d "
+            "would give %d" % (depth, recv, base[0], base[0] - 2 * step))
+        assert g3_recv == base[1] - 2 * step, (
+            "the rows must come off GROUP 3's receiver block: %d at depth %d"
+            % (g3_recv, depth))
+        assert tqb == base[2] == 32, "TEAM QB paid for kicker depth"
+        assert rb == base[3], "RUNNING BACKS paid for kicker depth"
