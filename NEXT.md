@@ -86,6 +86,12 @@ Update this block at the end of every session so the next one can resume blind.
       with ordering bugs still open years after the request was closed. PDF Expert handles
       outlines properly but is $79.99/yr or $199.99 lifetime. Apple's built-in Markup is
       free and Pencil-capable but has no outline sidebar — fine as a fallback.
+      Notability fails on three counts: recurring at every usable tier ($19.99/yr Plus,
+      $99/yr Pro) with NO lifetime option; its free Starter tier has an UNDISCLOSED edit
+      cap ("Notability doesn't disclose how many edits you can make" — Paperlike), which
+      is the worst possible property for a two-hour draft with several hundred marks; and
+      it advertises "PDF hyperlink navigation", which is not confirmed to mean embedded
+      outline navigation. Good app, optimised for lecture notes, not structured reference.
       iAnnotate 4 navigates by thumbnails/bookmarks/annotations/search with an outline
       view, and auto-detects the Pencil with no tool switching: annotate with the Pencil,
       pan and scroll with fingers. Known nit: erasing needs a finger tap first.
