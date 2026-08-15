@@ -73,6 +73,29 @@ Update this block at the end of every session so the next one can resume blind.
          contiguous space instead of interleaving.
       Widths, fonts and the three column groups stay as they are.
 - [ ] Any further PDF/Excel changes from Jeff's iPad review
+- [ ] **Dry-run the PDF in iAnnotate 4** ($9.99 one-time, researched 2026-08-08). Verify:
+      (1) all six bookmarks appear as tappable navigation — if they do NOT, the bookmarks
+      are dead weight and should come out of `pdf.py`; (2) the 33pt PAID box holds a
+      legible two-digit price at speed; (3) ink survives backgrounding the app, since the
+      CBS app gets switched to during the draft.
+
+      **Why iAnnotate over the obvious choices.** The decisive requirement is navigating
+      the PDF's OWN embedded outline. GoodNotes 6 ($29.99 lifetime — cost was not the
+      objection) is a notebook app: it imports a PDF as pages under its own bookmark
+      system, and its own feedback thread has users reporting imported outlines are lost,
+      with ordering bugs still open years after the request was closed. PDF Expert handles
+      outlines properly but is $79.99/yr or $199.99 lifetime. Apple's built-in Markup is
+      free and Pencil-capable but has no outline sidebar — fine as a fallback.
+      Notability fails on three counts: recurring at every usable tier ($19.99/yr Plus,
+      $99/yr Pro) with NO lifetime option; its free Starter tier has an UNDISCLOSED edit
+      cap ("Notability doesn't disclose how many edits you can make" — Paperlike), which
+      is the worst possible property for a two-hour draft with several hundred marks; and
+      it advertises "PDF hyperlink navigation", which is not confirmed to mean embedded
+      outline navigation. Good app, optimised for lecture notes, not structured reference.
+      iAnnotate 4 navigates by thumbnails/bookmarks/annotations/search with an outline
+      view, and auto-detects the Pencil with no tool switching: annotate with the Pencil,
+      pan and scroll with fingers. Known nit: erasing needs a finger tap first.
+      NOT VERIFIED — researched only; no iPad available to this session.
 - [ ] TODO B — widen the weekly collection to ~120 players (needs `claude --chrome`)
       **Jeff confirmed 2026-08-04 this IS still needed** — first pass with this scoring
       model, so 18 players is too thin to trust curves that shape every value
@@ -88,6 +111,18 @@ plus `--pdf output/x.pdf --xlsx output/x.xlsx`.
 **PDF — 17 pages**, the iPad layout ported verbatim from `poc/render_poc.py`. Row is
 `# | PLAYER | TM/BYE | MY$ | EST$ | PAID`. Six bookmarks. Footer carries the EST$-is-a-floor
 caveat.
+
+**Excel — 3 printed pages in 2 SHEETS.** `Board` is the board (2 pages, 126 rows, unchanged);
+`Key & Intel` is a third page in the same workbook — what the columns mean, what this room
+pays, where the model is weak, and how round one works, for the **surrogate drafting on
+2026-08-26 while Jeff travels**. Jeff owns the BID; the surrogate owns the SELECTION, and the
+sheet is intel for a peer, not an instruction list. Every figure on it is derived from the run
+that printed the board (`src/sffl/render/intel.py`); a figure the run cannot produce prints as
+"not measured", never as a stale constant. Its one-page fit is arithmetic on the same geometry
+as the board's (41 of 45 rows used on the production extract) and `render_xlsx` raises rather
+than spilling onto a fourth page. Only three numbers are hardcoded — the 18 players/301
+player-weeks behind the calibration curves (a *comment* in `calibration/2025.yaml`, pinned by
+a test) and the direction of the TQB residuals (BAL/WAS/PHI under, DAL/CIN/MIN over).
 
 **Excel — 2 pages**, the 2022 template's shape. **126 rows is the budget**: 63 rows/page at
 the template's 9.95pt row height, landscape letter, 97% scale. Jeff's 2022 file is 118 rows —
