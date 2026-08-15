@@ -1,5 +1,14 @@
-"""The printed cheatsheet: one landscape-letter worksheet Jeff prints and
-carries to the auction, separate from the PDF he marks up on the iPad.
+"""The printed cheatsheet: a landscape-letter workbook Jeff prints and carries
+to the auction, separate from the PDF he marks up on the iPad.
+
+TWO WORKSHEETS. "Board" is the board - 126 rows over two printed pages, every
+row a player, and the whole of what follows is about it. "Key & Intel" is a
+third printed page in the same file: what the columns mean, what this room has
+historically paid, and where the model is weak, for a drafter who is not the
+person who built the board. It is a separate SHEET rather than a block of the
+board because the board is full - 126 rows is a page-geometry budget, so every
+line of legend written into it would have cost a player. See the SECOND
+WORKSHEET section further down.
 
 Format measured from Jeff's 2022 template
 (`data/extracts/_templates/stripes-2022-rankings-template.xlsx`, gitignored -
@@ -156,12 +165,15 @@ too (_pos_labels). WR and TE remain ONE pool for valuation - this label is
 the only place they are counted separately, exactly as the template does.
 """
 
+import textwrap
+
 from openpyxl import Workbook
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from sffl.identity import NFL_TEAMS
+from sffl.render import intel as intel_mod
 from sffl.render.rows import overall_board
 
 HEADERS = ["Rank", "Name", "Team/Bye", "Pos", "Tier", "AVG", "MY$", "EST$"]
@@ -879,7 +891,292 @@ def _apply_pos_colours(ws, last_row):
                 font=Font(color="FF000000")))
 
 
-def render_xlsx(lg, rows, path):
+# --------------------------------------------------------------------------
+# THE SECOND WORKSHEET - "Key & Intel".
+#
+# The board is full: 126 rows, two printed pages, every one of them a player.
+# A legend cut into it costs player rows one for one, so the legend goes on
+# its own sheet in the SAME workbook - one file to print, nothing that can be
+# separated from the board it explains.
+#
+# Its content is prose, which is a different layout problem from the board's
+# and gets its own geometry rather than reusing ROW_HEIGHT. Two decisions
+# carry it:
+#
+#   A UNIFORM LINE GRID. Every row on the sheet is INTEL_LINE_PT tall and a
+#   paragraph occupies as many rows as it has lines, merged vertically. That
+#   is what lets two independent columns of prose share one set of rows
+#   without either going ragged: both pack against the same grid, and the
+#   one-page check is a row count exactly as it is on the board.
+#
+#   THE LINE BREAKS ARE COMPUTED HERE, NOT LEFT TO EXCEL. Text is wrapped to
+#   an explicit character count and written with real newlines in it. Excel is
+#   still told to wrap (a viewer with a wider substitute font must not spill
+#   text out of the cell), but with the breaks already in place it has nothing
+#   left to do, so the number of lines a paragraph draws is a number this
+#   module KNOWS rather than one it hopes for - and the row height it sets is
+#   therefore right. _chars_per_line is deliberately an under-estimate of what
+#   fits, so the error can only ever be a short line, never a clipped one.
+#
+# The board had exactly the opposite bug (a title written into a 2.8-unit cell
+# and left to spill through its neighbours) and it was fixed by merging; the
+# same rule applies here, everything is merged or wrapped, nothing is left to
+# overflow.
+# --------------------------------------------------------------------------
+
+INTEL_SHEET_TITLE = "Key & Intel"
+
+# Five columns: term, text, gutter, term, text. Two columns of prose, because
+# a single column across a landscape sheet is a 10-inch measure and unreadable
+# at any size that also fits the page.
+#
+# The five together must clear _printable_width_px() with room to spare, not
+# merely fit it: the pixel arithmetic below is the standard conversion and is
+# close but not identical to what a given Excel build does with the last
+# fraction of a column. The widths here leave ~25px (a quarter inch) of that
+# slack, so a rounding disagreement cannot push the right-hand column onto a
+# second sheet of paper. _write_intel_sheet raises if it ever stops fitting.
+INTEL_TERM_WIDTH = 10.0
+INTEL_TEXT_WIDTH = 57.5
+INTEL_GUTTER_WIDTH = 3.0
+
+INTEL_TITLE_PT = 14
+INTEL_SUB_PT = 9
+INTEL_HEAD_PT = 11
+INTEL_BODY_PT = 10
+
+# One line of the grid. 10pt Calibri needs ~13.4pt of leading to look like
+# prose rather than a stack; 14 gives the 11pt section headings room too, so
+# one constant serves every row on the sheet and the page arithmetic stays a
+# row count.
+INTEL_LINE_PT = 14.0
+
+# An Excel column-width unit is the width of '0' in the workbook's Normal font
+# (Calibri 11, which openpyxl leaves alone) - 7 pixels at 96dpi. A column of
+# width w draws 7w pixels of text plus about 5 pixels of cell padding.
+PX_PER_WIDTH_UNIT = 7.0
+CELL_PADDING_PX = 5
+
+# Landscape letter, and the margins render_xlsx applies below. Only these
+# affect how much of a line fits across the printed page.
+PAGE_WIDTH_IN = 11.0
+MARGIN_LEFT_IN = 0.75
+MARGIN_RIGHT_IN = 0.0
+
+INTEL_FONT_TITLE = Font(name="Calibri", size=INTEL_TITLE_PT, bold=True)
+INTEL_FONT_SUB = Font(name="Calibri", size=INTEL_SUB_PT, italic=True)
+INTEL_FONT_HEAD = Font(name="Calibri", size=INTEL_HEAD_PT, bold=True)
+INTEL_FONT_TERM = Font(name="Calibri", size=INTEL_BODY_PT, bold=True)
+INTEL_FONT_BODY = Font(name="Calibri", size=INTEL_BODY_PT)
+
+# Top-aligned everywhere: a paragraph merged down four rows must start at the
+# first of them, beside its term, not float in the middle of them.
+INTEL_ALIGN_TEXT = Alignment(horizontal="left", vertical="top", wrap_text=True)
+INTEL_ALIGN_TERM = Alignment(horizontal="left", vertical="top")
+# The rule under a section heading - the board's own thin line, used where it
+# suits. A full ruled grid over prose would read as a table, which this is not.
+INTEL_RULE = Border(bottom=_THIN)
+
+
+def _intel_rows_per_page():
+    """Rows of INTEL_LINE_PT that fit one printed page, at SCALE_PCT.
+
+    Same derivation as _rows_per_page, against the same page geometry - only
+    the row height differs. See that function for why scale divides.
+    """
+    printable_pt = (PAGE_HEIGHT_IN - MARGIN_TOP_IN - MARGIN_BOTTOM_IN) * 72.0
+    return int(printable_pt // (INTEL_LINE_PT * (SCALE_PCT / 100.0)))
+
+
+# ONE printed page, not two: the board's overflow costs players, this sheet's
+# would cost a third sheet of paper carrying four lines of text.
+INTEL_ROW_BUDGET = _intel_rows_per_page()
+
+
+def _printable_width_px():
+    """Width available on one landscape-letter page, in natural pixels.
+
+    Natural, i.e. before the print scale shrinks it - the same convention as
+    _rows_per_page, so a column layout is compared against the space it will
+    actually occupy at SCALE_PCT.
+    """
+    inches = PAGE_WIDTH_IN - MARGIN_LEFT_IN - MARGIN_RIGHT_IN
+    return inches * 96.0 / (SCALE_PCT / 100.0)
+
+
+def _column_px(width_units):
+    """Pixels one column of `width_units` occupies, padding included."""
+    return int(round(width_units * PX_PER_WIDTH_UNIT)) + CELL_PADDING_PX
+
+
+def _chars_per_line(width_units, font_pt, bold=False):
+    """How many characters this module will allow on one line of that column.
+
+    A DELIBERATE UNDER-ESTIMATE. It prices every character at the width of a
+    DIGIT in the given size (Calibri's digits are wider than its lowercase
+    average), and adds 5% for bold. Wrapping short can only leave a line
+    ending early; wrapping long would put more lines in the cell than the row
+    height allows, and Excel would clip them - text missing from a printed
+    page, which is the failure this sheet cannot have. It also means the
+    result depends on no font being installed anywhere.
+    """
+    usable = width_units * PX_PER_WIDTH_UNIT - 2.0
+    char_px = PX_PER_WIDTH_UNIT * (float(font_pt) / 11.0)
+    if bold:
+        char_px *= 1.05
+    return max(1, int(usable / char_px))
+
+
+def _wrap(text, width_chars):
+    """Word-wrap to a list of lines, never empty."""
+    lines = textwrap.wrap(text, width_chars, break_long_words=False,
+                          break_on_hyphens=False)
+    return lines or [""]
+
+
+def _check_fits(text, width_units, font_pt, bold, where):
+    """Refuse to write a single-line string wider than its cell.
+
+    Section headings and the term beside each paragraph are written on one
+    line by design - they are not wrapped, so nothing would break them and a
+    too-long one would be silently clipped by its merge. Raise instead: a
+    legend with half a heading on it is worse than a render that stops.
+    """
+    limit = _chars_per_line(width_units, font_pt, bold=bold)
+    if len(text) > limit:
+        raise ValueError(
+            "%s %r is %d characters; only %d fit the %.1f-unit space it is "
+            "written into at %dpt. Shorten it, or widen the column."
+            % (where, text, len(text), limit, width_units, font_pt))
+
+
+def _write_intel_heading(ws, row, term_col, heading):
+    """A section heading, merged across the term and text columns and ruled
+    underneath - the board's white-filled header row, restated for prose."""
+    _check_fits(heading, INTEL_TERM_WIDTH + INTEL_TEXT_WIDTH, INTEL_HEAD_PT,
+                True, "section heading")
+    ws.merge_cells(start_row=row, start_column=term_col,
+                   end_row=row, end_column=term_col + 1)
+    cell = ws.cell(row, term_col, heading)
+    cell.font = INTEL_FONT_HEAD
+    cell.alignment = INTEL_ALIGN_TERM
+    for col in (term_col, term_col + 1):
+        ws.cell(row, col).fill = HEADER_FILL
+        ws.cell(row, col).border = INTEL_RULE
+
+
+def _write_intel_item(ws, row, term_col, term, lines):
+    """One term and its paragraph, occupying len(lines) rows of the grid.
+
+    Both cells are merged down those rows so the paragraph is one block of
+    text with one border and one alignment, and so nothing can spill sideways
+    into the other column of prose.
+    """
+    _check_fits(term, INTEL_TERM_WIDTH, INTEL_BODY_PT, True, "term")
+    n = len(lines)
+    if n > 1:
+        for col in (term_col, term_col + 1):
+            ws.merge_cells(start_row=row, start_column=col,
+                           end_row=row + n - 1, end_column=col)
+    cell = ws.cell(row, term_col, term)
+    cell.font = INTEL_FONT_TERM
+    cell.alignment = INTEL_ALIGN_TERM
+    cell = ws.cell(row, term_col + 1, "\n".join(lines))
+    cell.font = INTEL_FONT_BODY
+    cell.alignment = INTEL_ALIGN_TEXT
+
+
+def _write_intel_column(ws, term_col, sections, start_row):
+    """Write one column of sections. Returns the last row it used."""
+    chars = _chars_per_line(INTEL_TEXT_WIDTH, INTEL_BODY_PT)
+    row = start_row
+    for i, (heading, items) in enumerate(sections):
+        if i:
+            row += 1          # one blank line of the grid between sections
+        _write_intel_heading(ws, row, term_col, heading)
+        row += 1
+        for term, text in items:
+            lines = _wrap(text, chars)
+            _write_intel_item(ws, row, term_col, term, lines)
+            row += len(lines)
+    return row - 1
+
+
+def _write_intel_sheet(wb, facts):
+    """Add the Key & Intel worksheet to `wb`, and return the rows it used.
+
+    Called after the Board is finished and never before: openpyxl assigns
+    style and shared-string indices in the order cells are written, so every
+    font, fill and string this sheet introduces appends AFTER the board's and
+    leaves the board's own worksheet XML byte for byte what it was.
+
+    Raises ValueError if the laid-out sheet would not print on one page, or if
+    the columns would not fit the printed width. Both are arithmetic on the
+    same geometry the board uses - neither is a guess, and neither may be
+    discovered by a person at the printer on auction morning.
+    """
+    widths = [INTEL_TERM_WIDTH, INTEL_TEXT_WIDTH, INTEL_GUTTER_WIDTH,
+              INTEL_TERM_WIDTH, INTEL_TEXT_WIDTH]
+    used_px = sum(_column_px(w) for w in widths)
+    if used_px > _printable_width_px():
+        raise ValueError(
+            "the Key & Intel columns need %d px and one landscape-letter page "
+            "gives %d at %d%% scale; the sheet would print on two pages side "
+            "by side" % (used_px, int(_printable_width_px()), SCALE_PCT))
+
+    ws = wb.create_sheet(INTEL_SHEET_TITLE)
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.paperSize = ws.PAPERSIZE_LETTER
+    ws.page_setup.scale = SCALE_PCT
+    ws.sheet_view.showGridLines = False
+    ws.page_margins.left = MARGIN_LEFT_IN
+    ws.page_margins.right = MARGIN_RIGHT_IN
+    ws.page_margins.top = MARGIN_TOP_IN
+    ws.page_margins.bottom = MARGIN_BOTTOM_IN
+    ws.page_margins.header = 0.0
+    ws.page_margins.footer = 0.0
+
+    for i, width in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    last_col = len(widths)
+    # The title gets two rows of the grid: 14pt text does not sit in a 14pt
+    # row, and merging it down two is cheaper than a second row height.
+    ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=last_col)
+    cell = ws.cell(1, 1, intel_mod.title(facts))
+    cell.font = INTEL_FONT_TITLE
+    cell.alignment = Alignment(horizontal="left", vertical="center")
+
+    full_width = sum(widths)
+    sub_lines = _wrap(intel_mod.subtitle(facts),
+                      _chars_per_line(full_width, INTEL_SUB_PT))
+    ws.merge_cells(start_row=3, start_column=1,
+                   end_row=2 + len(sub_lines), end_column=last_col)
+    cell = ws.cell(3, 1, "\n".join(sub_lines))
+    cell.font = INTEL_FONT_SUB
+    cell.alignment = INTEL_ALIGN_TEXT
+    for col in range(1, last_col + 1):
+        ws.cell(2 + len(sub_lines), col).border = INTEL_RULE
+
+    start_row = 2 + len(sub_lines) + 2      # one blank row under the rule
+    last = max(
+        _write_intel_column(ws, 1, intel_mod.left_sections(facts), start_row),
+        _write_intel_column(ws, 4, intel_mod.right_sections(facts), start_row))
+
+    if last > INTEL_ROW_BUDGET:
+        raise ValueError(
+            "the Key & Intel sheet needs %d rows of %.2fpt and one "
+            "landscape-letter page holds %d at %d%% scale; it would run onto "
+            "a second sheet. Shorten the text or raise the budget "
+            "deliberately." % (last, INTEL_LINE_PT, INTEL_ROW_BUDGET,
+                               SCALE_PCT))
+
+    for r in range(1, last + 1):
+        ws.row_dimensions[r].height = INTEL_LINE_PT
+    return last
+
+
+def render_xlsx(lg, rows, path, intel=None):
     """Render the printed cheatsheet to `path`.
 
     Raises ValueError on an empty `rows` rather than writing a blank sheet -
@@ -899,6 +1196,13 @@ def render_xlsx(lg, rows, path):
                    position that DID have members is guaranteed "shown" > 0
                    by _allocate_page - if this call fails to write a
                    position's title at all, that is the bug this stats dict
+        intel    - {"rows": n, "budget": n} for the second worksheet; see
+                   INTEL_ROW_BUDGET. `intel` (the argument) is the
+                   `sffl.render.intel.IntelFacts` that sheet states, built by
+                   the caller from the run that priced this board. Passing
+                   None gathers what can be derived from `lg` and `rows`
+                   alone, which is a legend without the market and fit
+                   figures - never a legend quoting stale ones.
                    is here to catch, not a valid outcome.
     A full board never needs this - see the caller (`sffl.cli.cmd_render`)
     for how it's reported.
@@ -959,6 +1263,15 @@ def render_xlsx(lg, rows, path):
     _apply_grid(ws, last_row)
     _apply_pos_colours(ws, last_row)
 
+    # The legend, on its own sheet in the same workbook, and written LAST.
+    # Nothing above this line may depend on it, and it may not perturb the
+    # board: openpyxl hands out style and shared-string indices in write
+    # order, so a sheet added after a finished board leaves the board's
+    # worksheet XML byte-identical (test_the_board_sheet_is_untouched_by_the
+    # _intel_sheet pins that).
+    facts = intel if intel is not None else intel_mod.gather(lg, rows)
+    intel_rows = _write_intel_sheet(wb, facts)
+
     wb.save(path)
 
     written = {}
@@ -977,4 +1290,5 @@ def render_xlsx(lg, rows, path):
         "total": len(rows),
         "overall": {"shown": len(overall_shown), "cut": len(overall_cut)},
         "sections": sections,
+        "intel": {"rows": intel_rows, "budget": INTEL_ROW_BUDGET},
     }

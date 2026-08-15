@@ -15,6 +15,7 @@ from sffl.league import load_league
 from sffl.market import assign_expected_prices, fit_price_curve
 from sffl.plan import pick_range, plan_bids, tie_cells
 from sffl.pool import build_pool, score_season_calibrated
+from sffl.render.intel import gather as gather_intel
 from sffl.render.pdf import render_pdf
 from sffl.render.rows import DEFAULT_BYES, build_rows, load_byes
 from sffl.render.xlsx import render_xlsx
@@ -333,7 +334,7 @@ def cmd_render(args):
     result = _value_pool(lg, args)
     if result is None:
         return 1
-    pool, _curve, _prices = result
+    pool, curve, prices = result
 
     rows = _board_rows(lg, pool, args)
 
@@ -351,7 +352,15 @@ def cmd_render(args):
         pages = render_pdf(lg, rows, args.pdf, outcomes=outcomes)
         print("wrote %s (%d pages)" % (args.pdf, pages))
     if args.xlsx:
-        stats = render_xlsx(lg, rows, args.xlsx)
+        # The workbook's second sheet states what the board's numbers mean and
+        # how far they can be trusted, for whoever is drafting from it. Every
+        # figure on it is measured from THIS run - the pool, the observed
+        # prices, the fitted curve and the tracked bid history - so it cannot
+        # quote a number the board beside it does not support. A fact this run
+        # did not produce is reported as not measured, never as a stale
+        # constant. See sffl.render.intel.
+        facts = gather_intel(lg, rows, pool=pool, prices=prices, curve=curve)
+        stats = render_xlsx(lg, rows, args.xlsx, intel=facts)
         print("wrote %s" % args.xlsx)
         # render_xlsx truncates to a hard two-page row budget (derived from
         # page geometry, not a hardcoded player count - see
@@ -372,6 +381,12 @@ def cmd_render(args):
                 print("  %s: %d of %d shown (%d cut)" % (title, sec["shown"], total, sec["cut"]))
             else:
                 print("  %s: all %d shown, nothing cut" % (title, sec["shown"]))
+        # The legend sheet cannot overflow silently - render_xlsx raises if it
+        # would need a second page - so this is a headroom report, not a
+        # warning: how much room is left for another paragraph.
+        it = stats["intel"]
+        print("  Key & Intel: one page, %d of %d rows used"
+              % (it["rows"], it["budget"]))
 
     return 0
 

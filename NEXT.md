@@ -112,6 +112,18 @@ plus `--pdf output/x.pdf --xlsx output/x.xlsx`.
 `# | PLAYER | TM/BYE | MY$ | EST$ | PAID`. Six bookmarks. Footer carries the EST$-is-a-floor
 caveat.
 
+**Excel — 3 printed pages in 2 SHEETS.** `Board` is the board (2 pages, 126 rows, unchanged);
+`Key & Intel` is a third page in the same workbook — what the columns mean, what this room
+pays, where the model is weak, and how round one works, for the **surrogate drafting on
+2026-08-26 while Jeff travels**. Jeff owns the BID; the surrogate owns the SELECTION, and the
+sheet is intel for a peer, not an instruction list. Every figure on it is derived from the run
+that printed the board (`src/sffl/render/intel.py`); a figure the run cannot produce prints as
+"not measured", never as a stale constant. Its one-page fit is arithmetic on the same geometry
+as the board's (41 of 45 rows used on the production extract) and `render_xlsx` raises rather
+than spilling onto a fourth page. Only three numbers are hardcoded — the 18 players/301
+player-weeks behind the calibration curves (a *comment* in `calibration/2025.yaml`, pinned by
+a test) and the direction of the TQB residuals (BAL/WAS/PHI under, DAL/CIN/MIN over).
+
 **Excel — 2 pages**, the 2022 template's shape. **126 rows is the budget**: 63 rows/page at
 the template's 9.95pt row height, landscape letter, 97% scale. Jeff's 2022 file is 118 rows —
 it was ALWAYS a curated cheat sheet, never the full pool. 520 players need ~174 rows even
