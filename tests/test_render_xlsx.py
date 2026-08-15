@@ -4,7 +4,7 @@ import zipfile
 
 import openpyxl
 import pytest
-from openpyxl.utils import coordinate_to_tuple
+from openpyxl.utils import coordinate_to_tuple, get_column_letter
 
 from sffl.league import load_league
 from sffl.render.rows import BoardRow
@@ -976,6 +976,242 @@ def test_no_title_is_wider_than_the_group_it_sits_in(tmp_path):
 # --------------------------------------------------------------------------
 # Kicker / Team Defense depth.
 # --------------------------------------------------------------------------
+
+# --------------------------------------------------------------------------
+# The second worksheet: Key & Intel.
+# --------------------------------------------------------------------------
+
+def _intel_sheet(path):
+    from sffl.render.xlsx import INTEL_SHEET_TITLE
+    return openpyxl.load_workbook(path)[INTEL_SHEET_TITLE]
+
+
+def _flat_text(ws):
+    """Every string on the sheet as one line of text.
+
+    The line breaks inside a cell are this module's own wrapping, not part of
+    the sentence, so they are flattened before anything is matched against
+    them - otherwise an assertion about a phrase would pass or fail on where
+    the wrap happened to fall."""
+    return re.sub(r"\s+", " ", " ".join(
+        str(c.value) for row_cells in ws.iter_rows() for c in row_cells
+        if c.value is not None))
+
+
+def test_the_workbook_carries_a_second_intel_sheet(tmp_path):
+    # The legend goes in the SAME file as the board - one thing to print, and
+    # nothing that can be separated from what it explains - but on its own
+    # sheet, because the board is full at 126 rows and every legend line
+    # written into it would have cost a player.
+    from sffl.render.xlsx import INTEL_SHEET_TITLE
+
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, board(), path)
+    wb = openpyxl.load_workbook(path)
+
+    assert wb.sheetnames == ["Board", INTEL_SHEET_TITLE]
+    # Board stays the sheet the file opens on, and every other test in this
+    # module reads `.active` on that assumption.
+    assert wb.active.title == "Board"
+
+
+def test_the_intel_sheet_prints_on_exactly_one_page(tmp_path):
+    # Arithmetic against the same page geometry the board's 126-row budget
+    # comes from, not a guess: sum the row heights actually applied, undo the
+    # print scale, and compare to the printable height of one landscape
+    # letter sheet. Same for the columns against its width.
+    from sffl.render.xlsx import (INTEL_LINE_PT, INTEL_ROW_BUDGET,
+                                  MARGIN_BOTTOM_IN, MARGIN_TOP_IN,
+                                  PAGE_HEIGHT_IN, SCALE_PCT, _column_px,
+                                  _printable_width_px)
+
+    path = str(tmp_path / "board.xlsx")
+    stats = render_xlsx(LG, board(), path)
+    ws = _intel_sheet(path)
+
+    # A merged paragraph puts its text in the TOP-LEFT cell only, so the rows
+    # under it read as empty - the sheet's real extent is the bottom of the
+    # last merge, not the last cell carrying a value.
+    last = max([r for r in range(1, ws.max_row + 1)
+                if any(ws.cell(r, c).value not in (None, "")
+                       for c in range(1, 6))]
+               + [m.max_row for m in ws.merged_cells.ranges])
+    assert stats["intel"]["rows"] == last
+    assert last <= INTEL_ROW_BUDGET
+
+    printed_pt = 0.0
+    for r in range(1, last + 1):
+        height = ws.row_dimensions[r].height
+        assert height == INTEL_LINE_PT, (
+            "row %d is %s pt, not the %s the one-page budget is computed from"
+            % (r, height, INTEL_LINE_PT))
+        printed_pt += height * (SCALE_PCT / 100.0)
+    printable_pt = (PAGE_HEIGHT_IN - MARGIN_TOP_IN - MARGIN_BOTTOM_IN) * 72.0
+    assert printed_pt <= printable_pt, (
+        "the intel sheet prints %.1f pt tall against %.1f pt of page"
+        % (printed_pt, printable_pt))
+
+    widths = [ws.column_dimensions[get_column_letter(c)].width
+              for c in range(1, 6)]
+    assert sum(_column_px(w) for w in widths) <= _printable_width_px()
+
+
+def test_the_intel_sheet_refuses_to_run_onto_a_second_page(tmp_path,
+                                                           monkeypatch):
+    # Wrong output must never be produced silently, and a legend whose last
+    # paragraph is on a page nobody printed is wrong output. Shrink the budget
+    # so the same content overflows it.
+    from sffl.render import xlsx as xlsx_mod
+
+    monkeypatch.setattr(xlsx_mod, "INTEL_ROW_BUDGET", 12)
+    with pytest.raises(ValueError) as e:
+        render_xlsx(LG, board(), str(tmp_path / "board.xlsx"))
+    assert "one page" in str(e.value) or "second sheet" in str(e.value)
+
+
+def test_the_board_sheet_is_untouched_by_the_intel_sheet(tmp_path,
+                                                          monkeypatch):
+    # THE INVARIANT: adding a second worksheet must not move a byte of the
+    # first. openpyxl hands out style and shared-string indices in write
+    # order, so this holds only while the intel sheet is written strictly
+    # after the board is finished - which is exactly what a future edit could
+    # break by, say, defining the legend's fonts earlier. Render the same
+    # board with and without the second sheet and compare the board's own
+    # worksheet XML byte for byte.
+    from sffl.render import xlsx as xlsx_mod
+
+    rows = big_board()
+    with_intel = str(tmp_path / "with.xlsx")
+    render_xlsx(LG, rows, with_intel)
+
+    monkeypatch.setattr(xlsx_mod, "_write_intel_sheet", lambda wb, facts: 0)
+    without = str(tmp_path / "without.xlsx")
+    render_xlsx(LG, rows, without)
+
+    def board_xml(path):
+        with zipfile.ZipFile(path) as z:
+            return z.read("xl/worksheets/sheet1.xml")
+
+    assert openpyxl.load_workbook(without).sheetnames == ["Board"]
+    assert board_xml(with_intel) == board_xml(without)
+
+
+def test_the_intel_sheet_carries_every_section_of_the_briefing(tmp_path):
+    from sffl.render import intel as intel_mod
+
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, board(), path)
+    ws = _intel_sheet(path)
+
+    written = set()
+    for r in range(1, ws.max_row + 1):
+        for c in range(1, 6):
+            v = ws.cell(r, c).value
+            if isinstance(v, str):
+                written.add(v)
+
+    facts = intel_mod.gather(LG, board())
+    assert intel_mod.title(facts) in written
+    for heading, items in intel_mod.sections(facts):
+        assert heading in written, "%s never reached the sheet" % heading
+        for term, _text in items:
+            assert term in written, "%s's term %r is missing" % (heading, term)
+
+
+def test_no_prose_on_the_intel_sheet_can_overflow_its_cell(tmp_path):
+    # The board shipped with exactly this defect once - a title written into a
+    # 2.8-unit cell, spilling through its neighbours - and it was fixed by
+    # merging. Prose is far longer than any title, so every paragraph here is
+    # wrapped to a computed width, written with its line breaks already in it,
+    # merged down as many rows as it has lines, and told to wrap on top of
+    # that. All four, or a line goes missing on paper.
+    from sffl.render.xlsx import (INTEL_BODY_PT, INTEL_TEXT_WIDTH,
+                                  _chars_per_line)
+
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, board(), path)
+    ws = _intel_sheet(path)
+
+    spans = {}
+    for m in ws.merged_cells.ranges:
+        spans[(m.min_row, m.min_col)] = (m.max_row - m.min_row + 1,
+                                         m.max_col - m.min_col + 1)
+
+    limit = _chars_per_line(INTEL_TEXT_WIDTH, INTEL_BODY_PT)
+    checked = 0
+    for text_col in (2, 5):
+        for r in range(1, ws.max_row + 1):
+            value = ws.cell(r, text_col).value
+            if not isinstance(value, str) or not value:
+                continue
+            lines = value.split("\n")
+            for line in lines:
+                assert len(line) <= limit, (
+                    "row %d column %d has a %d-character line against a %d "
+                    "limit: %r" % (r, text_col, len(line), limit, line))
+            rows_used = spans.get((r, text_col), (1, 1))[0]
+            assert rows_used == len(lines), (
+                "row %d column %d draws %d lines in %d row(s) - the rest is "
+                "clipped" % (r, text_col, len(lines), rows_used))
+            assert ws.cell(r, text_col).alignment.wrap_text
+            assert ws.cell(r, text_col).alignment.vertical == "top"
+            checked += 1
+    assert checked >= 10, "only %d paragraphs checked" % checked
+
+
+def test_the_intel_sheet_prints_like_the_board(tmp_path):
+    from sffl.render.xlsx import (MARGIN_LEFT_IN, MARGIN_RIGHT_IN, SCALE_PCT)
+
+    path = str(tmp_path / "board.xlsx")
+    render_xlsx(LG, board(), path)
+    wb = openpyxl.load_workbook(path)
+    ws = _intel_sheet(path)
+
+    assert ws.page_setup.orientation == "landscape"
+    assert ws.page_setup.scale == SCALE_PCT
+    assert ws.sheet_view.showGridLines is False
+    for cell in ("A6", "B7"):
+        assert ws[cell].font.name == "Calibri"
+
+    # The width arithmetic above is only sound while these are the margins the
+    # BOARD prints with too - they are the geometry both sheets share.
+    board_ws = wb["Board"]
+    assert board_ws.page_margins.left == MARGIN_LEFT_IN
+    assert board_ws.page_margins.right == MARGIN_RIGHT_IN
+
+
+def test_the_intel_sheet_states_the_run_it_was_rendered_from(tmp_path):
+    # Passing facts gathered from a priced run must put THOSE numbers on the
+    # page; passing none must leave the market sentences unquoted rather than
+    # printing a stale figure.
+    from sffl.render import intel as intel_mod
+    from sffl.schema import PlayerProjection
+
+    rows = board()
+    pool = []
+    for name, pos, dollars in (("Alpha", "TQB", 30.0), ("Bravo", "RB", 12.0)):
+        p = PlayerProjection(name=name, team="GB", pos=pos, source="t",
+                             source_year=2026, games=17.0)
+        p.stats["_dollars"] = dollars
+        pool.append(p)
+    prices = {"alpha": 20.0, "bravo": 10.0}
+    facts = intel_mod.gather(LG, rows, pool=pool, prices=prices,
+                             curve=(2.248, 0.551))
+
+    priced = str(tmp_path / "priced.xlsx")
+    render_xlsx(LG, rows, priced, intel=facts)
+    text = _flat_text(_intel_sheet(priced))
+    assert "2.25 x value^0.55" in text
+    # The pool errors are this run's own: |30-20| for the one Team QB join,
+    # |12-10| for the one skill join. Nothing here is a remembered $8.98.
+    assert "by $10 on average (n=1) against $2 for the skill pool (n=1)" in text
+
+    bare = str(tmp_path / "bare.xlsx")
+    render_xlsx(LG, rows, bare)
+    text = _flat_text(_intel_sheet(bare))
+    assert "fitted no price curve" in text
+    assert "value^" not in text
+
 
 def test_k_and_dst_depth_follows_the_one_constant(tmp_path, monkeypatch):
     # Jeff wants more than twelve of each. K_DST_DEPTH is the single dial;
