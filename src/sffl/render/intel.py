@@ -34,15 +34,15 @@ from sffl.silent import (DEFAULT_BIDS, bids_for_rank, load_bid_history,
 from sffl.value import _pool_of
 
 # HARDCODED, AND WHY. `calibration/2025.yaml` records its own provenance in a
-# generated comment - "# Data: 18 distinct players, 301 player-weeks" - and
+# generated comment - "# Data: N distinct players, M player-weeks" - and
 # yaml.safe_load throws comments away, so no consumer of that file can read it
 # back. Parsing a comment out of a data file to put a number on a printed page
 # is worse than stating it here: the failure mode of a changed comment format
 # would be a wrong number, not a missing one. `test_the_calibration_provenance
 # _matches_the_curve_file` reads that header and fails if these drift from it,
 # so the file and the page cannot disagree unnoticed.
-CALIBRATION_PLAYERS = 18
-CALIBRATION_PLAYER_WEEKS = 301
+CALIBRATION_PLAYERS = 48
+CALIBRATION_PLAYER_WEEKS = 811
 
 # HARDCODED, AND WHY. The direction of Team QB's residuals is not something any
 # shipped function computes: it came out of a one-off analysis of the 2025
