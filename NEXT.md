@@ -6,7 +6,12 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 
 Auction cheatsheet pipeline for the STRIPES Fantasy Football League (CBS). Four plans;
 **all four plans are merged and done.** Valuation is validated against real prices; both
-artifacts render. What remains is Jeff's markup list, TODO B, and the 08-23 data refresh.
+artifacts render. **TODO B is done and answered NO** (see below). What remains is the
+08-21→08-23 data refresh, which needs Jeff at the Mac.
+
+**Jeff is not attending the auction.** A surrogate drafts for him on 08-26. **Jeff owns the
+BID; the surrogate owns the SELECTION.** The Excel + `Key & Intel` sheet is the deliverable;
+the PDF/iPad path is no longer the primary artifact and no annotation app needs buying.
 
 | | Status |
 |---|---|
@@ -34,16 +39,17 @@ PYTHONPATH=src ./.venv/bin/python -m sffl.cli value \
 ```
 
 543 players, TQB=32. Every row carries **MY$** (worth against replacement) and **EST$**
-(what the room will pay). Nothing renders it yet — that is plan 3.
+(what the room will pay). Swap `value` for `render` and add `--pdf`/`--xlsx` to write the
+artifacts — that is the command to run on 08-21.
 
-## GOAL THIS WEEK — a full dry run
+## GOAL — the dry run is DONE. What is left is the refresh.
 
-Produce **real Excel and PDF cheatsheets from today's archived extracts**, end to end,
-before 2026-08-10. Everything must work on current data so the week of 08-23 is a pure
-data refresh with no code changes and no surprises.
+The dry run's purpose was to make the week of 08-23 a pure data swap with no code changes
+and no surprises. **That is achieved**: both artifacts generate end to end from archived
+extracts, at the best fit measured (mae $5.66, top10_mae $11.22).
 
-Done means: `sffl` reads an extract, values the pool, and writes both artifacts — and
-Jeff has marked up the PDF on the iPad and printed the Excel.
+Done now means: Jeff re-pulls both extracts Fri 08-21 → Sun 08-23, re-runs one command,
+prints the Excel, and sends it to the surrogate with his sealed bid decided.
 
 ### Current position
 
@@ -55,51 +61,52 @@ Update this block at the end of every session so the next one can resume blind.
 - [x] Lineup floors — 1 RB and 1 WR/TE enforced at flex replacement
 - [x] Market calibration — EST$ (what the room pays) beside MY$ (what he's worth), 165 tests
 - [x] **Plan 3 — renderers MERGED** (203 tests). PDF 17 pages, Excel 2 pages
-- [ ] **Full dry run** — review the PDF on the iPad, print the Excel. THE 08-10 GOAL
+- [x] **Full dry run — DONE.** Both artifacts generate end to end from archived extracts.
+      The 08-21 refresh is now a pure data swap with no code changes, which was the point.
 - [x] Plan 4 — silent auction planner MERGED. 5 years of real bids on the management page
-- [ ] **Excel format fixes — Jeff's review, 2026-08-05**  <- NEXT
-      1. **No cell borders or fills.** The 2022 template has 2,444 bordered cells and 138
-         fills; ours has ZERO of each. The spec recorded "gridlines off" from
-         `showGridLines: False` — that is the SCREEN setting and is true of the template
-         too. The template switches Excel's gridlines off and draws EXPLICIT CELL BORDERS,
-         which is what makes it read as a ruled table. Widths and fonts were captured; the
-         borders were missed entirely. The 138 fills are the tier shading.
-      2. **Section boundaries do not align to the page break** (after row 63). Our OVERALL
-         ends at row 64 — one row onto page 2. Template ends at 59, clean.
-      3. **Positions interleave across the break.** Our g3 has RECEIVERS at rows 54-98,
-         starting 10 rows before the page edge and running deep into page 2, so page 1
-         reads RB-then-WR and page 2 gives more RB. Template's g3 WR block is rows 60-70
-         and its long continuations live in g1/g2. Give a position's continuation
-         contiguous space instead of interleaving.
-      Widths, fonts and the three column groups stay as they are.
-- [ ] Any further PDF/Excel changes from Jeff's iPad review
-- [ ] **Dry-run the PDF in iAnnotate 4** ($9.99 one-time, researched 2026-08-08). Verify:
-      (1) all six bookmarks appear as tappable navigation — if they do NOT, the bookmarks
-      are dead weight and should come out of `pdf.py`; (2) the 33pt PAID box holds a
-      legible two-digit price at speed; (3) ink survives backgrounding the app, since the
-      CBS app gets switched to during the draft.
-
-      **Why iAnnotate over the obvious choices.** The decisive requirement is navigating
-      the PDF's OWN embedded outline. GoodNotes 6 ($29.99 lifetime — cost was not the
-      objection) is a notebook app: it imports a PDF as pages under its own bookmark
-      system, and its own feedback thread has users reporting imported outlines are lost,
-      with ordering bugs still open years after the request was closed. PDF Expert handles
-      outlines properly but is $79.99/yr or $199.99 lifetime. Apple's built-in Markup is
-      free and Pencil-capable but has no outline sidebar — fine as a fallback.
-      Notability fails on three counts: recurring at every usable tier ($19.99/yr Plus,
-      $99/yr Pro) with NO lifetime option; its free Starter tier has an UNDISCLOSED edit
-      cap ("Notability doesn't disclose how many edits you can make" — Paperlike), which
-      is the worst possible property for a two-hour draft with several hundred marks; and
-      it advertises "PDF hyperlink navigation", which is not confirmed to mean embedded
-      outline navigation. Good app, optimised for lecture notes, not structured reference.
-      iAnnotate 4 navigates by thumbnails/bookmarks/annotations/search with an outline
-      view, and auto-detects the Pencil with no tool switching: annotate with the Pencil,
-      pan and scroll with fingers. Known nit: erasing needs a finger tap first.
-      NOT VERIFIED — researched only; no iPad available to this session.
-- [ ] TODO B — widen the weekly collection to ~120 players (needs `claude --chrome`)
-      **Jeff confirmed 2026-08-04 this IS still needed** — first pass with this scoring
-      model, so 18 players is too thin to trust curves that shape every value
+- [x] **Excel format fixes — Jeff's review 2026-08-05, all three FIXED 2026-08-06.**
+      Every one was found by opening the generated file, not by a test; all three are now
+      asserted so they cannot regress.
+      1. **Cell borders and fills were missing entirely.** The spec had recorded "gridlines
+         off" from `showGridLines: False` — that is the SCREEN setting, true of the template
+         too. The template switches Excel's gridlines off and draws **explicit cell
+         borders**, which is what makes it read as a ruled table. **Keep this trap in mind
+         for any future template work: `showGridLines` tells you nothing about how a sheet
+         looks printed.** Now draws 2,388 thin-bordered cells.
+      2. Section boundaries now align to the page break after row 63.
+      3. Positions no longer interleave across the break, and blocks fill **left to right**
+         — WR1 was landing to the right of WR29.
+      Widths, fonts and the three column groups are unchanged.
+- [x] **K and DST depth raised** — the list had been trimmed to 12 each.
+- [~] **iPad/PDF annotation — DROPPED, do not spend money here.** Jeff has work travel the
+      night of the auction and is not attending, so nothing gets marked up on an iPad. The
+      PDF still generates and is still useful as a printed reference for the surrogate; only
+      the annotation-app purchase is off. Research is kept in git history if it ever returns
+      (conclusion was iAnnotate 4 at $9.99 one-time, chosen because it navigates the PDF's
+      own embedded outline — GoodNotes loses imported outlines, PDF Expert is $79.99/yr, and
+      Notability has an undisclosed free-tier edit cap).
+- [x] **TODO B — DONE 2026-08-18, and the answer is NO.** Scraped 1,428 more weekly rows
+      (84 players: WR/TE/DST/TQB) via Chrome, hitting the ~120-player target. **The wider
+      curves measured WORSE and are not shipped.** Full reasoning below under *TODO B —
+      ANSWERED*. Shipping 48 players / 811 player-weeks (18 seed + 30 stratified RB).
+- [ ] **THE ONLY REMAINING WORK — the data refresh. Needs Jeff, Fri 08-21 → Sun 08-23.**
+      1. Re-pull the **Draft Sharks** extract. **Confirm it still reads AUCTION, not Snake** —
+         every sync imports as Snake, and a reverted setting yields a plausible-looking file
+         with a worthless value column.
+      2. Re-pull the **Footballguys** extract.
+      3. Drop both in `data/extracts/<vendor>/2026/`, then re-run the render command in
+         "What works today" with `--pdf`/`--xlsx`. **No code changes are needed** — that is
+         what the dry run bought. Print the Excel, send it to the surrogate.
+      4. Spot-check `leagues/nfl-byes-2026.yaml` — the one file sourced outside the pipeline.
+- [ ] **Jeff's sealed bid.** Recommendation is **$42** (top-3 zone) over $27 (bottom-4);
+      Jeff leaned middle-to-bottom. Not settled. See SILENT AUCTION below.
+- [ ] **Room intel** — a few sentences from Jeff on who overbids, who hoards RBs, etc.,
+      to fold into the `Key & Intel` sheet. Nothing else on that sheet needs him.
+- [ ] **Read the Nacua injury headline.** He is the #1 name on the board, so it bears
+      directly on both the bid and what the surrogate should target.
 - [ ] Clean licensed values out of the two tracked fixtures (see FOLLOW-UP below)
+- [ ] **Add a lost-fumble term to `leagues/sffl/2026.yaml`** — found 2026-08-18, see below.
+      Low urgency: it does not touch any banded stat, so no curve or price moves.
 
 Work top to bottom. Each unchecked box is the next thing to do.
 
@@ -120,7 +127,7 @@ sheet is intel for a peer, not an instruction list. Every figure on it is derive
 that printed the board (`src/sffl/render/intel.py`); a figure the run cannot produce prints as
 "not measured", never as a stale constant. Its one-page fit is arithmetic on the same geometry
 as the board's (41 of 45 rows used on the production extract) and `render_xlsx` raises rather
-than spilling onto a fourth page. Only three numbers are hardcoded — the 18 players/301
+than spilling onto a fourth page. Only three numbers are hardcoded — the 48 players/811
 player-weeks behind the calibration curves (a *comment* in `calibration/2025.yaml`, pinned by
 a test) and the direction of the TQB residuals (BAL/WAS/PHI under, DAL/CIN/MIN over).
 
@@ -156,12 +163,15 @@ not the source.
 |---|---|
 | 2026-08-03 | Plan 1 merged. Extracts archived to iCloud as insurance. |
 | 2026-08-04 | Plan 2 merged. K/DST at $1, 154 of 156 prices joining, lineup floors, MY$/EST$ two-column board. |
-| **by 2026-08-10** | **Full dry run complete** — plans 2-4 built and both artifacts generated from today's data. |
-| **week of 2026-08-23** | **Re-pull fresh extracts** from Draft Sharks and Footballguys for final rankings. Confirm Draft Sharks still reads **AUCTION**, not Snake — every sync imports as Snake and a reverted setting yields a plausible file with a worthless value column. |
-| **2026-08-26** | **AUCTION.** Excel and PDF must be generated and printed/loaded before this. |
+| 2026-08-06 | Plans 3 and 4 merged. Excel format fixes from Jeff's review. |
+| 2026-08-18 | ✅ **Full dry run complete.** TODO B answered NO — wider curves measured worse. Board at mae $5.66 / top10 $11.22. |
+| **Fri 2026-08-21 → Sun 2026-08-23** | **THE REFRESH — needs Jeff at the Mac.** Re-pull fresh extracts from Draft Sharks and Footballguys. Confirm Draft Sharks still reads **AUCTION**, not Snake — every sync imports as Snake and a reverted setting yields a plausible file with a worthless value column. Re-run `sffl render`, print the Excel. |
+| **Sun 2026-08-23** | **HARD DEADLINE. Everything must be baked** — Jeff leaves early Tue 08-25. |
+| 2026-08-25 | Jeff travels. |
+| **2026-08-26** | **AUCTION.** Jeff is absent; the surrogate drafts from the printed Excel + `Key & Intel`. Jeff's sealed bid must be submitted by him beforehand. |
 
-The dry run exists so the 08-23 refresh is a data swap. Do not leave the renderers
-until after the refresh — build them against today's archived extracts.
+Nothing in the pipeline blocks the refresh — it is a data swap by design. The remaining
+risk is entirely on the 08-21 re-pull, and specifically on the AUCTION/Snake setting.
 
 ## Facts a fresh session must NOT re-derive
 
@@ -271,10 +281,10 @@ player data) generated by `poc/build_calibration.py`.
 1. **`consensus.py` is written, tested, and wired to nothing.** The `value` command reads
    one extract. Merging Draft Sharks + Footballguys into a consensus with the spread
    preserved is the single biggest remaining edge and is not yet reachable from the CLI.
-2. **The calibration curves rest on 18 players** (301 player-weeks) — that is TODO B.
-   `expected_points` clamps silently outside the observed range, and `rec_yds` currently
-   interpolates a straight line across a 66-yard gap with no observations in it, which is
-   where most of the board lives.
+2. **The calibration curves rest on 48 players** (811 player-weeks). **This is settled —
+   widening it was tried and measured worse; see TODO B — ANSWERED.** `expected_points`
+   still clamps silently outside the observed range. The remaining improvement is a
+   *fitted* curve, not more points.
 3. Sacks are still uncorrected (see Open questions).
 
 ### Plan 3 — decisions Jeff settled on 2026-08-04
@@ -482,20 +492,56 @@ Consequences:
    bidding from above.
 3. **Plan 4 should quote the empirical rank->bid table above, not infer from the curve.**
 
-## TODO B — widen the weekly collection (a data chore, NOT a plan)
+## TODO B — ANSWERED 2026-08-18. More weekly data does NOT improve the curves.
 
-**Full detail is in the spec** under *"TODO: Widen the Weekly Collection"* — target,
-method, the JS that works, the trap that wasted three attempts, and the integrity check.
+**Do not redo this. Do not "finish widening the collection."** It was finished, measured,
+and rejected on the evidence.
 
-Short version: the calibration curves are currently built from 18 players. That proves
-the mechanism but is too thin to trust the curves. Target ~120 players spanning the
-range of per-game means. It is mechanical browser work needing none of the design
-context, which is exactly why it belongs in its own session.
+The collection was widened to the spec's ~120-player target: 1,428 rows scraped from CBS
+for 84 more players (WR/TE/DST/TQB) on top of the 30 RBs, giving 2,239 player-weeks across
+120 players. The curves got far denser — `rush_yds` 13 → 77 points, `rec_yds` 9 → 61,
+`def_pa` 3 → 19, `pass_yds` 4 → 31.
 
-Requires launching with `claude --chrome` — browser tools are off by default.
+**They also got worse.** Held out on players *no* candidate curve had been built from, the
+18-player curve beat the widened curve on **6 of 7 banded stats** (mean abs error):
 
-Do TODO A first if you only have appetite for one; the code is identical whether the
-curves come from 18 players or 120, and widening later changes no code.
+| stat | n | naive band | 18-player | widened |
+|---|---|---|---|---|
+| rush_yds | 289 | 0.181 | **0.074** | 0.085 |
+| rec_yds | 205 | 0.137 | **0.053** | 0.072 |
+| rec_ct | 205 | 0.264 | **0.075** | 0.101 |
+| pass_yds | 84 | 0.443 | **0.150** | 0.173 |
+| pass_cmp | 84 | 0.361 | 0.144 | **0.107** |
+| def_pa | 53 | 0.716 | **0.120** | 0.143 |
+| def_ya | 53 | 0.495 | **0.106** | 0.155 |
+
+The price fit agreed: top10_mae **$11.22** (48-player) < $11.24 (18) < $11.32 (120), and
+TQB mae degraded $8.98 → $9.95.
+
+**Why, and this is the part worth keeping:** each curve point is *one player's whole noisy
+season*, not one observation. Adding points lets the piecewise-linear interpolation chase
+individual players' variance instead of the underlying mean-to-points relationship. More
+data would help a *fitted* curve; it hurts a *interpolated* one. Smoothing and
+usage-filtering (floors of 0/2/4 fpg) were both tried and neither recovered it.
+
+**Shipped: 48 players, 811 player-weeks** — the 18 seed plus 30 stratified RBs. Best on
+BOTH accuracy (0.683 vs 0.693 held out) and price fit. `calibration/2025.yaml`'s header
+comment records this and a test pins it.
+
+The 84 extra players' rows are kept at `data/weekly/2025/_held_back/` (gitignored) with a
+README repeating this reasoning. They are real and expensive to re-collect. **The right way
+to use them is a fitted/regularised curve rather than raw interpolation — a genuine
+follow-up, and a good one, but not an auction-week change.**
+
+### Also found while checking the new data — a real scoring gap
+
+An integrity check over all 2,239 rows found exactly **2 over-scoring rows** (Cooper Kupp
+wk7, Chris Olave wk4), both off by exactly **−1**. Cause: **the league penalises a lost
+fumble ~−1, and `leagues/sffl/2026.yaml` has no offensive fumble term at all.**
+
+Real, but low urgency: fumbles touch no banded stat, so no curve and no price moves. It is
+a small negative on a handful of players. Fix it with the 2026 rules pass, not this week.
+**Note this is a league-YAML gap, NOT a `scoring.py` bug** — the engine stays untouched.
 
 ## Open questions
 
