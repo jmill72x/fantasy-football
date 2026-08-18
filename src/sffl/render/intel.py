@@ -29,9 +29,16 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 from sffl.identity import normalize_name
+from sffl.render.rows import overall_board
 from sffl.silent import (DEFAULT_BIDS, bids_for_rank, load_bid_history,
                          years_on_record)
 from sffl.value import _pool_of
+
+# How many of the top OVERALL names the "if the news moves" item reasons over.
+# Four is the shallowest depth that can show a drop-off if there is one: it
+# spans the whole top-3 zone a high sealed bid buys, plus the first name past
+# it. See `_top_cluster`.
+TOP_CLUSTER_DEPTH = 4
 
 # HARDCODED, AND WHY. `calibration/2025.yaml` records its own provenance in a
 # generated comment - "# Data: N distinct players, M player-weeks" - and
@@ -82,6 +89,10 @@ class IntelFacts(object):
 
     # From the board rows.
     top_est_price: Optional[float] = None
+    # The top few OVERALL names as (name, MY$), best first. Feeds the one item
+    # on the page about a board that has gone stale between printing and
+    # auction day - see `_the_silent_pick`.
+    top_cluster: Tuple[Tuple[str, float], ...] = ()
 
     # From the market fit (a run with --prices).
     curve: Optional[Tuple[float, float]] = None
@@ -103,6 +114,16 @@ class IntelFacts(object):
     # (rank, lowest bid that bought it, highest bid that bought it)
     rank_bids: List[Tuple[int, int, int]] = field(default_factory=list)
     floor_ranks: Tuple[int, ...] = ()
+
+
+def _top_cluster(rows):
+    """The top few OVERALL names as (name, MY$), best first.
+
+    Ranked through `overall_board` rather than by re-sorting `rows` here, so
+    this cannot disagree with the block the page tells the drafter to read.
+    """
+    return tuple((r.name, float(r.my_dollars))
+                 for r in overall_board(rows)[:TOP_CLUSTER_DEPTH])
 
 
 def _mae_by_pool(pool, prices):
@@ -202,6 +223,8 @@ def gather(lg, rows, pool=None, prices=None, curve=None, history=None,
     ests = [r.est_price for r in rows if r.est_price is not None]
     if ests:
         facts.top_est_price = max(ests)
+
+    facts.top_cluster = _top_cluster(rows)
 
     if curve is not None:
         facts.curve = (float(curve[0]), float(curve[1]))
@@ -380,7 +403,9 @@ def _model_weakness(f):
     items.append(("Curves",
                   "The scoring calibration behind every projection is built "
                   "from %d players of 2025 weekly data (%d player-weeks). "
-                  "Enough to prove the mechanism, thin enough to hold loosely."
+                  "Widening it further was tried and measured WORSE, so this "
+                  "is the depth that fits best, not the depth we ran out of "
+                  "time to improve."
                   % (CALIBRATION_PLAYERS, CALIBRATION_PLAYER_WEEKS)))
 
     items.append(("DST sacks",
@@ -410,6 +435,33 @@ def _the_silent_pick(f):
                   "TQB/RB/WR/TE, so the best available by MY$ is the highest "
                   "name on it nobody has taken. Kickers and defenses are not "
                   "in that block by design."))
+
+    # A board is priced days before it is used, and this one cannot be
+    # re-priced: Jeff travels before the auction. So the page has to say what
+    # to do about news the board could not contain. Whether the top is tight
+    # or a cliff changes that advice, so it is measured, not assumed.
+    if len(f.top_cluster) >= 2:
+        (first, top_v), (second, next_v) = f.top_cluster[0], f.top_cluster[1]
+        gap = top_v - next_v
+        span = top_v - f.top_cluster[-1][1]
+        shape = ("%s (%s) and %s (%s) are %s apart, top %d span %s"
+                 % (first, _money(round(top_v, 1)), second,
+                    _money(round(next_v, 1)), _money(round(gap, 1)),
+                    len(f.top_cluster), _money(round(span, 1))))
+        if top_v > 0 and gap >= 0.15 * top_v:
+            verdict = ("a real drop-off, so losing the top name costs more "
+                       "than one rank of value")
+        else:
+            verdict = ("no gap worth defending - a name lost off the top "
+                       "costs less than its rank suggests, the next is "
+                       "near-equivalent, not a cliff")
+        # Term stays <=10 characters - the workbook's term column is 10 units
+        # wide and `xlsx` raises rather than letting a label bleed.
+        items.append(("Snapshot",
+                      "Priced before auction night, not after: news that "
+                      "broke later is not in it, so a high rank here is not "
+                      "evidence a player is active. %s - %s."
+                      % (shape, verdict)))
 
     rank_clause = ""
     if f.rank_bids:

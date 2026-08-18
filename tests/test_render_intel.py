@@ -198,3 +198,59 @@ def test_an_empty_board_still_gathers(tmp_path):
     assert f.top_est_price is None
     with pytest.raises(KeyError):
         f.mae_by_pool["TQB"]
+
+
+def _silent_text(f):
+    """The prose of the round-one section, as one searchable string."""
+    for heading, items in intel.sections(f):
+        if "SILENT" in heading:
+            return " ".join("%s %s" % (k, v) for k, v in items)
+    raise AssertionError("no silent-auction section")
+
+
+def test_the_top_cluster_is_ranked_by_the_overall_block_not_by_raw_rows(tmp_path):
+    # The page tells the drafter to read OVERALL, so the names it reasons over
+    # must come from that same block - kickers and defenses are not in it, and
+    # a flat-priced $1 K must never be quoted as the top of the board.
+    f = intel.gather(LG, rows(), bids_path=str(tmp_path / "absent.csv"))
+    assert [n for n, _ in f.top_cluster] == ["RB 1", "WR 2", "TQB 3"]
+    assert all(not n.startswith("K ") for n, _ in f.top_cluster)
+
+
+def test_a_tight_top_tells_the_drafter_the_next_name_is_an_equivalent(tmp_path):
+    # $40 / $39 / $38: nothing worth defending at the top.
+    tight = [row(1, "RB", 40.0), row(2, "WR", 39.0), row(3, "WR", 38.0)]
+    text = _silent_text(intel.gather(LG, tight,
+                                     bids_path=str(tmp_path / "absent.csv")))
+    assert "not a cliff" in text
+    assert "real drop-off" not in text
+    # It must name the players and the gap, not speak in generalities.
+    assert "RB 1" in text and "WR 2" in text and "$1" in text
+
+
+def test_a_real_drop_off_at_the_top_is_reported_as_one(tmp_path):
+    # $40 then $20: losing the top name costs far more than one rank.
+    cliff = [row(1, "RB", 40.0), row(2, "WR", 20.0), row(3, "WR", 19.0)]
+    text = _silent_text(intel.gather(LG, cliff,
+                                     bids_path=str(tmp_path / "absent.csv")))
+    assert "real drop-off" in text
+    assert "not a cliff" not in text
+
+
+def test_the_stale_board_warning_is_unconditional(tmp_path):
+    # Whatever the shape of the top, the page must say the board predates the
+    # night. It states that as a fact about the board, never as an
+    # instruction - see test_no_bid_is_ever_named.
+    for board in ([row(1, "RB", 40.0), row(2, "WR", 39.0)],
+                  [row(1, "RB", 40.0), row(2, "WR", 20.0)]):
+        text = _silent_text(intel.gather(LG, board,
+                                         bids_path=str(tmp_path / "absent.csv")))
+        assert "Snapshot" in text
+        assert "not evidence a player is active" in text
+
+
+def test_a_board_too_short_to_compare_says_nothing_rather_than_inventing(tmp_path):
+    # One name cannot show a gap. Silence beats a fabricated reassurance.
+    text = _silent_text(intel.gather(LG, [row(1, "RB", 40.0)],
+                                     bids_path=str(tmp_path / "absent.csv")))
+    assert "Snapshot" not in text
