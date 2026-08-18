@@ -102,8 +102,18 @@ Update this block at the end of every session so the next one can resume blind.
       Jeff leaned middle-to-bottom. Not settled. See SILENT AUCTION below.
 - [ ] **Room intel** — a few sentences from Jeff on who overbids, who hoards RBs, etc.,
       to fold into the `Key & Intel` sheet. Nothing else on that sheet needs him.
-- [ ] **Read the Nacua injury headline.** He is the #1 name on the board, so it bears
-      directly on both the bid and what the surrogate should target.
+- [~] **Nacua — RULED 2026-08-18: leave him where he is** until there is a real update on
+      the injury or the suspension. Jeff's call, and it is cheap to be wrong about:
+      **Nacua $55.9 and Chase $54.6 are $1.30 apart**, ~2%, well inside the model's own
+      error. If Nacua drops out entirely, Chase slides up and the top of the board barely
+      changes shape. **The bid buys pick ORDER, not a specific player**, so the Nacua risk
+      does not move the bid.
+      The exposure is the SELECTION, and it is a calendar problem: the board freezes
+      Sun 08-23, Jeff travels 08-25, the auction is 08-26 — so news can break in a window
+      where nobody can regenerate anything. Handled in the sheet, not by picking for the
+      surrogate: `Key & Intel` now carries a **Snapshot** item stating the board predates
+      the night and measuring how tight the top is. Still worth re-checking the news on
+      08-23 before printing.
 - [ ] Clean licensed values out of the two tracked fixtures (see FOLLOW-UP below)
 - [ ] **Add a lost-fumble term to `leagues/sffl/2026.yaml`** — found 2026-08-18, see below.
       Low urgency: it does not touch any banded stat, so no curve or price moves.
