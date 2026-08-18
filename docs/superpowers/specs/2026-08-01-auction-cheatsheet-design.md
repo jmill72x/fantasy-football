@@ -559,23 +559,48 @@ Short and long tiers are equal; the middle tiers are not. A goal-line rushing TD
 the equivalent reception. Deliberate per the commissioner. The value engine must not
 assume touchdown parity across positions.
 
-## TODO: Widen the Weekly Collection (start a fresh session)
+## DONE — Widen the Weekly Collection. Executed 2026-08-18; the answer was NO.
 
-`data/weekly/2025/` is currently a **starter sample**: 18 players, 301 player-weeks,
-seeded by `poc/seed_weekly.py` from logs gathered while validating the scoring engine.
-It covers every position and is enough to build and prove the calibration curves end to
-end. It is **too thin to trust the curves themselves** — 18 players cannot span the
-range of per-game means the curves interpolate over.
+**Do not redo this.** The premise below — that 18 players is too thin and ~120 would be
+better — was reasonable, was tested, and turned out to be **wrong**. It is preserved
+because the method still works and the negative result is the valuable part.
 
-**Target: roughly 120 players** — about 30 each at RB and WR/TE, 15-20 each at TQB, K
-and DST — chosen to span low, middle and high per-game means at every position.
+The collection was widened to the full ~120-player target: 30 stratified RBs, then 84 more
+players across WR/TE/DST/TQB (1,428 rows), reaching 2,239 player-weeks. Held out on players
+that no candidate curve had been built from, **the 18-player curve beat the widened curve on
+6 of 7 banded stats**, and the price fit degraded too (top10_mae $11.22 → $11.32, TQB mae
+$8.98 → $9.95).
 
-**Method, already proven:**
+**Why the premise was wrong.** Each curve point is not an observation — it is *one player's
+entire noisy season*. Denser points therefore let the piecewise-linear interpolation chase
+individual players' variance instead of the underlying mean-to-points relationship. The
+sparse curve was accidentally regularised. Smoothing and usage-filtering (floors of 0/2/4
+fpg) were both tried and neither recovered it.
+
+**Shipped: 48 players / 811 player-weeks** — the 18 seed plus the 30 stratified RBs, best on
+both held-out accuracy and price fit. The other 84 players' rows are kept (gitignored) at
+`data/weekly/2025/_held_back/` with a README.
+
+**The real remaining improvement is a fitted or regularised curve rather than raw
+interpolation.** With that in place the held-back data becomes an asset rather than noise.
+This is a genuine follow-up and a good one — it was simply not an auction-week change.
+
+**Also found by the integrity check:** exactly 2 of 2,239 rows over-score, both by exactly
+−1 (Cooper Kupp wk7, Chris Olave wk4). **The league penalises a lost fumble and
+`leagues/sffl/2026.yaml` has no offensive fumble term.** A league-YAML gap, not a
+`scoring.py` bug. It touches no banded stat, so no curve and no price moves.
+
+**Method, proven — reusable if the collection is ever revisited:**
 
 1. Harvest player IDs per position from
-   `/stats/data-stats-report/all:<POS>/season:2025/standard/stats?print_rows=9999`,
+   `/stats/data-stats-report/all:<POS>/2025/standard/stats?print_rows=9999`,
    read with `get_page_text`. Do NOT read that table with `javascript_tool` — a content
    filter rejects the response.
+
+   **TRAP, cost real time on 2026-08-18:** the `season:2025` prefix shown in earlier drafts
+   of this spec **silently returns all zeros** now that the site has rolled over to 2026.
+   The working form omits the prefix: `/all:RB/2025/`. A zeroed table looks like a valid
+   empty result, not an error.
 2. Fetch each game log from inside the page with `javascript_tool`, which works and is
    far cheaper than navigating per player:
 
@@ -593,8 +618,12 @@ and DST — chosen to span low, middle and high per-game means at every position
 4. Append to `data/weekly/2025/<POS>.csv` using the header in
    `docs/superpowers/plans/2026-08-03-value-engine.md` Task 1.
 
-**Integrity check to re-run after widening:** score every seeded row with `score_game`
-and compare to `cbs_fpts`. Rows may fall short (TD distance bonuses are not published),
-but **no row may exceed** its CBS value. An over-scoring row means a transcription error.
+**Integrity check, re-run after widening:** score every row with `score_game` and compare
+to `cbs_fpts`. Rows may fall short (TD distance bonuses are not published), but **no row may
+exceed** its CBS value. An over-scoring row means a transcription error — or, as it turned
+out here, a missing scoring term.
 
-Do this in a fresh session — it is mechanical work that needs none of the design context.
+**Browser trap worth keeping:** Chrome blocked every download after the first, and both
+fallbacks failed — a localhost POST is mixed content, and the clipboard raises
+`NotAllowedError` without a user gesture. What worked: write to `localStorage` from the page,
+then read it back from a fresh tab.
