@@ -1016,7 +1016,7 @@ print('Allen pass_yds', a.stats['pass_yds'], 'rush_yds', a.stats['rush_yds'])
 "
 ```
 
-Expected: `553 players`, positions `{'RB': 130, 'WR': 204, 'QB': 42, 'TE': 108, 'K': 37, 'DST': 32}`, and `Allen pass_yds 3981.4 rush_yds 598.4`.
+Expected: `553 players`, positions `{'RB': 130, 'WR': 204, 'QB': 42, 'TE': 108, 'K': 37, 'DST': 32}`, and `Allen pass_yds 3500.0 rush_yds 400.0` (invented fixture values).
 
 - [ ] **Step 8: Commit**
 
