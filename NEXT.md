@@ -131,7 +131,14 @@ Update this block at the end of every session so the next one can resume blind.
       the copy quoted in the plan doc. Names kept deliberately; see FOLLOW-UP below. One
       related question is left open there: the CBS golden file in `tests/test_scoring.py`.
 - [ ] **Add a lost-fumble term to `leagues/sffl/2026.yaml`** — found 2026-08-18, see below.
-      Low urgency: it does not touch any banded stat, so no curve or price moves.
+      Deferred past the auction deliberately, now with a MEASURED size (2026-08-19):
+      Footballguys projects ~3.2 lost fumbles for a lead RB (Bijan 3.9, Gibbs 2.9, Cook 3.2)
+      against 0.7-1.3 for a WR (Nacua 1.2, Chase 1.3). At the observed ~-1/fumble that is
+      about **-$2.4 on a top RB and -$1.0 on a top WR**, so the missing term quietly favours
+      **RBs over receivers by ~$1.50**. Systematic, but too small to reorder the top.
+      **BLOCKER when it is picked up: Draft Sharks — the production source — does not publish
+      offensive fumbles at all** (only defensive `Fum Rec`/`Forced Fumble`). Footballguys has
+      `fum-lost`. So adding the term needs an FBG join, not just a YAML line.
 
 Work top to bottom. Each unchecked box is the next thing to do.
 
@@ -609,3 +616,33 @@ a small negative on a handful of players. Fix it with the 2026 rules pass, not t
    - Until someone separates "how much of $8.98 is the rushing-QB averaging bias" from
      "how much is un-fixable year-over-year turnover," TQB's mae is not comparable to
      FLEX's on the same terms.
+
+## OUTSIDE RANKINGS — the standing rule (reaffirmed 2026-08-19)
+
+**Do not adopt an outside ranking or projection as a validating source unless it is
+calibrated to THIS league's scoring.** This is the THEIR$ ruling generalised, and it keeps
+coming up because outside sources are easy to find and feel like confirmation.
+
+Worked example, the CBS/SportsLine "2026 busts" article Jeff raised on 08-19
+(`cbssports.com/.../fantasy-football-rankings-2026-busts-by-model-that-projected-terry-
+mclaurins-tough-season/`). Why it was DECLINED as validation:
+
+1. **It is PPR.** This league bands receptions (7-8 catches = a flat 3 points) and does not
+   pay per catch, and its TDs are not symmetric across positions. A PPR ranking cannot
+   confirm or refute a banded-scoring valuation.
+2. **It quotes ADP** — snake pick order — not auction dollars against a $1,320 cap.
+   Different currency, and this league's round one is a sealed bid on top of that.
+3. **No point totals and no dollar values are published**, so there is nothing to compare
+   numerically even if the scoring matched.
+4. **n=3 named players.**
+5. **Its track record is a hand-picked list of hits with no denominator** (McLaurin 2025,
+   A.J. Brown 2020, Jonathan Taylor 2021). This board quotes mae against 154 real prices.
+
+**Directional agreement is not validation.** It happened to agree on 3 of 4 here — Nabers
+outside the top 15 (board: WR20), Smith over Nabers (board: WR19 over WR20), Collins over
+Nabers (board: WR10) — and disagreed on James Cook (their RB10, board RB4). Agreeing on a
+few names using an incompatible yardstick tells you nothing about the model.
+
+**What outside coverage IS good for: news, not numbers.** Injury, suspension and
+depth-chart items are exactly what the board cannot know — that is the `Snapshot` item on
+`Key & Intel`. Read it for events; never for values.
