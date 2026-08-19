@@ -98,10 +98,23 @@ Update this block at the end of every session so the next one can resume blind.
          "What works today" with `--pdf`/`--xlsx`. **No code changes are needed** — that is
          what the dry run bought. Print the Excel, send it to the surrogate.
       4. Spot-check `leagues/nfl-byes-2026.yaml` — the one file sourced outside the pipeline.
-- [ ] **Jeff's sealed bid.** Recommendation is **$42** (top-3 zone) over $27 (bottom-4);
-      Jeff leaned middle-to-bottom. Not settled. See SILENT AUCTION below.
-- [ ] **Room intel** — a few sentences from Jeff on who overbids, who hoards RBs, etc.,
-      to fold into the `Key & Intel` sheet. Nothing else on that sheet needs him.
+- [ ] **Jeff's sealed bid — DUE MON 2026-08-24. The last thing he owes, and the only one
+      with real money on it.** Recommendation is **$42** (top-3 zone) over $27 (bottom-4);
+      Jeff leaned middle-to-bottom. Not settled as of 08-18. See SILENT AUCTION below.
+      `sffl plan` prints the tradeoff table — **he asked for the tradeoff shown, not a
+      recommendation**, so present it that way if he re-opens it.
+      Note the Nacua ruling above: the bid buys pick ORDER, and the top two are $1.30
+      apart, so this decision does not hinge on any one player's news.
+- [x] **Room intel — CLOSED 2026-08-18, nothing to add and nothing missing.** Jeff has no
+      owner-by-owner tells worth writing down, and **the surrogate has played in this league
+      before, so he already knows these owners.** Do not re-open this or prompt him for it.
+      It costs the sheet nothing: `Key & Intel`'s room section is titled *"WHAT THIS ROOM
+      DOES — FROM ITS OWN PRICES"* and is derived entirely from the tracked price and bid
+      history (K/DST at $1, top-end compression, the record bid, the ~third of all capital
+      spent in round one). No item on that page was ever sourced from owner gossip.
+      **This is the right division of labour** — the surrogate brings the people-read; the
+      sheet brings what he cannot have: Jeff's valuations, the MY$/EST$ gap, where the model
+      is weak, and the Snapshot caveat that the board predates auction night.
 - [~] **Nacua — RULED 2026-08-18: leave him where he is** until there is a real update on
       the injury or the suspension. Jeff's call, and it is cheap to be wrong about:
       **Nacua $55.9 and Chase $54.6 are $1.30 apart**, ~2%, well inside the model's own
@@ -178,8 +191,9 @@ not the source.
 | 2026-08-06 | Plans 3 and 4 merged. Excel format fixes from Jeff's review. |
 | 2026-08-18 | ✅ **Full dry run complete.** TODO B answered NO — wider curves measured worse. Board at mae $5.66 / top10 $11.22. |
 | **Fri 2026-08-21 → Sun 2026-08-23** | **THE REFRESH — needs Jeff at the Mac.** Re-pull fresh extracts from Draft Sharks and Footballguys. Confirm Draft Sharks still reads **AUCTION**, not Snake — every sync imports as Snake and a reverted setting yields a plausible file with a worthless value column. Re-run `sffl render`, print the Excel. |
-| **Sun 2026-08-23** | **HARD DEADLINE. Everything must be baked** — Jeff leaves early Tue 08-25. |
-| 2026-08-25 | Jeff travels. |
+| **Sun 2026-08-23** | **Board must be baked and printed.** Re-check the Nacua news before printing. |
+| **Mon 2026-08-24** | **Jeff's sealed bid due.** The last deliverable he owes. |
+| 2026-08-25 | Jeff travels, early. Nothing can be regenerated from here. |
 | **2026-08-26** | **AUCTION.** Jeff is absent; the surrogate drafts from the printed Excel + `Key & Intel`. Jeff's sealed bid must be submitted by him beforehand. |
 
 Nothing in the pipeline blocks the refresh — it is a data swap by design. The remaining
