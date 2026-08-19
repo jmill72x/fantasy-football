@@ -22,17 +22,17 @@ def test_quarterback_stats_land_in_the_right_slots():
     allen = [r for r in rows if r.name == "Josh Allen"][0]
     assert allen.team == "BUF"
     assert allen.games == 17
-    assert allen.stats["pass_yds"] == 3981.4
-    assert allen.stats["pass_cmp"] == 348.5
-    assert allen.stats["rush_yds"] == 598.4
-    assert round(allen.stats["rush_td"], 2) == 10.54
+    assert allen.stats["pass_yds"] == 3500.0
+    assert allen.stats["pass_cmp"] == 300.0
+    assert allen.stats["rush_yds"] == 400.0
+    assert allen.stats["rush_td"] == 5.0
 
 
 def test_defense_position_is_canonicalized():
     rows = read_extract(load_profile(PROFILE), FIXTURE, 2026)
     d = [r for r in rows if r.pos == "DST"][0]
-    assert d.stats["def_pa"] == 310
-    assert d.stats["def_sack"] == 42
+    assert d.stats["def_pa"] == 280
+    assert d.stats["def_sack"] == 35
 
 
 def test_blank_cells_become_zero_not_crash():

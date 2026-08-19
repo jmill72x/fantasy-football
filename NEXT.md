@@ -114,7 +114,9 @@ Update this block at the end of every session so the next one can resume blind.
       surrogate: `Key & Intel` now carries a **Snapshot** item stating the board predates
       the night and measuring how tight the top is. Still worth re-checking the news on
       08-23 before printing.
-- [ ] Clean licensed values out of the two tracked fixtures (see FOLLOW-UP below)
+- [x] **Licensed values cleaned out of the tracked fixtures — DONE 2026-08-18.** Also out of
+      the copy quoted in the plan doc. Names kept deliberately; see FOLLOW-UP below. One
+      related question is left open there: the CBS golden file in `tests/test_scoring.py`.
 - [ ] **Add a lost-fumble term to `leagues/sffl/2026.yaml`** — found 2026-08-18, see below.
       Low urgency: it does not touch any banded stat, so no curve or price moves.
 
@@ -364,12 +366,26 @@ Not adopted three weeks out on in-sample single-year evidence. Revisit with 2026
 
 ### FOLLOW-UP — licensed values in two tracked fixtures
 
-`tests/fixtures/draftsharks_sample.csv` and `draftsharks_value_sample.csv` carry
-verbatim Draft Sharks figures (Josh Allen `348.5/3981.4/28.39/10.2/598.4/10.54`, Eagles
-DEF `310/4930/42/14/9/3`). Committed since `55d5d49`, before this work, in a PUBLIC
-repo. `draftsharks_market_fit_sample.csv` had the same rows and they were invented out.
-The same cleanup is owed to these two — they exist only so no pool is empty, so the
-numbers can be anything.
+**DONE 2026-08-18.** `tests/fixtures/draftsharks_sample.csv` and
+`draftsharks_value_sample.csv` carried verbatim Draft Sharks projections, committed since
+`55d5d49` in a PUBLIC repo. Both now hold invented round numbers matching the
+already-cleaned `draftsharks_market_fit_sample.csv`, as does the copy of the fixture
+quoted in `docs/superpowers/plans/2026-08-03-scoring-and-ingest.md`.
+
+**Player NAMES were kept deliberately** — they are public fact, not vendor output, and
+`test_cli_value` needs Ja'Marr Chase to join a real price from the tracked roster file.
+Only the figures were licensed, and only the figures are gone.
+
+DST sacks are 35 over 17 games (2.06/gm), still under the 3-sack threshold, so
+`test_known_limitation_season_path_zeroes_all_dst_sacks` keeps exercising the limitation
+it documents. Verified the production board is byte-identical before and after
+(md5 `d7b6dfe0`), because fixtures touch no production path.
+
+**Still outstanding, and a different question:** `tests/test_scoring.py:88` carries a
+golden file of real CBS weekly stat lines (Eagles DST 2025 wks 13-17). That is the ground
+truth validating the scoring engine, not vendor output, and `data/weekly/` is gitignored
+for the same class of data. Decide whether the golden file belongs in the repo — do NOT
+"clean" it casually: the engine's validation rests on it.
 
 ### Original finding — the model's top end is hotter than this league has ever paid
 

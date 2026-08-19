@@ -56,10 +56,10 @@ def test_known_limitation_season_path_zeroes_all_dst_sacks():
 
     Sacks score nothing below 3 in a game, and averaging a season total down
     to a per-game line puts every real defense under that threshold: the
-    Draft Sharks fixture projects the Eagles at 42 sacks over 17 games, or
-    2.47 a game, so `sack_points` returns 0 and the unit collects NONE of its
+    fixture projects 35 sacks over 17 games, or 2.06 a game, so
+    `sack_points` returns 0 and the unit collects NONE of its
     largest projected category. Under a weekly distribution the true
-    expectation is roughly 30 points of the unit's ~92.
+    expectation is a real share of the unit's 81.
 
     Do NOT "fix" this by special-casing sacks - the averaging approximation
     is deliberate and documented in `score_season`. This test exists so the
@@ -68,20 +68,20 @@ def test_known_limitation_season_path_zeroes_all_dst_sacks():
     """
     pool = build_pool(LG, DS_PROFILE, DS_FIXTURE, 2026)
     dst = next(p for p in pool if p.pos == "DST")
-    assert dst.stats["def_sack"] == 42 and dst.games == 17   # 2.47 a game
+    assert dst.stats["def_sack"] == 35 and dst.games == 17   # 2.06 a game
 
     without_sacks = PlayerProjection(
         name=dst.name, team=dst.team, pos=dst.pos, source=dst.source,
         source_year=dst.source_year, games=dst.games, raw_name=dst.raw_name,
         stats=dict(dst.stats, def_sack=0))
 
-    # 42 sacks and 0 sacks are worth precisely the same season score.
+    # 35 sacks and 0 sacks are worth precisely the same season score.
     assert score_season(LG, dst) == score_season(LG, without_sacks)
 
-    # Not because the whole unit scores 0 - it scores ~92 points of pass-
+    # Not because the whole unit scores 0 - it scores 81 points of pass-
     # allowed, yards-allowed, turnover and touchdown production. The sacks
     # alone vanish.
-    assert score_season(LG, dst) == pytest.approx(92)
+    assert score_season(LG, dst) == pytest.approx(81)
 
 
 def test_zero_games_does_not_divide_by_zero():

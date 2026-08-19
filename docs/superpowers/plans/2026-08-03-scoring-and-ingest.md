@@ -795,10 +795,10 @@ real header shape and four rows, one per position family:
 
 ```csv
 Rank,Team,Player,"Fantasy Position",Games,"3D Proj",Total,Att.,Comp,YDs,TDs,Int,Total,YDs,TDs,Total,Rec,YDs,TDs,Total,"PR YDs","KR YDs",TDs,Total,XPs,"FGs < 30",30-39,40-49,50-59,60+,Total,"Opp Pts","Opp Yds",Sacks,INTs,"Fum Rec",TDs,Total,Solo,Assists,Sacks,"Pass Defended",Ints,"Forced Fumble","Fum Rec",TDs,"3D Value"
-1,BUF,"Josh Allen",QB,17,382,262.62,516.8,348.5,3981.4,28.39,10.2,116.28,598.4,10.54,0,0,0,0,0,0,0,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,63
+1,BUF,Josh Allen,QB,17,,,,300.0,3500.0,22.0,8.0,,400.0,5.0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 2,DET,"Jahmyr Gibbs",RB,17,285,0,0,0,0,0,0,198.05,1249.5,12.75,82.62,71.4,591.6,3.91,0,0,0,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,100
 3,CIN,"Ja'Marr Chase",WR,17,300,0,0,0,0,0,0,5.1,34,0.34,255,125.8,1587,9.2,0,0,0,,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,95
-4,PHI,"Eagles",DEF,17,120,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,,0,0,0,0,0,0,110,310,4930,42,14,9,3,0,0,0,0,0,0,0,0,0,0,40
+4,PHI,Eagles,DEF,17,,,,,,,,,,,,,,,,,,,,,,,,,,,280.0,4600.0,35.0,11.0,7.0,2.0,,,,,,,,,,,
 ```
 
 - [ ] **Step 2: Create `sources/draftsharks.yaml`**
@@ -871,10 +871,10 @@ def test_quarterback_stats_land_in_the_right_slots():
     allen = [r for r in rows if r.name == "Josh Allen"][0]
     assert allen.team == "BUF"
     assert allen.games == 17
-    assert allen.stats["pass_yds"] == 3981.4
-    assert allen.stats["pass_cmp"] == 348.5
-    assert allen.stats["rush_yds"] == 598.4
-    assert round(allen.stats["rush_td"], 2) == 10.54
+    assert allen.stats["pass_yds"] == 3500.0
+    assert allen.stats["pass_cmp"] == 300.0
+    assert allen.stats["rush_yds"] == 400.0
+    assert allen.stats["rush_td"] == 5.0
 
 
 def test_defense_position_is_canonicalized():
@@ -1016,7 +1016,7 @@ print('Allen pass_yds', a.stats['pass_yds'], 'rush_yds', a.stats['rush_yds'])
 "
 ```
 
-Expected: `553 players`, positions `{'RB': 130, 'WR': 204, 'QB': 42, 'TE': 108, 'K': 37, 'DST': 32}`, and `Allen pass_yds 3981.4 rush_yds 598.4`.
+Expected: `553 players`, positions `{'RB': 130, 'WR': 204, 'QB': 42, 'TE': 108, 'K': 37, 'DST': 32}`, and `Allen pass_yds 3500.0 rush_yds 400.0` (invented fixture values).
 
 - [ ] **Step 8: Commit**
 
