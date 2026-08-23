@@ -89,15 +89,30 @@ Update this block at the end of every session so the next one can resume blind.
       (84 players: WR/TE/DST/TQB) via Chrome, hitting the ~120-player target. **The wider
       curves measured WORSE and are not shipped.** Full reasoning below under *TODO B —
       ANSWERED*. Shipping 48 players / 811 player-weeks (18 seed + 30 stratified RB).
-- [ ] **THE ONLY REMAINING WORK — the data refresh. Needs Jeff, Fri 08-21 → Sun 08-23.**
-      1. Re-pull the **Draft Sharks** extract. **Confirm it still reads AUCTION, not Snake** —
-         every sync imports as Snake, and a reverted setting yields a plausible-looking file
-         with a worthless value column.
-      2. Re-pull the **Footballguys** extract.
-      3. Drop both in `data/extracts/<vendor>/2026/`, then re-run the render command in
-         "What works today" with `--pdf`/`--xlsx`. **No code changes are needed** — that is
-         what the dry run bought. Print the Excel, send it to the surrogate.
-      4. Spot-check `leagues/nfl-byes-2026.yaml` — the one file sourced outside the pipeline.
+- [x] **DATA REFRESH — DONE 2026-08-23.** Fresh Draft Sharks extract pulled and installed
+      at `data/extracts/Draft Sharks/2026/rankings-2026-08-23.csv` (552 players, page stamped
+      Aug 23 7:15pm). Both artifacts regenerated. 324 tests pass.
+      **THE EXPORT PATH, since it took a while to find again:**
+      draftsharks.com -> **RANKINGS -> Redraft** (`/rankings`) -> the **Projections** tab
+      (beside Rankings/Analysis) -> export icon at the far right of the NON-PPR row.
+      Downloads as `rankings.csv`. **47 columns, ~550 rows** - that is the shape to check.
+      **DO NOT use RANKINGS -> Auction (`/auction-values`).** Its export is only 13 columns
+      and 250 rows: vendor totals and vendor auction values, NO per-stat lines, so the
+      scoring engine has nothing to score. It also prices Nacua at $103 against a $110
+      per-team budget - the ~$200-cap THEIR$ problem, present even with the league synced.
+      **The real integrity check is the 47-column header, not the AUCTION/Snake setting.**
+      The profile reads `by_index: true`, so a renamed column is harmless but an added,
+      removed or reordered one silently shifts every stat after it. The 08-23 header was
+      verified byte-identical to the 08-03 one before any number was trusted.
+      Fit on fresh data: mae $5.68, top10_mae $11.41 (was $5.66 / $11.22) - unchanged in
+      substance. 153 of 156 prices join. 17 unrostered dropped.
+      **What moved:** top three unchanged (Nacua, Chase, St. Brown). Rashee Rice -$7.3
+      (#8 -> #13) is the largest move on the board; Kenneth Walker III +$5.5 (#45 -> #33);
+      Josh Jacobs -$3.9; CIN TQB -$3.7; Gibbs +$2.7 to #4.
+      **Draft Sharks has NOT downgraded Nacua** - still #1, so the injury/suspension news
+      is not in their projection. The Nacua-Chase gap TIGHTENED to $1.05 (was $1.30).
+      **Footballguys was NOT re-pulled** - it feeds only the declined consensus path, so it
+      does not affect the board. Not a gap.
 - [ ] **Jeff's sealed bid — DUE MON 2026-08-24. The last thing he owes, and the only one
       with real money on it.** Recommendation is **$42** (top-3 zone) over $27 (bottom-4);
       Jeff leaned middle-to-bottom. Not settled as of 08-18. See SILENT AUCTION below.
