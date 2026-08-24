@@ -113,13 +113,40 @@ Update this block at the end of every session so the next one can resume blind.
       is not in their projection. The Nacua-Chase gap TIGHTENED to $1.05 (was $1.30).
       **Footballguys was NOT re-pulled** - it feeds only the declined consensus path, so it
       does not affect the board. Not a gap.
-- [ ] **Jeff's sealed bid — DUE MON 2026-08-24. The last thing he owes, and the only one
-      with real money on it.** Recommendation is **$42** (top-3 zone) over $27 (bottom-4);
-      Jeff leaned middle-to-bottom. Not settled as of 08-18. See SILENT AUCTION below.
-      `sffl plan` prints the tradeoff table — **he asked for the tradeoff shown, not a
-      recommendation**, so present it that way if he re-opens it.
-      Note the Nacua ruling above: the bid buys pick ORDER, and the top two are $1.30
-      apart, so this decision does not hinge on any one player's news.
+- [x] **SEALED BID — SETTLED 2026-08-24: $42, BUMP $0.** Submitted deadline was Mon 08-24.
+      **$42 is the cleanest number on the board.** Buys rank 1-2 in all 5 years on record,
+      20% TIE1+, **0% TIE2+**. It strictly dominates $43 and $44 (identical rank range and
+      tie profile, $2 cheaper). $41 drops to rank 1-3 with 40%/20% tie exposure; $39 is
+      80%/20% and went live in '23. $45 buys rank 1 outright but pays $3 for the Nacua-Chase
+      difference, which is $1.10.
+      **Why NOT the bottom-4 zone Jeff first leaned toward.** The flexibility worry does not
+      survive the league's own data: the four franchises that spent MOST on their top player
+      in 2025 paid $43/$41/$40/$39 and filled their remaining 12 spots with **$67-71**. A $42
+      bid leaves $68 - the normal shape of an aggressive roster here, not a squeeze. Median
+      price paid across all 156 spots was **$3**; 49% went at $1-2.
+      Also: the top of the board is genuinely scarce ($56.5/$55.4/$48.2/$47.4, then a step to
+      $42.3 and a long flat run), and **a rank 1-2 pick makes the surrogate's job trivial** -
+      take the best name, and the top two are $1.05 apart so he cannot really get it wrong.
+      At rank 10-11 he would face the hardest choice on the board on live news Jeff cannot
+      brief him on. Bidding high REMOVES the decision Jeff is least able to help with.
+- [x] **BUMP $0 — Jeff was right, and the first recommendation here ($3) was WRONG.**
+      Recorded because the reasoning generalises and the raw tie history is misleading.
+      A $0 bump has never won a tie (0-for-7), which looks damning until you price the
+      outcomes. **Losing a tie is nearly free: the loser pays only their original bid and
+      still takes the next rank.** And a bump tie escalating to a live auction is NOT
+      unbounded - every live resolution on record settled at a small increment with the
+      loser paying +$0:
+        2025 $33  both bumped 1 -> winner $34 (+1), loser $33 (+0), kept rank 8
+        2023 $39  four-way      -> $42/$41/$40/$39, an orderly +3/+2/+1/+0 ladder by rank
+        2021 $35  both bumped 4 -> winner $39 (+4), loser $35 (+0)
+      So from $42/$0 the branches are: take #2 at $42, or take #1 at $43. Bumping $3 blind
+      costs $45 for that same #1. **The sealed bump is a BLIND commitment; the live auction
+      is an OPEN one where you keep control** - paying a premium to avoid the branch where
+      you have MORE information is backwards. With the prize only $1.10, nothing is worth
+      insuring.
+      **Brief for the surrogate if it goes live** (Jeff will be travelling and cannot):
+      "Go to $43, not a dollar more. If someone wants it at $44, let them have it - #2 is
+      worth $1 less than #1 on my board."
 - [x] **Room intel — CLOSED 2026-08-18, nothing to add and nothing missing.** Jeff has no
       owner-by-owner tells worth writing down, and **the surrogate has played in this league
       before, so he already knows these owners.** Do not re-open this or prompt him for it.
