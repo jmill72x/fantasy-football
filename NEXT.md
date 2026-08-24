@@ -144,9 +144,14 @@ Update this block at the end of every session so the next one can resume blind.
       is an OPEN one where you keep control** - paying a premium to avoid the branch where
       you have MORE information is backwards. With the prize only $1.10, nothing is worth
       insuring.
-      **Brief for the surrogate if it goes live** (Jeff will be travelling and cannot):
-      "Go to $43, not a dollar more. If someone wants it at $44, let them have it - #2 is
-      worth $1 less than #1 on my board."
+      **If it goes live, it is the SURROGATE'S call, unconstrained — ruled by Jeff
+      2026-08-24.** A scripted dollar limit was drafted here and Jeff declined it: the
+      tiebreak is a real-time read in a room he will not be in, and the whole cap
+      difference between winning and losing it is $1-2. Do not re-add a limit.
+      Noted once for the record: a live tiebreak spends CAP, so by the "Jeff owns the BID,
+      the surrogate owns the SELECTION" split it technically sits on Jeff's side of the
+      line. At $1-2 that is a distinction without a difference, and over-constraining an
+      experienced leaguemate costs more than it saves.
 - [x] **Room intel — CLOSED 2026-08-18, nothing to add and nothing missing.** Jeff has no
       owner-by-owner tells worth writing down, and **the surrogate has played in this league
       before, so he already knows these owners.** Do not re-open this or prompt him for it.
