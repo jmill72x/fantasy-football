@@ -929,3 +929,63 @@ inventing a shape.
 that a duller explanation covers better. Both times the story was quantitative, monotone,
 and survived until someone measured it out of sample. When a finding explains itself too
 well, check whether a boring variable already accounts for it.
+
+## SURROGATE FEEDBACK, AND THE POSITIONAL BIAS IT SURFACED (2026-08-27)
+
+Christopher drafted the board on 08-26 and reported back. **His observation was right and
+his explanation was wrong**, and chasing the difference found the most actionable defect
+of the season.
+
+**What he said:** "a lot of times, auction prices didn't fall within the range of predicted
+spend... In a silo, those ranges make sense, but when you get a couple of guys who have
+missed out on early targets and have a higher max than most everyone else, the pricing
+guide pretty much goes out the window." He also stuck closely to the rankings, and outside
+Chase went into double digits only twice.
+
+**His diagnosis - late-draft budget divergence - is not what the data shows.** The guide is
+at its BEST late and worst early:
+
+| pick | n | EST$ mae | errors > $5 |
+|---|---|---|---|
+| 1 | 10 | $6.84 | 50% |
+| 2-3 | 14 | $7.23 | 57% |
+| 4-6 | 22 | $4.38 | 36% |
+| 7-9 | 22 | $2.51 | 14% |
+| 10-13 | 30 | $2.12 | 7% |
+
+**The real cause is POSITIONAL.** Every one of the eight largest overpays was a running
+back, and the whole-auction split is unambiguous:
+
+| pos | n | mae | bias |
+|---|---|---|---|
+| **RB** | 34 | $5.03 | **-$3.92** (room pays MORE than the model says) |
+| WR | 46 | $3.73 | +$1.56 |
+| TE | 7 | $4.74 | +$4.65 (model overprices) |
+
+On picks 1-3: **RB bias -$8.29, TE +$8.26.** Across the auction the room put **+$133 into
+RB** against the model's valuation and **-$104 into WR/TE** - about 10% of league capital
+allocated differently by position than the board advised.
+
+**Likely mechanism:** RB and WR/TE share one FLEX pool and therefore one replacement level.
+If RB falls off more steeply than WR/TE, a shared replacement understates RB scarcity. The
+lineup floors added in plan 2 were a guard for exactly this and were measured as NOT
+binding on this extract - so they did not catch it.
+
+**The consequence is on Jeff's own roster.** He finished with Skattebo, Stevenson,
+Henderson and Dowdle - all four at or below FLEX replacement - while spending his only
+double-digit non-Chase money on McConkey and Bowers, both from the pool the model
+overprices. The surrogate followed the board faithfully; the board's positional skew is
+what he inherited.
+
+### DO NOT change the valuation on this yet
+
+One season, year-matched. It is consistent across every pick range and large, which is more
+than the phantom top-end bias ever had - but that finding is exactly why this one waits for
+2027 prices. **Test it first, with the pooled-replacement hypothesis stated in advance:**
+split FLEX replacement by position and re-measure, rather than fitting a positional fudge
+factor to a single year.
+
+**Also worth recording about the bid.** Jeff won at $42; second was $39, so $40 would have
+taken it and he paid ~$2-3 more than the minimum. That was still correct ex ante: $40
+carried 60% TIE1+ / 40% TIE2+ against $42's 20%/0%, and he bought certainty in what turned
+out to be the first tie-free year in six. Hindsight is not evidence the decision was wrong.
