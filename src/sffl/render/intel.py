@@ -284,7 +284,7 @@ def _dollar_columns(f):
                   if f.n_prices_joined else "")
         est = ("What the room is likely to actually pay: that value bent onto "
                "this league's own price curve (price = %.2f x value^%.2f), "
-               "fitted on %d real 2025 prices%s. Flat-priced kickers and "
+               "fitted on %d real prices%s. Flat-priced kickers and "
                "defenses are left out of the fit."
                % (f.curve[0], f.curve[1], f.n_curve_obs, joined))
     else:
