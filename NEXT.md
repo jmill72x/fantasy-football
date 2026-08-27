@@ -693,3 +693,64 @@ few names using an incompatible yardstick tells you nothing about the model.
 **What outside coverage IS good for: news, not numbers.** Injury, suspension and
 depth-chart items are exactly what the board cannot know — that is the `Snapshot` item on
 `Key & Intel`. Read it for events; never for values.
+
+## NEXT UP — the 2026 prices are the first OUT-OF-SAMPLE test
+
+Jeff is collecting the real 2026 auction prices (2026-08-27). **This is the most valuable
+data this project can receive**, and it is worth being clear why: every number the model
+currently reports was fitted on 2025 prices and measured against those same 2025 prices.
+It is all in-sample. 2026 prices are a genuine holdout — the first honest answer to
+whether any of this works.
+
+**Capture format** — same as `data/league/auction-rosters-2025.csv`:
+`franchise,pick_order,player_as_written,price`, 156 rows (12 franchises x 13 spots).
+
+**Write `player_as_written` EXACTLY as the roster sheet shows it. Do not clean it up.**
+The 2025 sheet wrote `PHILLY D`, `JAMAAR CHASE` (a typo), and Team QB units under their
+starting quarterback's name. Those raw forms are what drove `identity/aliases.yaml` and
+`identity/tqb-2025-starters.yaml` and took price joins from 108 to 154. Hand-normalising
+them silently destroys the evidence about what still needs an alias.
+
+Also extend `data/league/silent-auction-bids.csv` (`year,rank,franchise,bid,bump,cap_cost,
+player,note`) with 2026 - six years of bid history instead of five.
+
+### What the comparison actually tests, in priority order
+
+1. **Is EST$ any good out of sample?** The headline question. `price = a * value^b` was
+   fitted on 130 non-flat 2025 observations. Scoring 2026 prices against the CURRENT curve
+   — before refitting — is the only clean measurement this project will ever get. Do that
+   FIRST and record it, because once the curve is refitted on both years the holdout is
+   gone forever.
+2. **Was the +$13.9 top-end bias structural or a 2025 artifact?** The reasoning said it is
+   structural: linear VORP-to-dollars assumes fungible currency while a real auction is
+   budget-constrained and must fill every spot. If 2026 shows the same monotone pattern,
+   that is confirmed on independent data. If it does not, the explanation was a
+   just-so story fitted to one year.
+3. **The deferred tail reweighting** (NEXT.md line ~433). Weighting the four closed-form
+   sums measured Pareto-better on 2025 (`b` 0.551 -> 0.653, better at BOTH ends) and was
+   not adopted on in-sample single-year evidence. 2026 is the evidence it was waiting for.
+4. **starter vs draftable replacement policy.** The current rule says do not re-litigate
+   without new price data. This is new price data. Re-run `choose_policy` on both years.
+5. **TQB**, the worst-fitting pool at mae $8.70. Its residuals were structured (rushing-QB
+   franchises under-priced, pocket-passers over). A second year says whether that shape
+   repeats or was noise.
+
+**Doubles the price base: 154 joined observations -> ~310.** Every fit in the project gets
+better, and `MIN_OBSERVATIONS = 8` stops being anywhere near binding.
+
+### Jeff's own 2026 roster, for reference when the prices land
+
+Won the silent auction outright at **$42, bump $0** (rank 1; winning top bids over five
+years were $44/$45/$39/$41/$43, median $43). Surrogate took **Ja'Marr Chase** over Nacua -
+both carried unpriced injury risk the board could not see (Nacua injury/suspension talk
+Draft Sharks had NOT priced; Chase hyperextended a knee in practice 08-25, two days after
+the board was built).
+
+QB LAC + SF · RB Skattebo, Stevenson, Henderson, Dowdle · WR/TE Chase, McConkey, Bowers,
+Jameson Williams, Sutton · K McPherson · D Patriots.
+
+$118 of board value against a $110 cap. Chase ($55.4) and Bowers ($24.9) are 68% of it.
+**The RB room is entirely at or below replacement** (best is Skattebo at 65 projected
+points against a 64.5 FLEX replacement), which the 1-RB lineup floor forces into the
+starting lineup every week. Worth checking in-season whether that cost what the model
+implies - it is a live test of the flex/replacement machinery.
