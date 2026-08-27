@@ -22,6 +22,11 @@ class SourceProfile(object):
         self.files = raw.get("files", ["*.csv"])
         self.by_index = bool(raw.get("by_index", False))
         self.skip_rows = int(raw.get("skip_rows", 1))
+        # Optional, and only meaningful with by_index: how many columns the
+        # export is expected to have. See read_extract for why.
+        self.expect_columns = raw.get("expect_columns")
+        if self.expect_columns is not None:
+            self.expect_columns = int(self.expect_columns)
         self.columns = raw["columns"]  # type: Dict[str, object]
         self.filters = raw.get("filters", {})
         self.capabilities = raw.get("capabilities", {})
@@ -59,13 +64,43 @@ def _cell(row, spec, by_index):
     return row.get(spec, "")
 
 
+def _check_width(profile, csv_path, all_rows):
+    """Refuse an index-mapped export whose column count has moved.
+
+    A by_index profile reads stats by POSITION, so a vendor adding or removing
+    one column shifts every stat after it and the run still completes: names,
+    teams and games look right, and the yardage is somebody else's. There is no
+    error to notice, only a plausible wrong board.
+
+    Width is checked rather than the header text because the header text does
+    move harmlessly - Draft Sharks renamed "3D Proj" to "DS Proj" during the
+    2026 preseason while the layout stayed identical, and a hash would have
+    cried wolf. The cost of that choice is honest: a pure REORDER with the
+    count unchanged is not detectable here, so a refreshed extract still wants
+    a spot-check of one known player's stat line.
+    """
+    if profile.expect_columns is None or not all_rows:
+        return
+    width = len(all_rows[0])
+    if width != profile.expect_columns:
+        raise ValueError(
+            "%s has %d columns; profile '%s' maps stats by POSITION and "
+            "expects %d. A shifted layout does not fail loudly - it silently "
+            "reads the wrong stat into every field. Re-check the export and "
+            "update `expect_columns` in the profile only after confirming the "
+            "new positions." % (csv_path, width, profile.name,
+                                profile.expect_columns))
+
+
 def read_extract(profile, csv_path, year):
     """Return a list of PlayerProjection from one vendor CSV."""
     out = []  # type: List[PlayerProjection]
     with open(csv_path, newline="") as fh:
         if profile.by_index:
             reader = csv.reader(fh)
-            rows = list(reader)[profile.skip_rows:]
+            all_rows = list(reader)
+            _check_width(profile, csv_path, all_rows)
+            rows = all_rows[profile.skip_rows:]
         else:
             rows = list(csv.DictReader(fh))
 
