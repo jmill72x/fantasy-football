@@ -256,3 +256,69 @@ def test_a_board_too_short_to_compare_says_nothing_rather_than_inventing(tmp_pat
     text = _silent_text(intel.gather(LG, [row(1, "RB", 40.0)],
                                      bids_path=str(tmp_path / "absent.csv")))
     assert "Snapshot" not in text
+
+
+# --------------------------------------------------------------------------
+# Team QB dispersion. Replaced two frozen tuples of franchise codes that named
+# "rushing-QB" and "pocket-passer" teams; see intel.py's note for why that
+# explanation did not survive the 2026 prices.
+# --------------------------------------------------------------------------
+
+def _tqb(my_dollars):
+    return [player("TQB %d" % i, "TQB", d) for i, d in enumerate(my_dollars)]
+
+
+def test_the_tqb_split_is_taken_at_the_median_the_data_chooses():
+    # 1,1,1,20,30,40 -> median 10.5; three below, three above.
+    pool = _tqb([1.0, 1.0, 1.0, 20.0, 30.0, 40.0])
+    prices = {"tqb 0": 5.0, "tqb 1": 5.0, "tqb 2": 5.0,     # cheap ones cost MORE
+              "tqb 3": 2.0, "tqb 4": 2.0, "tqb 5": 2.0}     # dear ones cost LESS
+    d = intel._tqb_dispersion(pool, prices)
+    assert d["n_low"] == 3 and d["n_low_under"] == 3
+    assert d["n_high"] == 3 and d["n_high_over"] == 3
+
+
+def test_dispersion_counts_only_the_misses_that_run_the_expected_way():
+    pool = _tqb([1.0, 1.0, 1.0, 20.0, 30.0, 40.0])
+    prices = {"tqb 0": 5.0, "tqb 1": 0.5, "tqb 2": 5.0,     # one cheap unit cost LESS
+              "tqb 3": 2.0, "tqb 4": 99.0, "tqb 5": 2.0}    # one dear unit cost MORE
+    d = intel._tqb_dispersion(pool, prices)
+    assert d["n_low"] == 3 and d["n_low_under"] == 2
+    assert d["n_high"] == 3 and d["n_high_over"] == 2
+
+
+def test_too_few_priced_tqb_units_says_nothing_rather_than_splitting_noise():
+    pool = _tqb([1.0, 40.0])
+    assert intel._tqb_dispersion(pool, {"tqb 0": 5.0, "tqb 1": 2.0}) is None
+
+
+def test_a_pool_that_lands_entirely_on_one_side_of_its_median_reports_nothing():
+    # Every unit at the same MY$: nothing is above or below, so there is no
+    # dispersion to describe and a split would be arithmetic on a tie.
+    pool = _tqb([1.0, 1.0, 1.0, 1.0, 1.0])
+    prices = {"tqb %d" % i: 5.0 for i in range(5)}
+    assert intel._tqb_dispersion(pool, prices) is None
+
+
+def test_the_team_qb_paragraph_quotes_derived_counts_and_names_no_franchise():
+    f = intel.IntelFacts(total_capital=1320)
+    f.mae_by_pool = {"TQB": (21, 7.55), "FLEX": (109, 4.55)}
+    f.tqb_dispersion = {"median": 3.1, "n_low": 9, "n_low_under": 9,
+                        "n_high": 10, "n_high_over": 8}
+    text = dict(intel._model_weakness(f)[1])["Team QB"]
+    assert "9 units it prices below $3.10" in text
+    assert "of the 10 above, 8 went for less" in text
+    # The old claim named six franchises and blamed quarterback style. Neither
+    # may come back: both were wrong about the cause.
+    for gone in ("BAL", "WAS", "PHI", "DAL", "CIN", "MIN",
+                 "rushing", "pocket-passer"):
+        assert gone not in text, gone
+
+
+def test_the_team_qb_paragraph_degrades_instead_of_inventing_a_shape():
+    f = intel.IntelFacts(total_capital=1320)
+    f.mae_by_pool = {"TQB": (21, 7.55), "FLEX": (109, 4.55)}
+    f.tqb_dispersion = None
+    text = dict(intel._model_weakness(f)[1])["Team QB"]
+    assert "too few Team QB units" in text
+    assert "WIDER" not in text

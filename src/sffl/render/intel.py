@@ -51,16 +51,24 @@ TOP_CLUSTER_DEPTH = 4
 CALIBRATION_PLAYERS = 48
 CALIBRATION_PLAYER_WEEKS = 811
 
-# HARDCODED, AND WHY. The direction of Team QB's residuals is not something any
-# shipped function computes: it came out of a one-off analysis of the 2025
-# price residuals recorded in NEXT.md ("rushing-QB franchises are under-priced
-# (BAL -$28, WAS -$27, PHI -$18); pocket-passer franchises over-priced (DAL
-# +$21, CIN +$17, MIN +$16)"). Re-deriving it here would mean re-fitting per
-# franchise at render time on the same single year of prices and presenting the
-# result as if it were new evidence. The magnitude of the mis-fit IS derived
-# (mae, below); this is only its shape, and it is stated as the finding it is.
-TQB_UNDERPRICED = ("BAL", "WAS", "PHI")
-TQB_OVERPRICED = ("DAL", "CIN", "MIN")
+# REMOVED 2026-08-27: TQB_UNDERPRICED / TQB_OVERPRICED.
+#
+# They named six franchises and told the reader that RUSHING-QB franchises come
+# out under-priced and POCKET-PASSER ones over-priced. Measured year-matched
+# against the 2026 prices all six do land in the claimed direction - and the
+# explanation is still wrong. corr(MY$, residual) over all 21 Team QB units is
+# 0.773 (r^2 0.598), and the six named franchises are simply the extremes of
+# the MY$ distribution: all three "rushing" ones price at the $1 replacement
+# floor, all three "pocket" ones above $14. Nine of the nine units at the floor
+# are under-priced, not merely the three named.
+#
+# So the pattern is real and the cause was invented. What the model actually
+# does is OVER-DISPERSE Team QB dollars - it drives some franchises to $1 and
+# others past $40 while the room pays a much narrower band. That is derivable
+# from the run, so `_tqb_dispersion` derives it and nothing here is frozen.
+#
+# The general lesson, learned twice in one week (see also market.py): a
+# coherent causal story fitted to a pattern a duller explanation covers better.
 
 # Which ranks the silent-auction section quotes. Every rank on record would be
 # twelve lines on a page that has room for one; these four sample the range
@@ -102,6 +110,9 @@ class IntelFacts(object):
     record_price: Optional[float] = None
     # pool name -> (n joined, mean absolute error of MY$ against price paid)
     mae_by_pool: Dict[str, Tuple[int, float]] = field(default_factory=dict)
+    # {"median","n_low","n_low_under","n_high","n_high_over"} - see
+    # `_tqb_dispersion`. None when too few Team QB units carry a price.
+    tqb_dispersion = None  # type: Optional[Dict[str, float]]
     # Flat-priced pools measured against what was really paid for them:
     # {"n", "max_price", "n_at_flat", "kickers", "kickers_at_flat"}
     flat_obs: Optional[Dict[str, float]] = None
@@ -124,6 +135,37 @@ def _top_cluster(rows):
     """
     return tuple((r.name, float(r.my_dollars))
                  for r in overall_board(rows)[:TOP_CLUSTER_DEPTH])
+
+
+def _tqb_dispersion(pool, prices):
+    """How the Team QB pool's errors line up with its own MY$ scale.
+
+    Splits the priced TQB units at their MEDIAN MY$ - a split the data picks
+    rather than a threshold anyone typed - and counts how many on each side
+    miss in the expected direction. Returns None below four units, where a
+    median split says nothing.
+    """
+    pairs = []
+    for p in pool:
+        if _pool_of(p.pos) != "TQB" or "_dollars" not in p.stats:
+            continue
+        key = normalize_name(p.name)
+        if key in prices:
+            pairs.append((float(p.stats["_dollars"]), float(prices[key])))
+    if len(pairs) < 4:
+        return None
+    mid = statistics.median([m for m, _ in pairs])
+    low = [(m, a) for m, a in pairs if m < mid]
+    high = [(m, a) for m, a in pairs if m > mid]
+    if not low or not high:
+        return None
+    return {
+        "median": mid,
+        "n_low": len(low),
+        "n_low_under": sum(1 for m, a in low if m < a),
+        "n_high": len(high),
+        "n_high_over": sum(1 for m, a in high if m > a),
+    }
 
 
 def _mae_by_pool(pool, prices):
@@ -243,6 +285,7 @@ def gather(lg, rows, pool=None, prices=None, curve=None, history=None,
             facts.record_price = max(prices.values())
         facts.mae_by_pool = _mae_by_pool(pool, prices)
         facts.flat_obs = _flat_pool_observations(lg, pool, prices)
+        facts.tqb_dispersion = _tqb_dispersion(pool, prices)
 
     if history is None:
         try:
@@ -393,12 +436,19 @@ def _model_weakness(f):
     else:
         lead = ("Team QB is the worst-fitting pool on this board. This run "
                 "joined no prices, so the size of the miss is not quoted.")
-    items.append(("Team QB",
-                  lead + " The errors are structured, not noise: rushing-QB "
-                  "franchises (%s) come out UNDER-priced by the model, "
-                  "pocket-passer franchises (%s) OVER-priced. Judgment beats "
-                  "the number there."
-                  % (", ".join(TQB_UNDERPRICED), ", ".join(TQB_OVERPRICED))))
+    d = f.tqb_dispersion
+    if d:
+        shape = (" The errors are structured, not noise: the model spreads "
+                 "Team QB dollars WIDER than the room pays. Of the %d units it "
+                 "prices below %s, %d went for more than it says; of the %d "
+                 "above, %d went for less. Trust a Team QB number less the "
+                 "further it sits from the middle."
+                 % (d["n_low"], _money(round(d["median"], 2)),
+                    d["n_low_under"], d["n_high"], d["n_high_over"]))
+    else:
+        shape = (" This run priced too few Team QB units to say which way its "
+                 "errors run.")
+    items.append(("Team QB", lead + shape))
 
     items.append(("Curves",
                   "The scoring calibration behind every projection is built "

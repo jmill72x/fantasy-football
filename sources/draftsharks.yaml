@@ -1,5 +1,6 @@
 name: draftsharks
 files: ["rankings*.csv"]
+expect_columns: 47      # the Projections export's layout; see ingest._check_width
 by_index: true          # header names repeat across stat groups
 skip_rows: 1
 columns:

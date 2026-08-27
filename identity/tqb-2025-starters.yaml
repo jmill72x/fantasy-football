@@ -15,6 +15,8 @@
 # below, that check fires first and rejects a legitimate TQB join as if it
 # were an alias chain. No overlap exists today - keep it that way, or teach
 # load_prices to tell the two cases apart before adding one.
+season: 2025
+
 starters:
   "Aaron Rodgers": "PIT"
   "Baker Mayfield": "TB"
