@@ -103,7 +103,9 @@ def test_flat_priced_pools_are_evidenced_by_what_was_paid_for_them():
 
 
 def test_the_silent_auction_figures_come_from_the_tracked_history():
-    history = load_bid_history()
+    # Frozen five-year snapshot: the figures below are exact, and the live
+    # file gains a season every August.
+    history = load_bid_history("tests/fixtures/silent_bids_2021_2025.csv")
     f = intel.gather(LG, rows(), history=history)
 
     assert f.years == 5

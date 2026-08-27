@@ -26,7 +26,10 @@ from sffl.render.rows import BoardRow
 from sffl.silent import load_bid_history
 
 LG = load_league("leagues/sffl/2026.yaml")
-BIDS = "data/league/silent-auction-bids.csv"
+# Frozen five-year snapshot, not the live file: these assertions pin exact
+# tie rates, and the live file gains a season every August. See
+# tests/fixtures/silent_bids_2021_2025.csv.
+BIDS = "tests/fixtures/silent_bids_2021_2025.csv"
 
 
 def row(rank, name, pos, dollars, est):

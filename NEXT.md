@@ -818,3 +818,73 @@ All twelve bids DISTINCT - no ties, the first tie-free year in six. Bump was moo
 $42 / $39 / $38 / $36 / $35 / $33 / $32 / $31 / $30 / $28 / $27 / $26, total **$397**
 (below the $412-432 of the prior five years). Jeff won outright at $42 by $3.
 Still to do: append 2026 to `data/league/silent-auction-bids.csv` for a sixth year.
+
+## REFIT ON THE 2026 PRICES (2026-08-27). What changed and why.
+
+**The production command now takes the season's OWN price file and TQB map:**
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m sffl.cli value \
+  --source sources/draftsharks.yaml \
+  --file "data/extracts/Draft Sharks/2026/rankings-2026-08-23.csv" --year 2026 \
+  --policy fit --prices data/league/auction-rosters-2026.csv \
+  --tqb-starters identity/tqb-2026-starters.yaml \
+  --curves calibration/2025.yaml --out board.csv
+```
+
+**There is no 2025 projection file anywhere in `data/extracts/` - only 2026.** So the 154
+"2025 observations" the model shipped on were never year-matched and never could be. The
+fit is now 156 of 156 year-matched observations, and the old price file is history, not
+training data. Do not "combine both years" to double the sample: without 2025 projections
+there is no 2025 value to pair a 2025 price with, and pairing it with a 2026 value is
+exactly what manufactured the phantom bias.
+
+| | old (mismatched) | new (year-matched) |
+|---|---|---|
+| joins | 153 of 156 | **156 of 156** |
+| starter mae / top10 | $5.68 / $11.41 | **$4.34 / $10.06** |
+| market curve | 2.273 x value^0.556 | **2.012 x value^0.662** |
+| FLEX mae | $6.27 | $4.55 |
+| TQB mae | $8.70 | $7.55 |
+
+The curve's concavity fell (b 0.556 -> 0.662) because it was largely fitted to the
+artifact. EST$ at the top improved: band bias -$8.74 -> **-$6.55**, overall mae $3.94 ->
+$3.85. **It did NOT go away** - a power curve with b < 1 still compresses the top, so the
+printed "EST$ is a floor at the very top" caveat still holds, just smaller.
+
+### `choose_policy` had a real defect, now fixed (`fit.top10_cost`)
+
+On the year-matched data `draftable` beat `starter` on the old tiebreak (top10_mae $9.08
+against $10.06) - and shipping it would have been a serious mistake:
+
+```
+STARTER    $26+  MY$ mae $ 9.78   bias $ -0.25     <- noise around zero
+DRAFTABLE  $26+  MY$ mae $10.34   bias $-10.34     <- mae EQUALS |bias|
+```
+
+For draftable, mae equals |bias| exactly: **all sixteen round-one players under-priced, by
+about $10 each, in the same direction.** `top10_mae` cannot see the difference between that
+and honest noise. Noise averages out over thirteen roster spots; a policy that under-prices
+every expensive player by $10 loses all of them and no drafting skill recovers it.
+
+`top10_cost = top10_mae + |top10_bias|` - pure noise charged once, pure bias twice. Picks
+`starter` on the 2026 data. Four tests pin the rule, including the exact numbers above.
+
+### Tests no longer break every August
+
+Twenty tests asserted exact tie rates and rank ranges against the LIVE
+`silent-auction-bids.csv`, so appending 2026 broke them all at once - not a regression,
+just the data doing its job. Behaviour is now pinned against a frozen five-year snapshot
+at `tests/fixtures/silent_bids_2021_2025.csv`, and the live file has three growth-proof
+structural tests instead (row count is years x 12, every bid clears the floor, 2026 is
+present and tie-free). **Do not re-point those assertions at the live file.**
+
+### Still open
+
+- **TQB residuals**: is the rushing-QB/pocket-passer shape (`intel.TQB_UNDERPRICED` /
+  `TQB_OVERPRICED`, still hardcoded from the 2025 analysis) real, or was it one year of
+  noise? Now testable year-matched, and the constants should be re-derived or dropped.
+- **`market.py`'s tail-reweighting note is answered: do not adopt it.** It was tuned to
+  remove the artifact.
+- The `choose_policy` change is a value-engine change and has NOT had an independent
+  review - it was written, tested and merged in one session.

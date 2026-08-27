@@ -6,6 +6,7 @@
 
 import argparse
 import csv
+import os
 import sys
 
 from sffl.calibrate import load_curves
@@ -109,8 +110,10 @@ def _value_pool(lg, args):
         else:
             assign_expected_prices(lg, pool, curve)
             print("  market curve: price = %.3f * value^%.3f  "
-                  "(fitted on %d observed 2025 prices, excluding flat-priced "
-                  "K/DST)\n" % (curve[0], curve[1], len(priced)))
+                  "(fitted on %d observed prices from %s, excluding "
+                  "flat-priced K/DST)\n"
+                  % (curve[0], curve[1], len(priced),
+                     os.path.basename(args.prices)))
 
     print("replacement level (%s policy):" % policy)
     for name in sorted(levels):
