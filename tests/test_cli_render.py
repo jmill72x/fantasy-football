@@ -127,7 +127,9 @@ def test_plan_prints_both_tie_numbers_under_headings_that_tell_them_apart(capsys
     # Jeff's ruling on 2026-08-05: show both. The terminal and the PDF must
     # not be able to disagree about what either number means, so both carry
     # the same two headings and the same legend wording.
-    main(["plan", "--source", DS, "--file", FIXTURE, "--year", "2026"])
+    # Frozen snapshot - the $30 rates below are exact and the live file grows.
+    main(["plan", "--source", DS, "--file", FIXTURE, "--year", "2026",
+          "--bids", "tests/fixtures/silent_bids_2021_2025.csv"])
     out = capsys.readouterr().out
     assert "TIE1+" in out and "TIE2+" in out
     assert "ALREADY at this exact bid" in out
