@@ -5,17 +5,32 @@ assumes points are fungible currency. A real auction is budget constrained -
 nobody spends $54 on one player and still fills thirteen roster spots - and
 every owner must fill a bench, so the top compresses and the $1 tail is bid up.
 
-Measured against 154 real 2025 prices the distortion is monotonic: the model
-overpays the $30+ band by $13.2 and underpays the $2-5 band by $4.3, while the
-board total stays exactly right. Monotonic means fittable. A power curve
-`price = a * dollars ** b` with b < 1 has precisely that shape, and fitting it
-in log space makes it an ordinary least-squares line.
+That is the reasoning. It is largely WRONG at the top, and the correction is
+the point of this note.
+
+The original evidence was 154 "2025 prices" measured against 2026 projections -
+a player's price from one season set beside his value from another. Under that
+mismatch the distortion looked monotonic and large: the model appeared to
+overpay the $30+ band by $13.2. It was fitted with b=0.551, strongly concave,
+to bend that away.
+
+The 2026 prices arrived on 2026-08-27 and allow the honest year-matched test.
+The $30+ overpayment IS NOT REAL: MY$ bias in that band is -$0.25, and refit
+year-matched the curve is b=0.662, far closer to linear. What survives is a
+milder compression in the middle of the board, which is where this curve earns
+its keep - out of sample EST$ beat raw MY$ at $10-25 ($5.50 mae against $8.23).
+
+The lesson is worth more than the curve: a monotone six-band table with a
+coherent budget-constraint story behind it was an artifact of comparing two
+different seasons, and it survived unchallenged until it was measured out of
+sample.
 
 `_dollars` KEEPS its meaning - what a player is worth against replacement.
 `_est_price` is what the room will charge. The gap between them is the edge.
 
-FITTED ON 2025 PRICES, APPLIED TO 2026 PROJECTIONS. That is the best evidence
-available, but it assumes the room bids next year the way it bid last year.
+FIT AND PROJECTIONS MUST COME FROM THE SAME SEASON. Fitting 2025 prices onto
+2026 projections is what manufactured the phantom top-end bias above. Pass the
+season's own price file, and its own `--tqb-starters` map with it.
 
 One curve is fit globally and applied to every position alike; it cannot
 correct a position-specific bias such as TQB's (mae $8.98, worst of any pool -
@@ -47,11 +62,10 @@ weighting by model dollars (b=0.653) or fitting only on model $>=5 (b=0.720)
 both cut MAE at the top (paid>=$25) AND the bottom (paid<=$3) versus the
 shipped unweighted OLS - a Pareto improvement, not a trade-off, so the
 compression is a property of unweighted OLS on floor-heavy data, not of the
-power-law form itself. It is deliberately NOT changed here anyway: that
-evidence is in-sample, single-year (2026 projections against 2025 prices),
-and this fit is three weeks from pricing a real auction - not enough runway
-to trust an unvalidated reweighting over the shipped fit. Revisit with
-out-of-sample evidence (a second season of prices) before switching. A
+power-law form itself. DO NOT ADOPT IT. The out-of-sample evidence it was
+waiting for arrived with the 2026 prices, and it removes a top-end bias that
+year-matched measurement says does not exist (-$0.25, not +$13.2). It was
+tuned against the artifact. A
 bidder budgeting for a single specific top target should treat EST$ as a
 floor on that player's price, not a point estimate.
 

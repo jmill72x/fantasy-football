@@ -1,6 +1,6 @@
 import pytest
 
-from sffl.fit import load_prices, score_fit, choose_policy
+from sffl.fit import load_prices, score_fit, choose_policy, top10_cost
 from sffl.identity import NFL_TEAMS, Resolver
 from sffl.league import load_league
 from sffl.schema import PlayerProjection
@@ -224,3 +224,62 @@ def test_pools_with_no_matched_prices_report_zero_not_a_fake_average():
     for name, stats in rep["by_pool"].items():
         if stats["n"] == 0:
             assert stats["mae"] == 0.0
+
+
+def _report(policy, top10_mae, top10_bias, mae=5.0):
+    return {"policy": policy, "n": 100, "mae": mae, "rmse": mae * 1.5,
+            "top10_mae": top10_mae, "top10_bias": top10_bias, "by_pool": {}}
+
+
+def test_top10_cost_charges_systematic_error_twice_and_noise_once():
+    # Same top-10 mae, opposite character: one policy is wrong in both
+    # directions, the other is wrong in one. Only the second is unrecoverable.
+    noisy = _report("starter", top10_mae=10.0, top10_bias=0.0)
+    biased = _report("draftable", top10_mae=10.0, top10_bias=-10.0)
+    assert top10_cost(noisy) == 10.0
+    assert top10_cost(biased) == 20.0
+    assert top10_cost(noisy) < top10_cost(biased)
+
+
+def test_a_lower_top10_mae_does_not_win_when_it_is_all_bias():
+    # The real 2026 numbers. draftable wins on top10_mae and must still lose:
+    # its entire top-10 error is a one-directional $10.34 under-price.
+    starter = _report("starter", top10_mae=10.06, top10_bias=-0.25)
+    draftable = _report("draftable", top10_mae=9.08, top10_bias=-9.08)
+    assert draftable["top10_mae"] < starter["top10_mae"]
+    assert top10_cost(starter) < top10_cost(draftable)
+
+
+def test_bias_penalty_does_not_hand_the_choice_to_a_wildly_noisy_policy():
+    # The guard against over-correcting: an unbiased policy that is simply bad
+    # must not beat a mildly biased accurate one.
+    unbiased_but_awful = _report("starter", top10_mae=30.0, top10_bias=0.0)
+    slightly_biased_good = _report("draftable", top10_mae=5.0, top10_bias=-2.0)
+    assert top10_cost(slightly_biased_good) < top10_cost(unbiased_but_awful)
+
+
+def test_score_fit_reports_signed_top10_bias():
+    """top10_bias must be SIGNED, which is the whole point of adding it.
+
+    top10_mae cannot tell a policy that is wrong in both directions from one
+    that is wrong in a single direction, and choose_policy now depends on the
+    difference. |bias| <= mae always, by the triangle inequality; equality
+    means every top-10 error points the same way.
+    """
+    pool = [player("Ja'Marr Chase", "WR", 300), player("Bijan Robinson", "RB", 280)]
+    pool += filler_players()
+    report = score_fit(LG, pool, load_prices(PRICES), "starter")
+    if report["n"]:
+        assert abs(report["top10_bias"]) <= report["top10_mae"] + 1e-9
+
+
+def test_the_2026_prices_pick_starter_over_draftable():
+    """The regression this rule exists for.
+
+    Measured year-matched on the real 2026 prices, draftable wins top10_mae
+    ($9.08 vs $10.06) while under-pricing all sixteen round-one players by
+    about $10. Before top10_cost, choose_policy shipped that board.
+    """
+    starter = _report("starter", top10_mae=10.06, top10_bias=-0.25)
+    draftable = _report("draftable", top10_mae=9.08, top10_bias=-9.08)
+    assert min([starter, draftable], key=top10_cost)["policy"] == "starter"

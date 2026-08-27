@@ -9,7 +9,16 @@ from sffl.silent import (BID_FLOOR, SilentBid, bids_for_rank, escalated_at,
 HEADER = "year,rank,franchise,bid,bump,cap_cost,player,note\n"
 
 FIXTURE = "tests/fixtures/silent_bids_sample.csv"
-REAL = "data/league/silent-auction-bids.csv"
+
+# FROZEN SNAPSHOT of data/league/silent-auction-bids.csv as it stood through the
+# 2025 season: 60 rows, five years. Kept as a fixture because the assertions
+# below pin exact tie rates, bump counts and rank ranges, and pointed at the
+# LIVE file those break every August when a season is appended - which is not a
+# regression, it is the data doing its job. Appending 2026 broke twenty of them
+# at once. Behaviour is pinned against a dataset that cannot move; the live file
+# gets its own structural test instead (see the LIVE tests at the end).
+FROZEN = "tests/fixtures/silent_bids_2021_2025.csv"
+LIVE = "data/league/silent-auction-bids.csv"
 PROFILE = "leagues/sffl/2026.yaml"
 
 
@@ -79,7 +88,7 @@ def test_the_join_rate_counts_years_someone_was_already_there():
 def test_the_years_on_record_are_the_denominator_both_rates_divide_by():
     # Exported so a printed legend can name it instead of typing "5" and being
     # wrong the August 2026's twelve rows are appended.
-    assert years_on_record(load_bid_history(REAL)) == 5
+    assert years_on_record(load_bid_history(FROZEN)) == 5
     assert years_on_record(load_bid_history(FIXTURE)) == 2
     # ...and it really is the denominator: one franchise at $43 in one of the
     # fixture's two years is 1/2.
@@ -89,7 +98,7 @@ def test_the_years_on_record_are_the_denominator_both_rates_divide_by():
 def test_the_join_rate_is_never_below_the_field_rate():
     # Two or more franchises at a bid implies at least one, always. A year
     # counted by field_tie_rate_at is always counted by join_tie_rate_at too.
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     for bid in sorted(set(b.bid for b in h)):
         assert join_tie_rate_at(h, bid) >= field_tie_rate_at(h, bid), "$%d" % bid
 
@@ -102,7 +111,7 @@ def test_both_tie_rates_on_the_real_history_at_the_levels_that_matter():
     would have said a $30 bid mostly walks in clean, when in fact somebody has
     been standing on $30 every single year on record.
     """
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     expected = {
         30: (1.0, 0.4),     # 2021,2022x2,2023x2,2024,2025
         33: (0.8, 0.2),     # 2022,2023,2024,2025x2 - only 2025 tied
@@ -127,14 +136,14 @@ def test_winning_bumps_come_from_cap_cost_not_the_bump_column():
 
 
 def test_the_real_history_loads_and_covers_five_years():
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     assert len(h) == 60
     assert sorted(set(b.year for b in h)) == [2021, 2022, 2023, 2024, 2025]
     assert all(b.bid >= 26 for b in h), "no observed bid is below the floor"
 
 
 def test_every_real_year_has_twelve_bids():
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     counts = {}
     for b in h:
         counts[b.year] = counts.get(b.year, 0) + 1
@@ -193,7 +202,7 @@ def test_a_bid_that_rises_with_rank_is_rejected(tmp_path):
 def test_ranks_are_monotone_in_the_bid():
     # A larger bid can never buy a worse rank. The nearest-neighbour bracket
     # this replaced claimed $36's best case was rank 6 and $35's was rank 5.
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     previous = None
     for bid in range(BID_FLOOR, 46):
         current = ranks_for_bid(h, bid)
@@ -207,7 +216,7 @@ def test_ranks_are_monotone_in_the_bid():
 def test_every_year_votes_on_every_bid_not_just_the_years_that_bid_it():
     # $39 took rank 1 in 2023's four-way tie, but would only have been rank 5
     # in 2021. A lookup of observed ranks alone would never surface that.
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     best, worst, _ = ranks_for_bid(h, 39)
     assert best == 1
     assert worst == 5
@@ -218,7 +227,7 @@ def test_every_year_votes_on_every_bid_not_just_the_years_that_bid_it():
 
 
 def test_winning_bumps_exclude_ties_that_escalated_to_a_live_auction():
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     # 2023's four-way at $39, 2021's shared $4 bump at $35, and 2025's shared
     # $1 bump at $33 were all settled live. No bump won any of them.
     for bid in (39, 35, 33):
@@ -230,7 +239,7 @@ def test_winning_bumps_exclude_ties_that_escalated_to_a_live_auction():
 
 
 def test_the_floor_still_needs_a_bump_and_one_year_escalated():
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     assert field_tie_rate_at(h, BID_FLOOR) == pytest.approx(1.0)
     # Four of the five floor ties were settled by a $1-$2 bump.
     assert winning_bumps_at(h, BID_FLOOR) == [1, 2, 2, 2]
@@ -248,7 +257,7 @@ def test_the_structural_escalation_signal_agrees_with_every_note():
     """
     from sffl.silent import _escalated, _tie_groups
 
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     groups = _tie_groups(h)
     assert len(groups) == 15, "the real file holds fifteen tie groups"
     escalations = 0
@@ -268,7 +277,7 @@ def test_the_structural_escalation_signal_agrees_with_every_note():
 def test_a_bid_nobody_ever_submitted_refuses_to_summarise_itself():
     # $36 sits mid-range with zero observations. "Tie rate 0%" would be a
     # fabrication; the caller must be made to notice.
-    h = load_bid_history(REAL)
+    h = load_bid_history(FROZEN)
     assert observations_at(h, 36) == 0
     for fn in (join_tie_rate_at, field_tie_rate_at, winning_bumps_at,
                escalated_at):
@@ -288,3 +297,36 @@ def test_the_dataclass_carries_the_note():
     assert isinstance(h[0], SilentBid)
     assert h[0].note == "won tie vs Beta on bump"
     assert h[5].note == ""
+
+
+# --------------------------------------------------------------------------
+# The LIVE tracked file. Everything above pins exact figures against a frozen
+# snapshot; these assert only what must stay true as seasons are appended, so
+# they never need editing in August.
+# --------------------------------------------------------------------------
+
+def test_the_live_bid_file_loads_and_grows_without_breaking_its_shape():
+    rows = load_bid_history(LIVE)
+    years = years_on_record(rows)
+    assert years >= 6, "2021-2026 are recorded; this only ever grows"
+    assert len(rows) == years * 12, "twelve franchises bid in every year"
+
+
+def test_every_live_bid_clears_the_floor_because_a_sub_floor_bid_is_discarded():
+    # A bid under the floor forfeits the pick, so one in the file is either a
+    # transcription error or a franchise that lost its round-one selection -
+    # both worth failing on rather than quietly averaging into the rates.
+    floor = 26
+    below = [r for r in load_bid_history(LIVE) if r.bid < floor]
+    assert not below, "bids under the $%d floor: %r" % (floor, below)
+
+
+def test_the_2026_season_is_in_the_live_file_and_was_tie_free():
+    # The first tie-free year on record. If a later edit reintroduces a tie at
+    # one of these bids, the bump analysis changes and this should say so.
+    y2026 = [r for r in load_bid_history(LIVE) if r.year == 2026]
+    assert len(y2026) == 12
+    bids = [r.bid for r in y2026]
+    assert len(set(bids)) == 12, "2026 had no ties - all twelve bids distinct"
+    assert max(bids) == 42
+    assert all(r.bump == 0 for r in y2026), "no ties means no bump was needed"
