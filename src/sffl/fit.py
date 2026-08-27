@@ -37,6 +37,20 @@ class PriceMap(dict):
         self.total_rows = 0
 
 
+def tqb_starters_season(path):
+    """The season a Team QB starter map describes, or None if it says nothing.
+
+    Exists so a caller that knows which season it is valuing can refuse a map
+    from another one. Quarterbacks change franchises between Augusts - Kyler
+    Murray was ARI in 2025 and MIN in 2026 - so the wrong map does not fail
+    loudly, it silently mis-joins or drops every Team QB price.
+    """
+    with open(path) as fh:
+        raw = yaml.safe_load(fh) or {}
+    season = raw.get("season")
+    return int(season) if season is not None else None
+
+
 def _load_tqb_starters(path):
     """Map normalized quarterback name -> franchise code for one season.
 

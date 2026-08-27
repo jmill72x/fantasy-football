@@ -888,3 +888,44 @@ present and tie-free). **Do not re-point those assertions at the live file.**
   remove the artifact.
 - The `choose_policy` change is a value-engine change and has NOT had an independent
   review - it was written, tested and merged in one session.
+
+## THE YEAR'S LESSONS, BAKED IN (2026-08-27)
+
+Three guards and one derived figure, so the mistakes found this season cannot recur
+silently. Each replaces something that failed WITHOUT an error message - the whole class
+of bug this project keeps hitting is "plausible wrong board", never a crash.
+
+**1. Cross-season fits are refused** (`fit.tqb_starters_season`, checked in `cli`).
+Both starter maps now carry `season:`, and valuing year N projections against year M's map
+exits with an explanation. This is the guard the whole refit paid for: pairing 2025 prices
+with 2026 projections manufactured a $13.2 phantom bias, an EST$ curve fitted to remove it,
+and a deferred code change waiting on evidence that never existed - with nothing in the
+output looking wrong.
+
+**2. Policy choice is bias-aware** (`fit.top10_cost`). `top10_mae` alone could not tell a
+policy wrong in both directions from one wrong in a single direction, and picked the
+latter. Bias is now charged twice, noise once.
+
+**3. Index-mapped extracts are width-checked** (`ingest.profiles._check_width`,
+`expect_columns: 47` in `sources/draftsharks.yaml`). A `by_index` profile reads stats by
+POSITION, and `_cell` returns "" for an out-of-range index - so a vendor adding or removing
+a column shifts every stat after it and the run still completes.
+**Width, not a header hash, ON PURPOSE:** Draft Sharks renamed "3D Proj" to "DS Proj"
+mid-preseason with the layout unchanged, and a hash would have refused a good file. The
+honest cost: a pure REORDER at unchanged width is still undetectable, so a refreshed
+extract still wants one known player's stat line eyeballed.
+
+**4. The Team QB shape is derived, not frozen** (`intel._tqb_dispersion`). The hardcoded
+`TQB_UNDERPRICED`/`TQB_OVERPRICED` tuples named six franchises and blamed quarterback
+style. All six DO land in the claimed direction against the 2026 prices - and the cause was
+invented. corr(MY$, residual) across all 21 units is 0.773 (r^2 0.598); the six named teams
+are just the extremes of the MY$ scale, all three "rushing" ones sitting at the $1
+replacement floor, and **nine of the nine units at that floor are under-priced, not the
+three named**. What the model really does is OVER-DISPERSE Team QB dollars. The sheet now
+says so, split at the pool's own median, and degrades to "too few units to say" rather than
+inventing a shape.
+
+**The method lesson, hit twice in one week:** a coherent causal story fitted to a pattern
+that a duller explanation covers better. Both times the story was quantitative, monotone,
+and survived until someone measured it out of sample. When a finding explains itself too
+well, check whether a boring variable already accounts for it.

@@ -15,6 +15,8 @@
 #
 # INVARIANT: load_prices applies identity/aliases.yaml before this map, and
 # normalises spelling first, so entries here are canonical spellings.
+season: 2026
+
 starters:
   "Baker Mayfield": "TB"
   "Bo Nix": "DEN"

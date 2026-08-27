@@ -1,3 +1,4 @@
+import pytest
 from sffl.cli import main
 
 DS = "sources/draftsharks.yaml"
@@ -7,6 +8,9 @@ DS = "sources/draftsharks.yaml"
 # shared sample fixture has no kicker, so it adds a Test Kicker row on top of
 # the same four players the other ingest/pool/scoring tests already use.
 FIXTURE = "tests/fixtures/draftsharks_value_sample.csv"
+
+
+TQB_2026 = "identity/tqb-2026-starters.yaml"
 
 
 def test_value_command_runs_and_returns_zero(capsys):
@@ -44,7 +48,8 @@ def test_fit_policy_prints_the_match_denominator(capsys):
     # and nothing said so" - the printed n must carry a denominator and the
     # shortfall, not just a bare match count.
     rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
-               "--policy", "fit", "--prices", PRICES])
+               "--policy", "fit", "--prices", PRICES,
+               "--tqb-starters", TQB_2026])
     out = capsys.readouterr().out
     assert rc == 0
     assert "of 5 prices" in out
@@ -60,14 +65,32 @@ def test_tqb_starters_flag_is_accepted_and_overridable(capsys):
     # must be plumbed through to load_prices rather than hardcoded.
     rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
                "--policy", "fit", "--prices", PRICES,
-               "--tqb-starters", "identity/tqb-2025-starters.yaml"])
+               "--tqb-starters", TQB_2026])
     assert rc == 0
+
+
+def test_a_starter_map_from_another_season_is_refused_not_quietly_used():
+    """The guard the 2026 refit paid for.
+
+    Valuing 2026 projections against 2025 prices produced a phantom $13.2
+    top-end bias, an EST$ curve fitted to remove it, and a deferred code
+    change waiting on evidence that never existed. Nothing in the output
+    looked wrong. The season stamp makes it loud.
+    """
+    with pytest.raises(SystemExit) as e:
+        main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
+              "--policy", "fit", "--prices", PRICES,
+              "--tqb-starters", "identity/tqb-2025-starters.yaml"])
+    msg = str(e.value)
+    assert "refusing to value 2026 projections against the 2025" in msg
+    assert "--tqb-starters" in msg
 
 
 def test_est_price_column_appears_when_prices_are_supplied(tmp_path, capsys):
     path = str(tmp_path / "board.csv")
     rc = main(["value", "--source", DS, "--file", FIXTURE, "--year", "2026",
-               "--policy", "starter", "--prices", PRICES, "--out", path])
+               "--policy", "starter", "--prices", PRICES,
+               "--tqb-starters", TQB_2026, "--out", path])
     out = capsys.readouterr().out
     assert rc == 0
     with open(path) as fh:
@@ -108,7 +131,8 @@ MARKET_FIT_PRICES = "tests/fixtures/prices_market_fit_sample.csv"
 def test_market_curve_fits_and_populates_est_price(tmp_path, capsys):
     path = str(tmp_path / "board.csv")
     rc = main(["value", "--source", DS, "--file", MARKET_FIT_FIXTURE, "--year", "2026",
-               "--policy", "starter", "--prices", MARKET_FIT_PRICES, "--out", path])
+               "--policy", "starter", "--prices", MARKET_FIT_PRICES,
+               "--tqb-starters", TQB_2026, "--out", path])
     out = capsys.readouterr().out
     assert rc == 0
 
