@@ -754,3 +754,67 @@ $118 of board value against a $110 cap. Chase ($55.4) and Bowers ($24.9) are 68%
 points against a 64.5 FLEX replacement), which the 1-RB lineup floor forces into the
 starting lineup every week. Worth checking in-season whether that cost what the model
 implies - it is a live test of the flex/replacement machinery.
+
+## 2026 PRICES — THE HOLDOUT RESULT (measured 2026-08-27). READ THIS.
+
+The 2026 auction happened and the real prices are in
+`data/league/auction-rosters-2026.csv` (156 rows, 12 franchises x 13). **Scored against
+the curve fitted on 2025 BEFORE any refit** - this is the one clean out-of-sample
+measurement this project will ever get, and it is now spent.
+
+**156 of 156 prices join the board**, up from 154 of 156 in 2025, after 29 new aliases and
+a season-matched `identity/tqb-2026-starters.yaml`.
+
+| | mae | rmse | bias |
+|---|---|---|---|
+| **EST$** | **$3.94** | **$5.65** | +$0.03 |
+| MY$ | $4.34 | $7.01 | +$0.06 |
+
+| band | n | EST$ mae | EST$ bias | MY$ mae | MY$ bias |
+|---|---|---|---|---|---|
+| $26+ (round one) | 16 | $8.74 | **-$8.74** | $9.78 | **-$0.25** |
+| $10-25 | 28 | $5.50 | -$0.90 | $8.23 | +$0.18 |
+| $4-9 | 40 | $3.62 | +$0.62 | $4.49 | -$1.31 |
+| $1-3 | 72 | $2.45 | +$2.01 | **$1.53** | +$0.84 |
+
+### FINDING 1 — the "+$13.2 top-end bias" was an ARTIFACT. Do not act on it again.
+
+That figure (recorded at length further down this file, with a whole causal story about
+budget-constrained auctions and linear VORP-to-dollars over-separating the top) came from
+comparing **2026 projections against 2025 prices** - mismatched years, the same player
+priced off a different season's expectations. Measured properly, 2026 against 2026,
+**MY$ bias in the $26+ band is -$0.25.** There is no top-end bias to correct.
+
+**The deferred tail reweighting was explicitly waiting on 2026 prices. The answer is NO -
+do not adopt it.** It was tuned to remove a bias that does not exist.
+
+Keep this as a method lesson: the explanation was coherent, quantitative, monotone across
+six bands, and wrong. A story that good is exactly the kind that survives unchallenged
+until someone measures it out of sample.
+
+### FINDING 2 — EST$ is OVER-corrected at the top, and the printed caveat was right.
+
+EST$ was fitted to remove that artifactual bias, so at the top it now under-predicts by a
+systematic **-$8.74 on all 16 round-one prices**. The board's printed caveat - "EST$ is a
+floor at the very top, not a point estimate" - is confirmed out of sample and now has a
+number on it.
+
+**Practical rule for 2027: use MY$ for round-one targets, EST$ for the $4-25 range, and
+MY$ again at $1-3.** EST$ earns its keep in the middle, which is most of the board.
+
+### What is now available that was not before
+
+- Price base doubles: 154 -> 310 joined observations. `MIN_OBSERVATIONS = 8` is no longer
+  anywhere near binding, and both the market curve and `choose_policy` can be refit on two
+  independent years.
+- **Re-run `choose_policy` on both years.** The old rule said do not re-litigate starter vs
+  draftable without new price data. There is now new price data.
+- TQB's structured residuals (rushing-QB franchises under-priced, pocket-passers over) can
+  be tested for whether the shape repeats or was one year of noise.
+
+### 2026 round one, for the bid history
+
+All twelve bids DISTINCT - no ties, the first tie-free year in six. Bump was moot.
+$42 / $39 / $38 / $36 / $35 / $33 / $32 / $31 / $30 / $28 / $27 / $26, total **$397**
+(below the $412-432 of the prior five years). Jeff won outright at $42 by $3.
+Still to do: append 2026 to `data/league/silent-auction-bids.csv` for a sixth year.

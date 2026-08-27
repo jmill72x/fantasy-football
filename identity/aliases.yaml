@@ -47,3 +47,41 @@ players:
   "Treyveon Henderson": "TreVeyon Henderson"
   "Tyrone Tracey": "Tyrone Tracy"
   "Will Lutz": "Wil Lutz"
+
+  # --- 2026 roster-sheet skill-player misspellings, hand typed at the auction.
+  # Note the near-misses on 2025 entries: the sheet wrote BAYSHUL where 2025 wrote
+  # "Bhaysul", and MERRIT where 2025 wrote "Merritt". Same typist, different typo.
+  "bayshul tuten": "Bhayshul Tuten"
+  "bill croskey merrit": "Jacory Croskey-Merritt"
+  "cam skattebo": "Cameron Skattebo"
+  "cee dee lamb": "CeeDee Lamb"
+  "davonta smith": "DeVonta Smith"
+  "deandre swift": "D'Andre Swift"
+  "dezan stribling": "De'Zhaun Stribling"
+  "eddie pinero": "Eddy Pineiro"
+  "germy bernard": "Germie Bernard"
+  "jaxon smith ngiba": "Jaxon Smith-Njigba"
+  "jerimiah love": "Jeremiyah Love"
+  "jonathan brooks": "Jonathon Brooks"
+  "kaimi fairbarn": "Ka'imi Fairbairn"
+  "keyshon boutte": "Kayshon Boutte"
+  "malik nabors": "Malik Nabers"
+  "quentin johnson": "Quentin Johnston"
+  "rashaad white": "Rachaad White"
+  "rhemondre stevenson": "Rhamondre Stevenson"
+  "rico dowdel": "Rico Dowdle"
+  "terry mcclaurin": "Terry McLaurin"
+  "tyler algeir": "Tyler Allgeier"
+  "tyler warrem": "Tyler Warren"
+
+  # --- 2026 defense forms. The pool names a DST by its full franchise name
+  # while the sheet uses a city plus D, or bare city. Distinct from the TQB
+  # units, which the pool names by TEAM CODE - so LA RAMS is the Rams DEFENSE
+  # and LAR is the Rams TEAM QB unit. Never collapse the two.
+  "chicago": "Chicago Bears"
+  "detroit": "Detroit Lions"
+  "jacksonville d": "Jacksonville Jaguars"
+  "la chargers d": "Los Angeles Chargers"
+  "la rams": "Los Angeles Rams"
+  "new england d": "New England Patriots"
+  "philadelphia d": "Philadelphia Eagles"

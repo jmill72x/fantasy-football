@@ -1,0 +1,39 @@
+# Which quarterback the 2026 auction roster sheet used to name each franchise's
+# Team QB unit. This league drafts TEAM quarterbacks, but the sheet is hand
+# written with the starter's name, so "JUSTIN HERBERT, $8" is the LAC TQB unit.
+#
+# YEAR-BOUND ON PURPOSE, and 2026 proves why the 2025 file said so: Kyler Murray
+# was ARI on the 2025 map and is MIN in the 2026 extract. Rebuilding an old map
+# from a new extract would silently mis-join every quarterback who moved.
+#
+# Built 2026-08-27 by resolving each QB name on the 2026 roster sheet against
+# the QB rows of data/extracts/Draft Sharks/2026/rankings-2026-08-23.csv, which
+# is the same extract that produced the board these prices are measured against.
+#
+# Left side is the quarterback as written; right side is the franchise code the
+# pool uses to name the Team QB unit.
+#
+# INVARIANT: load_prices applies identity/aliases.yaml before this map, and
+# normalises spelling first, so entries here are canonical spellings.
+starters:
+  "Baker Mayfield": "TB"
+  "Bo Nix": "DEN"
+  "Brock Purdy": "SF"
+  "Caleb Williams": "CHI"
+  "Dak Prescott": "DAL"
+  "Daniel Jones": "IND"
+  "Drake Maye": "NE"
+  "Jalen Hurts": "PHI"
+  "Jared Goff": "DET"
+  "Jaxon Dart": "NYG"
+  "Jayden Daniels": "WAS"
+  "Joe Burrow": "CIN"
+  "Jordan Love": "GB"
+  "Josh Allen": "BUF"
+  "Justin Herbert": "LAC"
+  "Kyler Murray": "MIN"
+  "Lamar Jackson": "BAL"
+  "Matt Stafford": "LAR"
+  "Patrick Mahomes": "KC"
+  "Trevor Lawrence": "JAC"
+  "Tyler Shough": "NO"
