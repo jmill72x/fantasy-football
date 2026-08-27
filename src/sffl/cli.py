@@ -10,7 +10,8 @@ import os
 import sys
 
 from sffl.calibrate import load_curves
-from sffl.fit import DEFAULT_TQB_STARTERS, choose_policy, load_prices
+from sffl.fit import (DEFAULT_TQB_STARTERS, choose_policy, load_prices,
+                      tqb_starters_season)
 from sffl.identity import NFL_TEAMS, normalize_name
 from sffl.league import load_league
 from sffl.market import assign_expected_prices, fit_price_curve
@@ -53,6 +54,23 @@ def _value_pool(lg, args):
     # to fit against, so `prices` stays None and _est_price is never written.
     prices = None
     if args.prices:
+        # THE GUARD THAT THE 2026 REFIT PAID FOR. Fitting one season's prices
+        # against another season's projections is what manufactured a phantom
+        # $13.2 top-end bias, an EST$ curve tuned to remove it, and a deferred
+        # code change waiting on evidence that never existed. It is invisible
+        # in the output - every number looks reasonable. So it is refused here.
+        _map_season = tqb_starters_season(args.tqb_starters)
+        if _map_season is not None and _map_season != args.year:
+            raise SystemExit(
+                "refusing to value %d projections against the %d Team QB "
+                "starter map (%s).\n"
+                "Quarterbacks change franchises between seasons, so the wrong "
+                "map silently mis-joins or drops every Team QB price - and "
+                "pairing one season's prices with another's projections is "
+                "what produced this project's largest measurement error.\n"
+                "Pass --tqb-starters for %d, and a --prices file from %d."
+                % (args.year, _map_season, args.tqb_starters,
+                   args.year, args.year))
         prices = load_prices(args.prices, tqb_starters_path=args.tqb_starters)
 
     policy = args.policy
