@@ -138,6 +138,9 @@ def test_start_sit_names_both_sides_of_a_swap(tmp_path, capsys):
     assert "START" in out and "SIT" in out
     assert "Braelon Allen" in out
     assert "Tyrone Tracy Jr." in out
+    # Verify sidedness: Braelon Allen (better) should be in START, Tracy (worse) in SIT
+    tail = out[out.index("START"):]
+    assert tail.index("Braelon Allen") < tail.index("Tyrone Tracy Jr.")
 
 
 def test_start_sit_without_a_current_lineup_prints_the_optimum_and_says_so(tmp_path, capsys):
@@ -146,3 +149,21 @@ def test_start_sit_without_a_current_lineup_prints_the_optimum_and_says_so(tmp_p
           "--roster", r, "--start-sit"])
     out = capsys.readouterr().out
     assert "no current lineup" in out.lower()
+
+
+def test_start_sit_normalizes_current_lineup_names(tmp_path, capsys):
+    """Player names in --current should be normalized to match projections.
+    Harold Fannin Jr. spelled as 'Harold Fannin' in --current should match
+    the canonical 'Harold Fannin Jr.' in projections, not trigger START/SIT."""
+    r = roster_file(tmp_path, SIX)
+    cur = tmp_path / "current.txt"
+    # Write names with "Harold Fannin" (no Jr.) to test normalization
+    normalized_optimal = ["Harold Fannin", "Isaiah Likely", "Sam LaPorta",
+                          "Kyle Pitts", "Braelon Allen"]
+    cur.write_text("\n".join(normalized_optimal) + "\n")
+    main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
+          "--roster", r, "--current", str(cur), "--start-sit"])
+    out = capsys.readouterr().out
+    # Despite the different spelling, the normalized names should match,
+    # so output should show "already optimal"
+    assert "already optimal" in out.lower()
