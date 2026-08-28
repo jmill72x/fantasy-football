@@ -87,15 +87,24 @@ def best_lineup(lg, candidates):
             need[slot] = set(elig)
     picked = _best_flex_five(pool, len(flex_slots), need)
 
+    # Assign narrowest-eligibility slots first (RB-only, then WR/TE-only,
+    # then the fully-open FLEXes). A wide slot filled ahead of a narrow one
+    # can claim the only candidate that satisfies the narrow slot, leaving it
+    # empty and silently dropping a chosen player - nothing about `lg.lineup`
+    # guarantees narrow-before-wide declaration order, so the assignment
+    # order must not depend on it either. See
+    # test_the_result_does_not_depend_on_the_order_slots_are_declared.
     picked_sorted = _sorted(picked)
-    for slot, elig in flex_slots:
+    for slot, elig in sorted(flex_slots, key=lambda se: len(se[1])):
         pick = next((x for x in picked_sorted if x.pos in elig), None)
         filled[slot] = pick
         if pick is not None:
             picked_sorted.remove(pick)
 
     slots = [(s, filled.get(s)) for s, _e in lg.lineup]
-    total = sum(x.points for _s, x in slots if x is not None)
+    # sum()'s start defaults to int 0, so an empty/all-None roster would
+    # return an int total - the brief specifies float.
+    total = sum((x.points for _s, x in slots if x is not None), 0.0)
     return LineupResult(slots=slots, total=total)
 
 
