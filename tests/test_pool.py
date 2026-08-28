@@ -1,7 +1,7 @@
 import pytest
 
 from sffl import pool as pool_module
-from sffl.calibrate import load_curves
+from sffl.calibrate import STAT_POSITIONS, load_curves
 from sffl.league import load_league
 from sffl.pool import build_pool, score_season, score_season_calibrated, score_week
 from sffl.schema import PlayerProjection
@@ -261,45 +261,63 @@ def test_calibrated_kicker_scores_correctly_against_a_fully_populated_curve_set(
 def test_score_week_with_no_curves_is_exactly_score_game():
     """Without curves there is nothing to calibrate, so the weekly scorer must
     not drift from the validated engine by even a rounding step."""
-    lg = load_league("leagues/sffl/2026.yaml")
     p = PlayerProjection(name="Test WR", team="GB", pos="WR", source="t",
                          source_year=2026, games=1.0,
                          stats={"rec_ct": 4.4, "rec_yds": 59.7, "rec_td": 0.5})
-    assert score_week(lg, p, None) == score_game(lg, p.stats, "WR")
+    assert score_week(LG, p, None) == score_game(LG, p.stats, "WR")
 
 
 def test_score_week_pays_a_projection_sitting_just_under_a_band_edge():
     """The whole point. 4.4 receptions is under the 5-reception band, so the
     naive band pays 0 - but a player projected at 4.4 clears 5 in plenty of
     weeks and has a real expectation."""
-    lg = load_league("leagues/sffl/2026.yaml")
     curves = load_curves("calibration/2025.yaml")
     p = PlayerProjection(name="Test WR", team="GB", pos="WR", source="t",
                          source_year=2026, games=1.0, stats={"rec_ct": 4.4})
-    naive = score_game(lg, p.stats, "WR")
+    naive = score_game(LG, p.stats, "WR")
     assert naive == 0.0
-    assert score_week(lg, p, curves) > 0.5
+    assert score_week(LG, p, curves) > 0.5
 
 
-def test_score_week_does_not_pay_a_receiver_for_a_shutout_he_never_played():
-    """def_pa and def_ya band 0 at their MAXIMUM. An ungated loop pays every
-    non-defense 12 points a game. This has been introduced three times."""
-    lg = load_league("leagues/sffl/2026.yaml")
+def test_score_week_does_not_leak_a_passing_curve_into_a_receiver():
+    """Gate (b) protects against curve leakage: expected_points clamps below
+    its lowest anchor where band_points floors to 0. pass_yds curves are built
+    from QB weeks only, so their lowest anchor sits well above zero; this test
+    verifies a receiver never queries a passing curve. (Does NOT test gate (a),
+    the DST position filter for def_pa/def_ya - see the separate DST tests.)"""
     curves = load_curves("calibration/2025.yaml")
-    wr = PlayerProjection(name="Test WR", team="GB", pos="WR", source="t",
-                          source_year=2026, games=1.0,
-                          stats={"rec_ct": 4.4, "def_pa": 0.0, "def_ya": 0.0})
-    assert score_week(lg, wr, curves) < 5.0
+    receiver = PlayerProjection(name="Test WR", team="GB", pos="WR", source="t",
+                                source_year=2026, games=1.0,
+                                stats={"rec_ct": 4.4, "def_pa": 0.0, "def_ya": 0.0})
+    assert score_week(LG, receiver, curves) < 5.0
 
 
 def test_score_week_does_not_pay_a_kicker_from_a_passing_curve():
     """expected_points CLAMPS below the lowest anchor where band_points FLOORS.
     pass_yds curves are built from QB weeks only, so their lowest anchor is far
     above zero; asking one about a kicker's 0.0 pays phantom points."""
-    lg = load_league("leagues/sffl/2026.yaml")
     curves = load_curves("calibration/2025.yaml")
     k = PlayerProjection(name="Test K", team="GB", pos="K", source="t",
                          source_year=2026, games=1.0,
                          stats={"xp_made": 2.0, "pass_yds": 0.0})
-    naive = score_game(lg, k.stats, "K")
-    assert score_week(lg, k, curves) == naive
+    naive = score_game(LG, k.stats, "K")
+    assert score_week(LG, k, curves) == naive
+
+
+def test_score_week_calibrates_a_defense_s_banded_points():
+    """The other side of gate (a): for a DST, def_pa and def_ya DO go through
+    the curves, so the calibrated result must differ from the naive band."""
+    curves = load_curves("calibration/2025.yaml")
+    d = PlayerProjection(name="Test DST", team="GB", pos="DST", source="t",
+                         source_year=2026, games=1.0,
+                         stats={"def_pa": 17.0, "def_ya": 305.0})
+    assert score_week(LG, d, curves) != score_game(LG, d.stats, "DST")
+
+
+def test_gate_a_is_redundant_only_while_the_defense_stats_are_dst_only():
+    """score_week's `applicable` gate and STAT_POSITIONS currently encode the
+    same condition, which is why deleting the gate changes nothing today. If
+    STAT_POSITIONS ever widens, that gate becomes load-bearing - and it has no
+    direct test. Fail here so the widening is a decision, not a discovery."""
+    assert STAT_POSITIONS["def_pa"] == {"DST"}
+    assert STAT_POSITIONS["def_ya"] == {"DST"}
