@@ -1,3 +1,4 @@
+import copy
 import itertools
 import pytest
 from sffl.league import load_league
@@ -48,14 +49,19 @@ def test_the_wr_te_slot_forces_a_receiver_when_backs_score_more():
     assert "te1" in picked
 
 
-def test_both_floors_bind_at_once():
+def test_repairing_the_rb_floor_does_not_force_a_weak_te_when_a_wr_already_clears_wr_te():
     """The RB floor forces rb1 in (it is the only RB). te1 must NOT also be
     forced: the WR/TE floor only needs one WR-or-TE, and wr0 (10 pts) clears
     it more cheaply than te1 (1 pt) - forcing te1 in too would leave 10
     points on the table. Verified against brute force rather than a
     hand-derived expectation, since an earlier version of this test asserted
     exactly that wrong claim and passed against a correct implementation only
-    by accident of the assertion never being checked against ground truth."""
+    by accident of the assertion never being checked against ground truth.
+
+    Formerly named test_both_floors_bind_at_once - renamed because a single
+    naive top-five can never actually violate both floors at once here (see
+    test_the_floor_positions_do_not_overlap_which_is_why_one_cut_cannot_break_both),
+    so that name sent readers looking for coverage that cannot exist."""
     roster = [c("rb1", "RB", 1), c("te1", "TE", 1)] + [
         c("wr%d" % i, "WR", 10 + i) for i in range(5)]
     best = 0.0
@@ -71,6 +77,19 @@ def test_both_floors_bind_at_once():
     assert r.total == pytest.approx(best)
     assert "rb1" in picked              # the sole RB - the floor forces it
     assert "te1" not in picked          # a WR clears WR/TE more cheaply
+
+
+def test_the_floor_positions_do_not_overlap_which_is_why_one_cut_cannot_break_both():
+    """_best_flex_five guards against repairing one floor by breaking another.
+    That guard is unreachable while the restricted flex slots partition the
+    positions with no overlap - violating one floor over-satisfies the other.
+    If a future league adds an overlapping slot (an RB/WR flex beside WR/TE),
+    the guard becomes load-bearing and has no direct test. Fail here first."""
+    restricted = [set(e) for s, e in LG.lineup
+                  if set(e) & {"RB", "WR", "TE"} and set(e) != {"RB", "WR", "TE"}]
+    for i, a in enumerate(restricted):
+        for b in restricted[i + 1:]:
+            assert not (a & b), "overlapping floor slots %s and %s" % (a, b)
 
 
 def test_the_fast_path_agrees_with_brute_force_on_every_legal_combination():
@@ -101,6 +120,7 @@ def test_a_roster_too_short_leaves_slots_empty_rather_than_inventing_players():
 def test_an_empty_candidate_list_scores_zero_and_does_not_raise():
     r = best_lineup(LG, [])
     assert r.total == 0.0
+    assert isinstance(r.total, float)   # sum()'s int-0 default would also == 0.0
     assert all(x is None for _s, x in r.slots)
 
 
@@ -110,6 +130,28 @@ def test_ties_break_deterministically_by_name():
     a = best_lineup(LG, [c("bbb", "RB", 5), c("aaa", "RB", 5)])
     b = best_lineup(LG, [c("aaa", "RB", 5), c("bbb", "RB", 5)])
     assert [x.name for _s, x in a.slots if x] == [x.name for _s, x in b.slots if x]
+
+
+def test_the_result_does_not_depend_on_the_order_slots_are_declared():
+    """Filling wide slots before narrow ones lets a FLEX consume the only RB and
+    leaves the RB slot empty, silently dropping a player and the points with
+    him. Nothing validates declaration order, so the optimizer must not care.
+
+    full_roster() does not reproduce this: it carries two RBs, so even if a
+    FLEX grabs one, the RB slot still finds the other. This roster has a SOLE
+    RB that also happens to be the single highest scorer, so a wide slot
+    claims it before floor repair ever has a reason to fire - matching the
+    reviewer's reported case.
+    """
+    roster = [c("rb1", "RB", 100),
+              c("wr1", "WR", 50), c("wr2", "WR", 40),
+              c("wr3", "WR", 30), c("wr4", "WR", 20)]
+    shuffled = copy.deepcopy(LG)
+    flex = [s for s in shuffled.lineup if set(s[1]) & {"RB", "WR", "TE"}]
+    fixed = [s for s in shuffled.lineup if not set(s[1]) & {"RB", "WR", "TE"}]
+    # widest first - the dangerous order
+    shuffled.lineup = fixed + sorted(flex, key=lambda se: -len(se[1]))
+    assert best_lineup(shuffled, roster).total == best_lineup(LG, roster).total
 
 
 def test_delta_is_the_improvement_a_player_makes_to_the_optimal_lineup():
