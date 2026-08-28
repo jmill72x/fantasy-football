@@ -189,14 +189,27 @@ level.** A generic tool ranks the best available player. This ranks the player w
 improves *his worst starting slot* — which, with four backs at or below replacement and one
 RB slot forced every week, is a different answer.
 
-## The three queries
+## The three queries — and why waivers is the GENERAL case
 
-All three are `sffl week`:
+All three are `sffl week`. **Waivers is not a separate question from start/sit; it is the
+same question over a wider candidate pool.**
 
-- **`--start-sit`** — optimize over owned players; report only where the optimum differs from
-  the lineup currently set on CBS. Silence means the lineup is already right.
-- **`--waivers`** — compute `delta` for every free agent; rank `(add, drop)` pairs. The drop
-  is chosen as the player whose removal costs least, not simply the lowest-projected.
+The only reason to claim a player is that he would crack the starting lineup. So
+"does this free agent improve my optimal lineup" IS the start/sit computation, asked on
+Tuesday about players Jeff does not own yet. Start/sit is then the degenerate case with the
+candidate pool restricted to the current roster — which makes it nearly free once waivers
+exists, and is why it is built second.
+
+- **`--waivers`** (the general case) — compute `delta` for every free agent; rank
+  `(add, drop)` pairs. The drop is chosen as the player whose removal costs least, not simply
+  the lowest-projected.
+  **The output MUST name the starting slot the added player would fill.** A claim that
+  improves the optimal lineup is a different recommendation from one that only deepens the
+  bench, and presenting them identically hides the distinction that justifies the claim. A
+  bench stash is sometimes right — it just needs saying so.
+- **`--start-sit`** (the restricted case) — same optimizer, candidate pool = owned players;
+  report only where the optimum differs from the lineup currently set on CBS. Silence means
+  the lineup is already right.
 - **`--trade "GIVE1,GIVE2 for GET1,GET2"`** — `delta` for a hypothetical swap. Names resolve
   through `sffl.identity` like every other name in this project.
 
@@ -241,7 +254,9 @@ Scheduling is launchd, matching `linkedin-post-agent/launchd/`. Sessions did not
 Desktop app auto-updating on 2026-08-26; launchd jobs and the standalone review server did.
 That is measured on this machine, not assumed.
 
-Three runs: **Tuesday** (waivers, before CBS processes), **Saturday** (start/sit),
+Three runs, in the order the week actually needs them: **Tuesday** (waivers, before CBS
+processes — the decision with the most lead time and the one that changes what is even
+available to start), **Saturday** (start/sit over whatever the roster now holds),
 **Sunday morning** (late scratches). Each run always leaves a trace even when it pushes
 nothing, so silence is checkable rather than ambiguous.
 
@@ -275,8 +290,10 @@ nothing, so silence is checkable rather than ambiguous.
 3. `lineup.py` and the optimizer, fully tested, no I/O.
 4. `weekly_proj.py`.
 5. `roster.py`.
-6. `sffl week --start-sit` end to end.
-7. `--waivers`.
+6. `sffl week --waivers` end to end — **the general case, built first.** It runs Tuesday and
+   Wednesday, ahead of CBS processing, and a claim made then is what changes Sunday's lineup.
+7. `--start-sit` — the same optimizer with the candidate pool restricted to owned players.
+   Small once step 6 exists.
 8. `waiver.py` submission with read-back verification.
 9. ntfy + launchd.
 10. `--trade`.
