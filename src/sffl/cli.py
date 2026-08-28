@@ -442,6 +442,58 @@ def cmd_plan(args):
     return 0
 
 
+def _cmd_week(args):
+    from sffl.cbs_weekly import parse as parse_weekly
+    from sffl.identity import normalize_name
+    from sffl.lineup import Candidate, best_lineup, delta
+    from sffl.pool import score_week
+
+    lg = load_league(args.league)
+    curves = load_curves(args.curves) if args.curves else None
+    projections = parse_weekly(args.projections, group=args.group,
+                               week=args.week, season=lg.season)
+
+    owned_raw = [l.strip() for l in open(args.roster) if l.strip()]
+    if not owned_raw:
+        raise SystemExit("roster is empty (%s); an empty roster optimises to "
+                         "an empty lineup and would recommend claiming "
+                         "everyone" % args.roster)
+    owned = set(normalize_name(n) for n in owned_raw)
+
+    by_key = {}
+    for p in projections:
+        by_key[normalize_name(p.name)] = p
+
+    missing = [n for n in owned_raw if normalize_name(n) not in by_key]
+    for name in missing:
+        print("  no projection for %s - excluded from the lineup, NOT scored "
+              "as zero" % name)
+
+    def cand(p):
+        return Candidate(name=p.name, pos=p.pos,
+                         points=score_week(lg, p, curves))
+
+    roster = [cand(by_key[k]) for k in owned if k in by_key]
+    free = [cand(p) for k, p in by_key.items() if k not in owned]
+
+    base = best_lineup(lg, roster)
+    print("\n  best legal lineup: %.2f pts" % base.total)
+    for slot, pick in base.slots:
+        print("    %-6s %s" % (slot, pick.name if pick else "(unfilled)"))
+
+    if args.waivers or not (args.waivers or args.start_sit):
+        ranked = sorted(free, key=lambda c: -delta(lg, roster, c))
+        print("\n  WAIVER TARGETS      %-8s %-6s %s" % ("+PTS", "SLOT", "PLAYER"))
+        for c in ranked[:args.top]:
+            d = delta(lg, roster, c)
+            after = best_lineup(lg, roster + [c])
+            slot = next((s for s, p in after.slots if p and p.name == c.name),
+                        None)
+            where = slot if slot else "bench"
+            print("    %-8.2f %-6s %s (%s)" % (d, where, c.name, c.pos))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sffl")
     sub = ap.add_subparsers(dest="cmd")
@@ -521,6 +573,22 @@ def main(argv=None):
     pln.add_argument("--bids", default=DEFAULT_BIDS,
                       help="silent-auction bid history CSV (default: %s)" % DEFAULT_BIDS)
     pln.set_defaults(func=cmd_plan)
+
+    wk = sub.add_parser("week", help="weekly waiver and start/sit decisions")
+    wk.add_argument("--projections", required=True,
+                    help="saved CBS weekly projections page text")
+    wk.add_argument("--group", default="RB-WR-TE")
+    wk.add_argument("--week", type=int, required=True)
+    wk.add_argument("--roster", required=True,
+                    help="one owned player name per line")
+    wk.add_argument("--league", default=DEFAULT_LEAGUE)
+    wk.add_argument("--curves", default=None,
+                    help="calibration curves YAML; without it the naive band "
+                         "is used and the main edge over CBS is lost")
+    wk.add_argument("--waivers", action="store_true")
+    wk.add_argument("--start-sit", action="store_true")
+    wk.add_argument("--top", type=int, default=10)
+    wk.set_defaults(func=_cmd_week)
 
     args = ap.parse_args(argv)
     if not getattr(args, "func", None):
