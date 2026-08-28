@@ -1,0 +1,14 @@
+# Column maps for the CBS league site's weekly projections table
+# (Players -> PROJECTIONS -> TIMEFRAME: WEEK n (PROJ)).
+#
+# READ RIGHT TO LEFT. The identity prefix is parsed by regex from the left, but
+# the stat block is taken from the RIGHT because EXPERT - which sits between
+# them - is "N/R" for unranked players. Counting from the left would shift
+# every stat after it by one and produce a plausible wrong line.
+#
+# `stats` lists the trailing fields in order. A name of `_` is a column the
+# scoring engine does not use (averages, the site's own FPTS).
+groups:
+  RB-WR-TE:
+    stats: [rush_att, rush_yds, _, rush_td, tgt, rec_ct, rec_yds, _, rec_td,
+            fum_lost, _]
