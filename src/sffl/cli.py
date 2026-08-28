@@ -493,13 +493,20 @@ def _cmd_week(args):
             print("    %-8.2f %-6s %s (%s)" % (d, where, c.name, c.pos))
 
     if args.start_sit:
-        optimal = set(p.name for _s, p in base.slots if p)
+        optimal_by_key = dict((normalize_name(p.name), p.name)
+                              for _s, p in base.slots if p)
         if not args.current:
             print("\n  no current lineup supplied - printing the optimum only")
         else:
-            current = set(l.strip() for l in open(args.current) if l.strip())
-            start = sorted(optimal - current)
-            sit = sorted(current - optimal)
+            current_by_key = {}
+            for line in open(args.current):
+                name = line.strip()
+                if name:
+                    current_by_key[normalize_name(name)] = name
+            start = sorted(optimal_by_key[k] for k in optimal_by_key
+                           if k not in current_by_key)
+            sit = sorted(current_by_key[k] for k in current_by_key
+                         if k not in optimal_by_key)
             if not start and not sit:
                 print("\n  lineup is already optimal - no changes")
             else:
