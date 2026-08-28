@@ -1,6 +1,6 @@
 """Load the league profile. Every scoring band and roster rule lives in YAML."""
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
@@ -17,6 +17,30 @@ class LeagueProfile(object):
         self.roster_size = int(raw["roster_size"])
         self.starters = int(raw["starters"])
         self.flex_slots = int(raw["flex_slots"])
+        # Ordered (slot_label, eligible_positions). See the YAML comment for
+        # why this exists alongside starters/flex_slots.
+        self.lineup = []  # type: List[Tuple[str, Tuple[str, ...]]]
+        known = {"TQB", "QB", "RB", "WR", "TE", "K", "DST"}
+        for entry in raw.get("lineup", []):
+            slot = str(entry["slot"])
+            elig = tuple(str(p) for p in entry["eligible"])
+            unknown = [p for p in elig if p not in known]
+            if unknown:
+                raise ValueError(
+                    "lineup slot %r lists unknown position(s) %s; expected "
+                    "some of %s" % (slot, unknown, sorted(known)))
+            self.lineup.append((slot, elig))
+        if self.lineup:
+            if len(self.lineup) != self.starters:
+                raise ValueError(
+                    "lineup has %d slots but starters is %d; they describe the "
+                    "same fact and must agree"
+                    % (len(self.lineup), self.starters))
+            flex = [s for s, e in self.lineup if set(e) & {"RB", "WR", "TE"}]
+            if len(flex) != self.flex_slots:
+                raise ValueError(
+                    "lineup has %d RB/WR/TE-eligible slots but flex_slots is "
+                    "%d" % (len(flex), self.flex_slots))
         # Games an NFL franchise plays. The denominator for any unit that is
         # a franchise rather than a person - Team QB in particular.
         self.season_games = int(raw["season_games"])

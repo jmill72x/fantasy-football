@@ -7,6 +7,21 @@ budget: 110
 roster_size: 13
 starters: 8
 flex_slots: 5          # RB/WR/TE, floor of 1 RB and 1 WR/TE
+# The weekly starting lineup, slot by slot. `starters` and `flex_slots` above
+# are the counts the auction path uses; this is the same fact as an ordered
+# list, which is what an optimizer needs. league.py asserts the two agree.
+#
+# The RB and WR/TE slots ARE the floors - there is no separate floor setting.
+# A slot that only accepts RB forces one RB into the lineup by construction.
+lineup:
+  - {slot: "TQB",   eligible: ["TQB"]}
+  - {slot: "RB",    eligible: ["RB"]}
+  - {slot: "WR/TE", eligible: ["WR", "TE"]}
+  - {slot: "FLEX1", eligible: ["RB", "WR", "TE"]}
+  - {slot: "FLEX2", eligible: ["RB", "WR", "TE"]}
+  - {slot: "FLEX3", eligible: ["RB", "WR", "TE"]}
+  - {slot: "K",     eligible: ["K"]}
+  - {slot: "DST",   eligible: ["DST"]}
 season_games: 17       # NFL regular-season games per franchise; the Team QB denominator
 silent_auction:
   bid_floor: 26
