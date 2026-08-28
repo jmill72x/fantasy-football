@@ -1,6 +1,6 @@
 """Load the league profile. Every scoring band and roster rule lives in YAML."""
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
 import yaml
 
