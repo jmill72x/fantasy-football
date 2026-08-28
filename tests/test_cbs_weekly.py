@@ -45,10 +45,16 @@ def test_every_row_is_one_week_not_a_season():
 
 def test_a_line_whose_stat_block_is_the_wrong_width_raises(tmp_path):
     """The layout is positional. A changed column count must fail loudly, the
-    same discipline `expect_columns` enforces on the auction extracts."""
+    same discipline `expect_columns` enforces on the auction extracts.
+
+    This line is short enough (8 tokens after the team code) that
+    `expect_tokens` (the whole-segment check - see C1) now catches it before
+    the trailing-block-width check below ever runs, with a more specific
+    message naming the full expected width rather than just the stat
+    block's."""
     bad = tmp_path / "bad.txt"
     bad.write_text("W (9/16) Someone Short RB • NYJ @TEN 17 13 25 1 55 9.5 36.8\n")
-    with pytest.raises(ValueError, match="expected 11"):
+    with pytest.raises(ValueError, match="expected 17"):
         parse(str(bad), group="RB-WR-TE", week=1)
 
 
@@ -57,21 +63,60 @@ def test_an_unknown_group_names_the_groups_that_exist(tmp_path):
         parse(FIXTURE, group="PUNTERS", week=1)
 
 
-def test_the_stat_block_is_found_even_when_the_preamble_is_a_different_width(tmp_path):
-    """The real discriminator between reading from the right and assuming a
-    fixed offset from the left. In the captured fixture every preamble is the
-    same width - `N/R` is one token exactly like a numeric rank - so a parser
-    hardcoding `tokens[6:]` reads it identically and the N/R test cannot tell
-    the two apart. A row with a SHORTER preamble can. Constructed by hand, not
-    captured, which is why it lives here and not in the fixture file."""
+def test_a_short_preamble_now_raises_instead_of_being_silently_tolerated(tmp_path):
+    """Before C1's `expect_tokens` fix, right-anchored slicing was the ONLY
+    defence this parser had: `N/R` is one token exactly like a numeric rank,
+    so a parser hardcoding `tokens[6:]` and one reading `tokens[-11:]` agreed
+    on every captured row, and only a row with a genuinely narrower preamble
+    (constructed by hand below, never captured) could tell them apart - that
+    row used to parse successfully, on the reasoning that a shorter preamble
+    was a shape right-anchoring should tolerate.
+
+    C1 changed that reasoning: a preamble this short IS a shifted layout -
+    exactly the "column removed" case C1 names - so it must now be refused
+    up front by `expect_tokens`, not silently parsed by the trailing slice.
+    Right-anchoring is still what finds the block on a line of the CORRECT
+    width (see the N/R test above); it no longer has to also cover widths
+    that are wrong."""
     short = tmp_path / "short_preamble.txt"
     # Same trailing 11-column stat block as Braelon Allen, but the preamble
-    # carries four tokens instead of six.
+    # carries four tokens instead of six - 15 total, not the required 17.
     short.write_text(
         "W (9/16) Braelon Allen RB • NYJ @TEN 17 13 25 "
         "9.5 36.8 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 1.70\n")
-    rows = parse(str(short), group="RB-WR-TE", week=1)
-    assert len(rows) == 1
-    assert rows[0].stats["rush_yds"] == 36.8
-    assert rows[0].stats["rec_ct"] == 0.9
-    assert rows[0].stats["fum_lost"] == 0.2
+    with pytest.raises(ValueError, match="expected 17"):
+        parse(str(short), group="RB-WR-TE", week=1)
+
+
+def test_a_column_appended_after_the_stat_block_raises(tmp_path):
+    """CRITICAL: block = tokens[-len(fields):] always returns exactly 11
+    tokens whenever the line has at least 11 - so appending one column to a
+    real, well-formed line does NOT trip the block-width check. It just
+    reads a different, still-plausible 11 columns, shifted by one: this
+    exact line, unpatched, reads rush_yds as 3.9 (was 36.8) and rec_ct as
+    7.9 (was 0.9) - the precise silent misread C1 names. expect_tokens
+    catches it by checking the WHOLE post-team segment, not just the
+    trailing slice."""
+    bad = tmp_path / "extra_column.txt"
+    # Braelon Allen's real line (17 tokens after the team code) with one
+    # extra trailing token - simulates CBS appending a new column.
+    bad.write_text(
+        "W (9/16) Braelon Allen RB • NYJ @TEN 17 13 25 1 55 "
+        "9.5 36.8 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 1.70 99\n")
+    with pytest.raises(ValueError, match="18"):
+        parse(str(bad), group="RB-WR-TE", week=1)
+
+
+def test_a_column_removed_from_the_stat_block_raises(tmp_path):
+    """The other direction: dropping the trailing column still leaves 16
+    tokens, well over the 11 the trailing slice needs, so the old
+    block-width check could not see this shift either - it would silently
+    read EXPERT (55) as rush_att and shift every other field by one."""
+    bad = tmp_path / "missing_column.txt"
+    # Braelon Allen's real line (17 tokens after the team code) with the
+    # trailing column dropped.
+    bad.write_text(
+        "W (9/16) Braelon Allen RB • NYJ @TEN 17 13 25 1 55 "
+        "9.5 36.8 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2\n")
+    with pytest.raises(ValueError, match="16"):
+        parse(str(bad), group="RB-WR-TE", week=1)

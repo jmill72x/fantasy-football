@@ -167,3 +167,80 @@ def test_start_sit_normalizes_current_lineup_names(tmp_path, capsys):
     # Despite the different spelling, the normalized names should match,
     # so output should show "already optimal"
     assert "already optimal" in out.lower()
+
+
+def test_start_sit_excludes_a_current_name_with_no_projection_from_sit(tmp_path, capsys):
+    """--current is documented as the eight-player lineup currently set on
+    CBS - TQB, K and DST included. sources/cbs-weekly.yaml defines only the
+    RB-WR-TE group, so those names have no projection and never land in
+    by_key. Before the fix they still fell into SIT every real run: 'bench
+    your kicker', unconditionally. They must be named as not evaluated
+    instead, and must not appear as a SIT recommendation."""
+    r = roster_file(tmp_path, SIX)
+    cur = tmp_path / "current.txt"
+    cur.write_text("\n".join(OPTIMAL_FIVE + ["Some Kicker"]) + "\n")
+    main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
+          "--roster", r, "--current", str(cur), "--start-sit"])
+    out = capsys.readouterr().out
+    assert "not evaluated" in out.lower()
+    assert "Some Kicker" in out
+    # OPTIMAL_FIVE is genuinely optimal among the evaluated players, so once
+    # "Some Kicker" is correctly excluded there is nothing left to report.
+    assert "already optimal" in out.lower()
+
+
+def test_a_name_collision_after_normalization_warns_instead_of_silently_dropping(tmp_path, capsys):
+    """normalize_name strips generational suffixes, so a page carrying both
+    'Collision Test' and 'Collision Test Jr.' collide on the same by_key
+    entry. last-write-wins previously erased one with no signal at all;
+    this must warn, naming both raw spellings, and must not raise - a real
+    page can legitimately hold two similarly-named players."""
+    proj = tmp_path / "collide.txt"
+    proj.write_text(
+        "W (9/16) Collision Test RB • NYJ @TEN 17 13 25 1 55 "
+        "9.5 36.8 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 1.70\n"
+        "W (9/16) Collision Test Jr. RB • NYJ @TEN 17 13 25 1 55 "
+        "5.0 20.0 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 1.70\n"
+    )
+    r = roster_file(tmp_path, ["Collision Test"])
+    rc = main(["week", "--projections", str(proj), "--group", "RB-WR-TE",
+               "--week", "1", "--roster", r, "--waivers"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "WARNING" in out
+    assert "Collision Test" in out
+    assert "Collision Test Jr." in out
+
+
+def test_waiver_ranking_ties_break_by_name_not_page_order(tmp_path, capsys):
+    """Owning Fannin/Likely/LaPorta/Allen/Marks/Tracy leaves Ayomanor and
+    Pitts as free agents. Both project 2.50 naive (a real tie in the
+    fixture) and, against this roster, both add exactly 0.90 to the optimal
+    lineup by displacing Marks - a genuine tie in `delta`, not just in raw
+    score. `sorted` is stable over insertion order, so without an explicit
+    tiebreak the ranking between them depends on which one the saved page
+    happened to list first - reversing the file must not change the
+    printed order."""
+    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
+                               "Sam LaPorta", "Braelon Allen",
+                               "Woody Marks", "Tyrone Tracy Jr."])
+
+    reversed_path = tmp_path / "reversed.txt"
+    lines = open(PROJ).read().splitlines()
+    reversed_path.write_text("\n".join(reversed(lines)) + "\n")
+
+    main(["week", "--projections", PROJ, "--group", "RB-WR-TE",
+          "--week", "1", "--roster", r, "--waivers"])
+    out_forward = capsys.readouterr().out
+    main(["week", "--projections", str(reversed_path), "--group", "RB-WR-TE",
+          "--week", "1", "--roster", r, "--waivers"])
+    out_reversed = capsys.readouterr().out
+
+    names_forward = [name for _pts, _slot, name, _pos in waiver_rows(out_forward)]
+    names_reversed = [name for _pts, _slot, name, _pos in waiver_rows(out_reversed)]
+    assert names_forward == names_reversed, (
+        "waiver order changed when the saved page's line order was reversed: "
+        "%r vs %r" % (names_forward, names_reversed))
+    # And specifically: with a real tie in delta, the name tiebreak sorts
+    # Ayomanor ahead of Pitts, in both directions.
+    assert names_forward.index("Elic Ayomanor") < names_forward.index("Kyle Pitts")

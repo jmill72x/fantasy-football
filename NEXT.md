@@ -9,6 +9,10 @@ Auction cheatsheet pipeline for the STRIPES Fantasy Football League (CBS). Four 
 artifacts render. **TODO B is done and answered NO** (see below). What remains is the
 08-21→08-23 data refresh, which needs Jeff at the Mac.
 
+**A fifth, later addition beyond the four auction plans: the read-only in-season core**
+(`sffl week` — weekly waivers and start/sit) **is also merged,** including a post-merge
+fix wave (C1/I1-I5/I8, 2026-08-28). See the status table below and "What works today."
+
 **Jeff is not attending the auction.** A surrogate drafts for him on 08-26. **Jeff owns the
 BID; the surrogate owns the SELECTION.** The Excel + `Key & Intel` sheet is the deliverable;
 the PDF/iPad path is no longer the primary artifact and no annotation app needs buying.
@@ -19,6 +23,7 @@ the PDF/iPad path is no longer the primary artifact and no annotation app needs 
 | **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections, lineup floors and market calibration — 165 tests |
 | **Plan 3 — Excel + PDF renderers** | ✅ merged — 203 tests. `sffl render` writes both |
 | **Plan 4 — silent auction planner** | ✅ merged — 279 tests. `sffl plan`; the table is on PDF p17 |
+| **In-season core — weekly waivers & start/sit (read-only)** | ✅ merged — 386 tests. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), ntfy/launchd delivery, `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop |
 
 Verify state in one command:
 
@@ -41,6 +46,27 @@ PYTHONPATH=src ./.venv/bin/python -m sffl.cli value \
 543 players, TQB=32. Every row carries **MY$** (worth against replacement) and **EST$**
 (what the room will pay). Swap `value` for `render` and add `--pdf`/`--xlsx` to write the
 artifacts — that is the command to run on 08-21.
+
+**What works today, in-season (read-only).** `sffl week` ranks waiver targets and flags
+start/sit changes from a saved CBS weekly-projections page — this module does no network
+I/O, so the page is fetched by a browser tool and saved first, same discipline as every
+other extract in this project:
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m sffl.cli week \
+  --projections tests/fixtures/cbs_weekly_rbwrte.txt --group RB-WR-TE --week 1 \
+  --roster roster.txt --curves calibration/2025.yaml --waivers
+```
+
+`--roster` (and, for `--start-sit`, `--current`) is a text file of one player name per
+line, saved the same way. The `--projections` path above is the tracked test fixture —
+8 real CBS rows, captured 2026-08-28 — since no full saved page is committed yet; a real
+week points this at a saved page under `data/weekly/` (gitignored). Swap `--waivers` for
+`--start-sit --current current.txt` to check whether the lineup currently set on CBS is
+already optimal. Only the `RB-WR-TE` group is defined in `sources/cbs-weekly.yaml` so far
+— TQB/K/DST would need their own one-entry addition, no Python change. **Ranks adds only:**
+it does not yet choose which rostered player to drop to make room, so the spec's
+`(add, drop)` pairing is half-built (see the plan's Self-Review).
 
 ## GOAL — the dry run is DONE. What is left is the refresh.
 

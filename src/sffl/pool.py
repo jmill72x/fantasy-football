@@ -137,7 +137,22 @@ def score_week(lg, player, curves):
 
     The gating below is identical to `score_season_calibrated`'s and exists for
     the same two reasons - see its docstring. Do not simplify either gate away.
+
+    Refuses a line that is not one week: `player` carries the same
+    PlayerProjection type `score_season_calibrated` takes, and nothing about
+    the type distinguishes a week from a season, so a season total passed
+    here would silently return a plausible-looking number instead of the
+    single week's expectation it claims to be. Same discipline as
+    `tqb_starters_season`, the `flat_priced_pools` price guard and
+    `build_pool`'s multi-set refusal: raise rather than document the trap.
     """
+    if player.games != 1:
+        raise ValueError(
+            "score_week got games=%r for %r; score_week takes a single "
+            "week's projected line (games=1), while score_season_calibrated "
+            "takes a season total - pass the right function for the shape "
+            "of this data" % (player.games, player.name))
+
     if curves is None:
         return score_game(lg, player.stats, pos=player.pos)
 
@@ -156,7 +171,14 @@ def score_week(lg, player, curves):
         value = line.get(stat, 0.0)
         naive_banded += band_points(lg.bands[stat], value)
         curve = curves.get(stat)
-        if curve and player.pos in STAT_POSITIONS.get(stat, ()):
+        # STAT_POSITIONS[stat], not .get(stat, ()): score_season_calibrated
+        # (above) uses the same direct indexing, and this docstring claims
+        # the two gates are identical. A banded stat added to lg.bands
+        # without a STAT_POSITIONS entry must raise here exactly as loudly
+        # as it already does on the season path - a silent .get() fallback
+        # would make that claim false and let the weekly path skip
+        # calibration with no signal at all.
+        if curve and player.pos in STAT_POSITIONS[stat]:
             calibrated_banded += expected_points(curve, value)
         else:
             calibrated_banded += band_points(lg.bands[stat], value)

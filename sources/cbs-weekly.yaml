@@ -12,3 +12,9 @@ groups:
   RB-WR-TE:
     stats: [rush_att, rush_yds, _, rush_td, tgt, rec_ct, rec_yds, _, rec_td,
             fum_lost, _]
+    # Total whitespace-separated tokens after the team code: 6 preamble
+    # (OPP OVP BYE ROST START EXPERT) + 11 stats. Reading the stat block from
+    # the RIGHT survives a non-numeric EXPERT, but it CANNOT detect a column
+    # being added or removed - the slice just returns a different 11 columns,
+    # every one of them plausible. This is the check that catches that.
+    expect_tokens: 17
