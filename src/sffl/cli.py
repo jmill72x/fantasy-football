@@ -491,6 +491,23 @@ def _cmd_week(args):
                         None)
             where = slot if slot else "bench"
             print("    %-8.2f %-6s %s (%s)" % (d, where, c.name, c.pos))
+
+    if args.start_sit:
+        optimal = set(p.name for _s, p in base.slots if p)
+        if not args.current:
+            print("\n  no current lineup supplied - printing the optimum only")
+        else:
+            current = set(l.strip() for l in open(args.current) if l.strip())
+            start = sorted(optimal - current)
+            sit = sorted(current - optimal)
+            if not start and not sit:
+                print("\n  lineup is already optimal - no changes")
+            else:
+                print("\n  START           SIT")
+                for i in range(max(len(start), len(sit))):
+                    a = start[i] if i < len(start) else ""
+                    b = sit[i] if i < len(sit) else ""
+                    print("    %-15s %s" % (a, b))
     return 0
 
 
@@ -587,6 +604,9 @@ def main(argv=None):
                          "is used and the main edge over CBS is lost")
     wk.add_argument("--waivers", action="store_true")
     wk.add_argument("--start-sit", action="store_true")
+    wk.add_argument("--current", default=None,
+                    help="the lineup currently set on CBS, one name per line; "
+                         "without it the optimum is printed with no diff")
     wk.add_argument("--top", type=int, default=10)
     wk.set_defaults(func=_cmd_week)
 

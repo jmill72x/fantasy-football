@@ -108,3 +108,41 @@ def test_an_empty_roster_file_raises_rather_than_claiming_everyone(tmp_path):
     with pytest.raises(SystemExit, match="roster is empty"):
         main(["week", "--projections", PROJ, "--group", "RB-WR-TE",
               "--week", "1", "--roster", r, "--waivers"])
+
+
+OPTIMAL_FIVE = ["Harold Fannin Jr.", "Isaiah Likely", "Sam LaPorta",
+                "Kyle Pitts", "Braelon Allen"]
+SIX = OPTIMAL_FIVE + ["Tyrone Tracy Jr."]
+
+
+def test_start_sit_is_silent_when_the_current_lineup_is_already_optimal(tmp_path, capsys):
+    r = roster_file(tmp_path, SIX)
+    cur = tmp_path / "current.txt"
+    cur.write_text("\n".join(OPTIMAL_FIVE) + "\n")
+    main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
+          "--roster", r, "--current", str(cur), "--start-sit"])
+    out = capsys.readouterr().out
+    assert "already optimal" in out.lower()
+
+
+def test_start_sit_names_both_sides_of_a_swap(tmp_path, capsys):
+    """Six players, five flex slots: Tracy (1.10) is the odd one out, so a
+    lineup that starts him instead of Allen (1.70) is one swap from optimal."""
+    r = roster_file(tmp_path, SIX)
+    cur = tmp_path / "current.txt"
+    swapped = [n for n in OPTIMAL_FIVE if n != "Braelon Allen"]
+    cur.write_text("\n".join(swapped + ["Tyrone Tracy Jr."]) + "\n")
+    main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
+          "--roster", r, "--current", str(cur), "--start-sit"])
+    out = capsys.readouterr().out
+    assert "START" in out and "SIT" in out
+    assert "Braelon Allen" in out
+    assert "Tyrone Tracy Jr." in out
+
+
+def test_start_sit_without_a_current_lineup_prints_the_optimum_and_says_so(tmp_path, capsys):
+    r = roster_file(tmp_path, SIX)
+    main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
+          "--roster", r, "--start-sit"])
+    out = capsys.readouterr().out
+    assert "no current lineup" in out.lower()
