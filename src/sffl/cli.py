@@ -460,9 +460,20 @@ def _cmd_week(args):
                          "everyone" % args.roster)
     owned = set(normalize_name(n) for n in owned_raw)
 
+    # last-write-wins: normalize_name strips generational suffixes, so e.g.
+    # "Braelon Allen" and "Braelon Allen Jr." collide on the same key and
+    # one silently vanishes. Not raised - a real page can legitimately carry
+    # two similarly-named players - but it must not be silent, so name both
+    # raw spellings when it happens.
     by_key = {}
     for p in projections:
-        by_key[normalize_name(p.name)] = p
+        key = normalize_name(p.name)
+        if key in by_key and by_key[key].name != p.name:
+            print("  WARNING: %r and %r both normalize to the same key - "
+                  "only %r is kept (last one wins); the other's projection "
+                  "is silently dropped from the pool"
+                  % (by_key[key].name, p.name, p.name))
+        by_key[key] = p
 
     missing = [n for n in owned_raw if normalize_name(n) not in by_key]
     for name in missing:
@@ -476,15 +487,32 @@ def _cmd_week(args):
     roster = [cand(by_key[k]) for k in owned if k in by_key]
     free = [cand(p) for k, p in by_key.items() if k not in owned]
 
+    # Denominators, not just results - this repo's convention (see
+    # fit.PriceMap.total_rows, _board_rows' dropped-count print) is to say
+    # "n matched of N loaded" rather than a bare count with nothing to
+    # compare it against.
+    resolved = len(owned_raw) - len(missing)
+    print("  %d rows parsed from %s" % (len(projections), args.projections))
+    print("  %d of %d roster names resolved to a projection"
+          % (resolved, len(owned_raw)))
+    print("  %d free agents ranked" % len(free))
+
     base = best_lineup(lg, roster)
     print("\n  best legal lineup: %.2f pts" % base.total)
     for slot, pick in base.slots:
         print("    %-6s %s" % (slot, pick.name if pick else "(unfilled)"))
 
     if args.waivers or not (args.waivers or args.start_sit):
-        ranked = sorted(free, key=lambda c: -delta(lg, roster, c))
-        print("\n  WAIVER TARGETS      %-8s %-6s %s" % ("+PTS", "SLOT", "PLAYER"))
-        for c in ranked[:args.top]:
+        # Name is the explicit tiebreak, not insertion (page) order. Two
+        # decimal points of delta tie often, and `sorted` is stable, so
+        # without this the rank at the --top cutoff would depend on how the
+        # page happened to be saved - the same determinism
+        # `lineup._sorted` exists to guarantee one layer down.
+        ranked = sorted(free, key=lambda c: (-delta(lg, roster, c), c.name))
+        shown = ranked[:args.top]
+        print("\n  WAIVER TARGETS (top %d of %d)   %-8s %-6s %s"
+              % (len(shown), len(ranked), "+PTS", "SLOT", "PLAYER"))
+        for c in shown:
             d = delta(lg, roster, c)
             after = best_lineup(lg, roster + [c])
             slot = next((s for s, p in after.slots if p and p.name == c.name),
@@ -503,6 +531,21 @@ def _cmd_week(args):
                 name = line.strip()
                 if name:
                     current_by_key[normalize_name(name)] = name
+
+            # --current is documented as the whole eight-player lineup set
+            # on CBS, but sources/cbs-weekly.yaml only defines the RB-WR-TE
+            # group - a TQB, K or DST name has no projection and was never
+            # in by_key at all. Excluded from SIT here, same as `missing`
+            # excludes it from the roster above; named so the exclusion is
+            # visible rather than reading as "bench your kicker."
+            not_evaluated = sorted(current_by_key[k] for k in current_by_key
+                                   if k not in by_key)
+            for name in not_evaluated:
+                print("  no projection for %s - not evaluated for "
+                      "start/sit, NOT a recommendation to sit him" % name)
+            current_by_key = dict((k, v) for k, v in current_by_key.items()
+                                  if k in by_key)
+
             start = sorted(optimal_by_key[k] for k in optimal_by_key
                            if k not in current_by_key)
             sit = sorted(current_by_key[k] for k in current_by_key

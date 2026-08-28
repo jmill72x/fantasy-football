@@ -314,6 +314,22 @@ def test_score_week_calibrates_a_defense_s_banded_points():
     assert score_week(LG, d, curves) != score_game(LG, d.stats, "DST")
 
 
+def test_score_week_refuses_a_season_line():
+    """score_week takes ONE week's projected line; score_season_calibrated
+    takes a season total - same PlayerProjection type, opposite shape, no
+    guard. A 95-catch, 1300-yard SEASON line silently returned a
+    plausible-looking 51.25 with nothing to say it was never a week. This
+    repo refuses this class of mistake elsewhere (tqb_starters_season, the
+    flat_priced_pools price guard, build_pool's multi-set refusal) rather
+    than documenting it and hoping - this is the same discipline applied
+    here."""
+    p = PlayerProjection(name="Season WR", team="GB", pos="WR", source="t",
+                         source_year=2026, games=17,
+                         stats={"rec_ct": 95.0, "rec_yds": 1300.0})
+    with pytest.raises(ValueError, match="games"):
+        score_week(LG, p, None)
+
+
 def test_gate_a_is_redundant_only_while_the_defense_stats_are_dst_only():
     """score_week's `applicable` gate and STAT_POSITIONS currently encode the
     same condition, which is why deleting the gate changes nothing today. If

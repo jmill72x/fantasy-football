@@ -44,6 +44,7 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
             "unknown group %r; %s defines %s"
             % (group, profile_path, sorted(groups)))
     fields = groups[group]["stats"]
+    expect_tokens = groups[group].get("expect_tokens")
 
     out = []
     with open(path) as fh:
@@ -55,6 +56,14 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
             if not m:
                 continue
             tokens = m.group("rest").split()
+            if expect_tokens is not None and len(tokens) != expect_tokens:
+                raise ValueError(
+                    "%s: %r has %d tokens after the team code, expected %d - "
+                    "the layout is positional and a shifted column count "
+                    "reads the wrong stat into every field, even though the "
+                    "trailing slice below would still return a plausible "
+                    "block of the right WIDTH"
+                    % (path, m.group("name"), len(tokens), expect_tokens))
             block = tokens[-len(fields):]
             if len(block) != len(fields):
                 raise ValueError(
