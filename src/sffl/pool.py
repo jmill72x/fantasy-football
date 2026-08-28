@@ -121,6 +121,49 @@ def score_season_calibrated(lg, player, curves):
     return (linear_total + calibrated_banded) * player.games
 
 
+def score_week(lg, player, curves):
+    """Expected points for ONE week from a projected stat line.
+
+    `player.stats` holds a single week's projection, not a season total, so
+    unlike `score_season_calibrated` there is no division by games and no
+    multiplication back up.
+
+    WHY THIS IS NOT JUST score_game. CBS already applies this league's bands to
+    its weekly projections and agrees with `score_game` to within a cent. But it
+    bands a POINT ESTIMATE, and `E[band(X)] != band(E[X])`: a player projected
+    at 4.4 receptions is scored 0 for receptions, when he clears 5 in plenty of
+    weeks. The curves map per-game mean -> expected points, and a weekly
+    projection IS a per-game mean, so they apply directly here.
+
+    The gating below is identical to `score_season_calibrated`'s and exists for
+    the same two reasons - see its docstring. Do not simplify either gate away.
+    """
+    if curves is None:
+        return score_game(lg, player.stats, pos=player.pos)
+
+    line = dict((k, v) for k, v in player.stats.items()
+                if not k.startswith("_"))
+
+    applicable = _ALWAYS_BANDED
+    if player.pos == "DST":
+        applicable = _ALWAYS_BANDED + ("def_pa", "def_ya")
+
+    full = score_game(lg, line, pos=player.pos)
+
+    naive_banded = 0.0
+    calibrated_banded = 0.0
+    for stat in applicable:
+        value = line.get(stat, 0.0)
+        naive_banded += band_points(lg.bands[stat], value)
+        curve = curves.get(stat)
+        if curve and player.pos in STAT_POSITIONS.get(stat, ()):
+            calibrated_banded += expected_points(curve, value)
+        else:
+            calibrated_banded += band_points(lg.bands[stat], value)
+
+    return (full - naive_banded) + calibrated_banded
+
+
 def build_pool(lg, profile_path, csv_path, year, set_name=None):
     """Read one extract, drop individual QBs, add TQB units, score everything.
 
