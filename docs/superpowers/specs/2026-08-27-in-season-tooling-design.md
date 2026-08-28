@@ -1,7 +1,7 @@
 # In-Season Tooling — Design
 
 **Date:** 2026-08-27
-**Status:** approved in brainstorming, not yet planned
+**Status:** approved in brainstorming; data sources VERIFIED 2026-08-28, not yet planned
 
 ## Goal
 
@@ -11,15 +11,40 @@ phone. One command, no dashboard, no web service.
 
 ## Why this is worth building
 
-Nothing off the shelf can score this league. SFFL uses **banded scoring with hard floors**;
-every mainstream platform models per-unit rates plus fixed bonus thresholds.
-`poc/compare_ds_scoring.py` already measures that gap against Draft Sharks' own sync and
-finds the two structurally different. StatsDeck, the tool that prompted this, does not
-support CBS at all and would inherit the same mismatch if it did.
+**NOT because we score better than CBS. We do not.** Measured 2026-08-28 against six real
+week-1 projections off the league site, `score_game` agrees with CBS's own projected FPTS to
+within $0.01 on every one. CBS applies this league's banded scoring to its weekly
+projections correctly. Any design premised on out-scoring them is wrong.
 
-`src/sffl/scoring.py::score_game(lg, stats, pos)` is validated against ~250 real CBS weekly
-observations. It is the asset, it is already per-game, and it is the one thing that cannot
-be bought.
+The edge is two things, both measured:
+
+**1. CBS bands a POINT ESTIMATE; the right answer is an EXPECTATION.** `E[band(X)]` is not
+`band(E[X])`, and the gap is large exactly where in-season decisions are made — at the
+margins between similar players. On eight real week-1 stat lines:
+
+| stat | projection | CBS's band | calibrated | diff |
+|---|---|---|---|---|
+| rec_ct | 4.4 | **0.00** | 1.17 | +1.17 |
+| rec_ct | 4.1 | **0.00** | 1.02 | +1.02 |
+| rec_ct | 5.2 | 2.00 | 1.57 | **-0.43** |
+| rush_yds | 36.8 | **0.00** | 0.83 | +0.83 |
+| rush_yds | 41.0 | **0.00** | 0.85 | +0.85 |
+| rec_yds | 46.5 | **0.00** | 0.77 | +0.77 |
+| **total (8 lines)** | | **3.00** | **7.88** | **+4.88** |
+
+A player projected just UNDER a band edge scores zero for that stat in CBS's numbers and has
+a real non-zero expectation in ours; one just OVER is overstated. Systematic and
+directional, not noise. `calibration/2025.yaml` maps per-game mean -> expected points, and a
+weekly projection IS a per-game mean, so the curves apply directly. **This is their real
+home — a better fit than the season totals they were built for.**
+
+**2. The optimizer.** CBS gives per-player points and nothing else. It has no notion of the
+best legal lineup under this league's slots and floors, and no notion of which free agent
+most improves *Jeff's worst starting slot*. That question is unanswerable from a ranked list
+and is the whole of the waiver query.
+
+`src/sffl/scoring.py::score_game(lg, stats, pos)` remains the foundation, validated against
+~250 real CBS weekly observations.
 
 ## Scope
 
@@ -87,22 +112,38 @@ both band 0 at their MAXIMUM, so any loop over bands that is not position-gated 
 receiver a shutout. That trap has been hit three times in this codebase. Do not hit it a
 fourth.
 
-## Data sources — all three unverified, all three verified first
+## Data source — ONE, and it is verified
 
-| source | gives | status |
-|---|---|---|
-| Draft Sharks Projections export | weekly per-stat lines | **UNVERIFIED** — weekly not published until ~week 1. The Who to Start page states DS uses "weekly stat projections". The 47-column season export parses today. |
-| CBS public projections | per-stat incl. **`FL` (fumbles lost)** | Reachable and scrapeable as text today at `/fantasy/football/stats/{POS}/2026/season/projections/nonppr/`. Weekly not yet live. |
-| CBS league site | live roster, free agents, waiver queue | **UNVERIFIED** — league URL not yet known to the pipeline. |
+**`https://stripesfantasyfootballleague.football.cbssports.com/stats/stats-main`**, verified
+2026-08-28 while logged in.
 
-**Everything in this design rests on those three. Task 1 is a spike that proves each is
-reachable and parseable, and the plan must not build modeling on top of an unproven
-source.** If the CBS league scrape does not expose free agents, waivers is not buildable and
-the scope drops to start/sit.
+`Players -> PROJECTIONS -> TIMEFRAME: WEEK n (PROJ)` gives everything this design needs, in
+one table:
+
+- **Per-stat weekly projections**: rushing ATT/YDS/AVG/TD, receiving TAR/REC/YDS/AVG/TD,
+  **FUMBLES LOST**, plus OPP (the matchup is already baked in), BYE, ROST%, START%.
+- **Weeks 1-18**, selectable. Live now, twelve days before kickoff.
+- **`FREE AGENTS` / `ALL PLAYERS` / `FANTASY TEAM` filters** — the free-agent pool waivers
+  needs, from the same table.
+- **This league's own positions**: `TQB`, `RB-WR-TE`, K, DST. No aggregation to build.
+- Readable as plain text via `get_page_text`; 17 pages with an `All` option, and an export
+  control on the page.
+- `PENDING ADD/DROPS` at the page foot is the waiver queue.
+- Stamped `REPORT UPDATED AS OF ...`, so staleness is detectable.
+
+**Draft Sharks is NOT a dependency.** Its weekly tool is likely paywalled in-season; it is
+also unnecessary, since the league site is free, included, and richer.
+
+**Fractional projections (0.4 attempts, 5.2 receptions) confirm these are per-game
+expectations**, which is precisely the input `calibrate.expected_points` wants.
 
 CBS's `FL` column unblocks the recorded lost-fumble gap: the league penalises a lost fumble
-(~-1), `leagues/sffl/2026.yaml` has no term, and Draft Sharks does not publish the stat at
-all.
+(~-1) and `leagues/sffl/2026.yaml` has no term. Note CBS displays fumbles lost but does NOT
+appear to score them (Braelon Allen's FPTS reconciles exactly without the penalty), so this
+is a real divergence from what the league actually pays.
+
+**Remaining unverified: the WRITE path only** — submitting to `PENDING ADD/DROPS` and
+setting a lineup. Reading is proven. Task 1 shrinks to verifying the write.
 
 ## Architecture
 
@@ -228,7 +269,8 @@ nothing, so silence is checkable rather than ambiguous.
 
 ## Sequencing
 
-1. **Spike — prove the three sources.** No modeling. Output is an answer, not code we keep.
+1. **Spike — prove the WRITE path only.** Reading is verified. Confirm a pair can be queued
+   into `PENDING ADD/DROPS` and read back. Output is an answer, not code we keep.
 2. Explicit lineup slots in the league YAML.
 3. `lineup.py` and the optimizer, fully tested, no I/O.
 4. `weekly_proj.py`.
@@ -244,11 +286,14 @@ cannot be finished until the CBS league site and weekly projections are live.
 
 ## Open questions
 
-1. **CBS league URL** — not yet known to the pipeline. Blocks the spike.
-2. **Do CBS league weekly projections carry stat lines or only points?** If only points, CBS
-   is a cross-check and Draft Sharks is the source of record.
-3. **Does the DS Projections export switch to weekly in-season?** If not, weekly stat lines
-   must come from the Who to Start tool, which is a per-player UI rather than a bulk export —
-   a materially harder scrape.
-4. **Should the lost-fumble term be added now that CBS publishes `FL`?** It is a scoring
-   change and belongs on its own branch with its own evidence, not folded into this.
+**1, 2 and 3 are RESOLVED** (2026-08-28): the league URL works, weekly projections carry full
+stat lines, and Draft Sharks is not needed.
+
+1. **Can the waiver queue and lineup be written programmatically**, and does the page confirm
+   the write on read-back? The only unproven part of the design.
+2. **Should the lost-fumble term be added now that CBS publishes `FL`?** CBS shows the stat
+   but does not appear to score it, while the league does. It is a scoring change and belongs
+   on its own branch with its own evidence, not folded into this.
+3. **Does the calibration edge hold at the top of the roster, or only at the margins?** The
+   +4.88 measured above is on eight low-projection lines, where band edges bite hardest. The
+   plan should measure it across a full week before claiming a general improvement.
