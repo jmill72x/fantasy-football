@@ -989,3 +989,42 @@ factor to a single year.
 taken it and he paid ~$2-3 more than the minimum. That was still correct ex ante: $40
 carried 60% TIE1+ / 40% TIE2+ against $42's 20%/0%, and he bought certainty in what turned
 out to be the first tie-free year in six. Hindsight is not evidence the decision was wrong.
+
+## Weekly calibration — measured (2026-08-28, Task 7 of the in-season-core plan)
+
+The design spec's case for `score_week` rests on +4.88 across eight **hand-picked**
+low-projection lines (band edges bite hardest there). `poc/measure_weekly_calibration.py`
+measures the same comparison — `scoring.score_game` (CBS's banded point estimate) against
+`pool.score_week` (the calibrated expectation, `calibration/2025.yaml`, 48 players / 811
+player-weeks) — on real data instead of a chosen sample.
+
+**The input is 8 fixture rows from one saved CBS week-1 projections page
+(`tests/fixtures/cbs_weekly_rbwrte.txt`), not a real full page.** It is the only real
+weekly projection data captured before the season starts, so this is a measurement on
+what exists today, not on "a whole position group" as the brief's phrasing suggested.
+
+```
+n=8   CBS total 20.70   calibrated 28.16   diff +7.46
+players moved by >= 0.5 pts: 7 of 8
+```
+
+Every one of the 7 movers moved **up**. That direction is expected, not a bias finding:
+this fixture is all low-volume TE/WR/RB lines sitting below several band floors, exactly
+where `E[band(X)] > band(E[X])` — the same selection effect the spec's own +4.88 number
+came from, just not hand-picked this time.
+
+**Pairwise order — all 28 pairs of 8 players checked.** 26 of 28 (93%) keep the same
+relative order under both scorers. **1 pair reorders outright**: CBS ranks Braelon Allen
+(1.70) above Woody Marks (1.60); calibrated flips them, Marks (2.63) over Allen (2.60).
+A second pair, Elic Ayomanor vs. Kyle Pitts, is an exact CBS tie (2.50 = 2.50, no order to
+begin with) that calibration separates (Pitts 3.56 over Ayomanor 3.18).
+
+**Conclusion.** On the only real data available, the effect is real but modest, not the
+"barely matters" null and not a wholesale re-ranking either: most pairwise decisions
+(26 of 28 here) come out the same either way, and the one genuine flip is a ~0.03-point
+margin — the kind of decision that's a coin flip under either scorer. This 8-row sample
+is itself low-projection and TE/WR/RB-only, so it cannot speak to whether calibration
+changes more orderings among higher-projection players, whose CBS-banded estimates sit
+further from band floors. That question needs more saved CBS pages than exist right now,
+which is not a code gap — `sources/cbs-weekly.yaml` already generalizes to any group with
+a one-entry YAML addition — it is a data-collection one, same shape as TODO B above.
