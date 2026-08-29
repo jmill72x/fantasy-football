@@ -44,6 +44,27 @@ SESSION_EXPIRED_TITLE = "Sign In - CBSSports.com"
 # never has to be tuned.
 _MIN_PLAUSIBLE_CHARS = 1000
 
+# wait_until="networkidle" never fires on the authenticated CBS site: verified
+# live on 2026-08-29, it timed out after 60s because the logged-in page holds
+# long-lived polling/streaming connections open indefinitely. The LOGGED-OUT
+# login page reaches networkidle quickly, which is why this hid through three
+# earlier fix rounds - the failure only appears once the session actually
+# works. Fix: navigate with "domcontentloaded" (fires as soon as the DOM is
+# parsed, regardless of open connections), then wait out this settle period.
+# Verified live: immediately after domcontentloaded the body is EMPTY - CBS
+# renders the roster client-side after DOM-ready - so this sleep is
+# load-bearing, not decoration. With it, the same page returns fully
+# rendered (7584 chars). This is a blind wait, not a readiness signal, by
+# design: any selector-based wait risks hanging on an unexpected page (e.g.
+# a login page missing the expected element), and the whole point of this
+# fix is to stop hanging.
+_SETTLE_WAIT_MS = 6000
+
+# Per-page navigation timeout, passed to page.goto(). Named so a timeout can
+# report which constant it hit and so it is tunable in one place instead of
+# a bare literal.
+_NAV_TIMEOUT_MS = 30000
+
 
 class CaptureError(Exception):
     """A page was fetched but must not be used."""
@@ -97,13 +118,14 @@ def check_page_text(text, url, title=""):
     return None
 
 
-def capture(urls, out_dir, profile_dir, timeout_ms=30000):
+def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS):
     """Fetch each url with the stored login and save its text. Returns {url: path}.
 
     NOT UNIT TESTED ON PURPOSE - it launches a browser. The logic worth testing
     is `check_page_text`, which is pure and called here on every page.
     """
     from playwright.sync_api import sync_playwright
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
     if not os.path.isdir(profile_dir):
         raise CaptureError(
@@ -121,7 +143,19 @@ def capture(urls, out_dir, profile_dir, timeout_ms=30000):
         try:
             page = ctx.new_page()
             for name, url in urls.items():
-                page.goto(url, timeout=timeout_ms, wait_until="networkidle")
+                # domcontentloaded, not networkidle: see _SETTLE_WAIT_MS above
+                # for why networkidle hangs forever on the authenticated site.
+                try:
+                    page.goto(url, timeout=timeout_ms,
+                              wait_until="domcontentloaded")
+                except PlaywrightTimeoutError as exc:
+                    raise CaptureError(
+                        "timed out navigating to %s after %dms - CBS may be "
+                        "slow, unreachable, or stuck on an interstitial. "
+                        "Nothing saved. (%s)" % (url, timeout_ms, exc)) from exc
+                # Blind settle wait: the DOM is ready but CBS renders the
+                # roster client-side afterward. See _SETTLE_WAIT_MS comment.
+                page.wait_for_timeout(_SETTLE_WAIT_MS)
                 text = page.inner_text("body")
                 # Pass the final URL (after redirects) and page title, not the
                 # requested URL. A redirect to /login is invisible in requested URL
