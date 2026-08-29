@@ -14,6 +14,8 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
+from sffl.capture import _is_session_expired
+
 PROFILE_DIR = "data/browser-profile"
 LEAGUE = "https://stripesfantasyfootballleague.football.cbssports.com/"
 
@@ -25,11 +27,12 @@ def main():
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
         page.goto(LEAGUE)
         input("Press Return once you can see the league home page... ")
-        text = page.inner_text("body")
+        # Check using the same signals as capture() does: title and final URL.
+        # Never check body text; the title never appears there.
+        if _is_session_expired(page.title(), page.url):
+            print("Still on the sign-in page - the session was NOT saved.")
+            return 1
         ctx.close()
-    if "Sign In - CBSSports.com" in text:
-        print("Still on the sign-in page - the session was NOT saved.")
-        return 1
     print("Logged in. Session saved to %s" % PROFILE_DIR)
     return 0
 
