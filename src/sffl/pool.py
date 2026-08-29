@@ -179,7 +179,30 @@ def score_week(lg, player, curves):
         # would make that claim false and let the weekly path skip
         # calibration with no signal at all.
         if curve and player.pos in STAT_POSITIONS[stat]:
-            calibrated_banded += expected_points(curve, value)
+            # F1. The curve's observed span is [curve[0][0], curve[-1][0]] -
+            # the range of PER-GAME MEANS actually measured when it was
+            # built (calibrate.build_curves draws these from 2025 SEASON
+            # per-game means across 48 players; rush_yds tops out at a 93.8
+            # yd/game mean). A weekly PROJECTION is also a per-game mean, but
+            # nothing stops it from landing above the highest one ever
+            # observed - a back projected for 150 yards in a single week
+            # exceeds that span by construction, not by error. Outside the
+            # span, expected_points does not extrapolate; it CLAMPS to the
+            # last anchor, so every value above 93.8 - 96, 110, 150, all of
+            # them - pays the exact same 3.18 pts. That is not calibration,
+            # it is the single highest-mean player's average pasted onto
+            # every player above him, and it is why three visibly different
+            # rushing lines collapsed to one number. band_points has no such
+            # failure mode: it floors/ceilings at a band edge, not a curve
+            # anchor, so it is the honest fallback outside the span - the
+            # curve has evidence there and none past it. Both bounds are
+            # checked on principle (the lower anchors sit near zero in
+            # practice, so only the upper one bites for the stats this
+            # league bands).
+            if curve[0][0] <= value <= curve[-1][0]:
+                calibrated_banded += expected_points(curve, value)
+            else:
+                calibrated_banded += band_points(lg.bands[stat], value)
         else:
             calibrated_banded += band_points(lg.bands[stat], value)
 

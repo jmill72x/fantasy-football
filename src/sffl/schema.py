@@ -15,6 +15,9 @@ class PlayerProjection(object):
     stats: Dict[str, float] = field(default_factory=dict)
     raw_name: str = ""              # exactly as the vendor wrote it
     set_name: Optional[str] = None  # for sources with multiple analyst sets
+    avail: str = ""                 # raw roster-availability token, when the
+                                     # source's page carries one (FA/waiver/
+                                     # owning-team) - see sffl.cbs_weekly
 
     def key(self):
         from sffl.identity import player_key

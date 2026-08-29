@@ -110,6 +110,21 @@ def test_an_empty_roster_file_raises_rather_than_claiming_everyone(tmp_path):
               "--week", "1", "--roster", r, "--waivers"])
 
 
+def test_a_zero_row_parse_raises_rather_than_exiting_0(tmp_path):
+    """F5: the spec's failure table requires a raise for an empty roster,
+    which IS implemented (see the test above) - a zero-row PROJECTIONS parse
+    is the same class of mistake. A login page or a truncated save yields no
+    player rows at all; before this fix that printed '0 rows parsed ... best
+    legal lineup: 0.00' and returned success, when it is almost certainly
+    the wrong page or a failed save, not a real empty result."""
+    login_page = tmp_path / "login_page.txt"
+    login_page.write_text("Please sign in to continue.\n")
+    r = roster_file(tmp_path, ["Tyrone Tracy Jr."])
+    with pytest.raises(SystemExit, match="0 rows parsed"):
+        main(["week", "--projections", str(login_page), "--group", "RB-WR-TE",
+              "--week", "1", "--roster", r, "--waivers"])
+
+
 OPTIMAL_FIVE = ["Harold Fannin Jr.", "Isaiah Likely", "Sam LaPorta",
                 "Kyle Pitts", "Braelon Allen"]
 SIX = OPTIMAL_FIVE + ["Tyrone Tracy Jr."]
@@ -212,6 +227,29 @@ def test_a_name_collision_after_normalization_warns_instead_of_silently_dropping
     assert "Collision Test Jr." in out
 
 
+def test_a_waiver_row_owned_by_another_team_is_excluded_and_reported(tmp_path, capsys):
+    """F3: `avail` on the ALL PLAYERS view can name another manager's team,
+    not just FA/waiver. A row like that must never be offered as a waiver
+    target, and the exclusion must be visible in the output, not silent."""
+    lines = open(PROJ).read().splitlines()
+    lines.append(
+        "DAL Ghost Player RB • SF @LAR 22 11 86 63 8 "
+        "9.5 99.9 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 9.99")
+    proj = tmp_path / "with_owned.txt"
+    proj.write_text("\n".join(lines) + "\n")
+
+    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
+                               "Sam LaPorta", "Kyle Pitts", "Elic Ayomanor"])
+    rc = main(["week", "--projections", str(proj), "--group", "RB-WR-TE",
+               "--week", "1", "--roster", r, "--waivers"])
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    names = [name for _pts, _slot, name, _pos in waiver_rows(out)]
+    assert "Ghost Player" not in names
+    assert "1 excluded" in out
+
+
 def test_waiver_ranking_ties_break_by_name_not_page_order(tmp_path, capsys):
     """Owning Fannin/Likely/LaPorta/Allen/Marks/Tracy leaves Ayomanor and
     Pitts as free agents. Both project 2.50 naive (a real tie in the
@@ -244,3 +282,62 @@ def test_waiver_ranking_ties_break_by_name_not_page_order(tmp_path, capsys):
     # And specifically: with a real tie in delta, the name tiebreak sorts
     # Ayomanor ahead of Pitts, in both directions.
     assert names_forward.index("Elic Ayomanor") < names_forward.index("Kyle Pitts")
+
+
+def test_zero_delta_ties_break_by_points_not_name(tmp_path, capsys):
+    """F8: among players who add nothing this week, the better player is the
+    better stash. Owning Fannin/Likely/LaPorta/Pitts/Ayomanor/Allen fills
+    every flex slot with players who all outscore both remaining free
+    agents, so Marks (1.60) and Tracy (1.10) both add exactly 0.00 to the
+    lineup - but Marks is the better player and must rank above Tracy, not
+    below him by alphabetical accident ('Tyrone Tracy Jr.' < 'Woody
+    Marks')."""
+    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
+                               "Sam LaPorta", "Kyle Pitts", "Elic Ayomanor",
+                               "Braelon Allen"])
+    main(["week", "--projections", PROJ, "--group", "RB-WR-TE",
+          "--week", "1", "--roster", r, "--waivers"])
+    out = capsys.readouterr().out
+
+    rows = waiver_rows(out)
+    assert [pts for pts, _slot, _name, _pos in rows] == [0.0, 0.0]
+    names = [name for _pts, _slot, name, _pos in rows]
+    assert names == ["Woody Marks", "Tyrone Tracy Jr."]
+
+
+def test_a_zero_delta_claim_is_never_labelled_with_a_real_slot(tmp_path, capsys):
+    """F8: a free agent tied exactly with the worst starter can still be the
+    one `best_lineup` happens to choose (ties break by name), which used to
+    print a real slot label like FLEX3 for a claim that changes nothing -
+    reading as though it cracks the lineup when the total is unchanged. Five
+    owned players (10/9/8/7/6 pts, via a clean rec_td-only line) fill every
+    flex slot; a free agent tied at 6 pts with the worst of them, and
+    alphabetically first, displaces it with delta 0.00 - and must show as
+    bench, never as the slot the tie happened to resolve into."""
+    proj = tmp_path / "ties.txt"
+    proj.write_text(
+        "FA Player One RB • DAL @LAR 22 11 86 63 8 "
+        "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 2.0 0.0 0.0\n"
+        "FA Player Two WR • DAL @LAR 22 11 86 63 8 "
+        "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.8 0.0 0.0\n"
+        "FA Player Three WR • DAL @LAR 22 11 86 63 8 "
+        "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.6 0.0 0.0\n"
+        "FA Player Four WR • DAL @LAR 22 11 86 63 8 "
+        "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.4 0.0 0.0\n"
+        "FA Player Zulu WR • DAL @LAR 22 11 86 63 8 "
+        "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.2 0.0 0.0\n"
+        "FA Player Alpha WR • DAL @LAR 22 11 86 63 8 "
+        "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.2 0.0 0.0\n"
+    )
+    r = roster_file(tmp_path, ["Player One", "Player Two", "Player Three",
+                               "Player Four", "Player Zulu"])
+    main(["week", "--projections", str(proj), "--group", "RB-WR-TE",
+          "--week", "1", "--roster", r, "--waivers"])
+    out = capsys.readouterr().out
+
+    rows = waiver_rows(out)
+    assert len(rows) == 1
+    pts, slot, name, _pos = rows[0]
+    assert name == "Player Alpha"
+    assert pts == 0.0
+    assert slot == "bench"

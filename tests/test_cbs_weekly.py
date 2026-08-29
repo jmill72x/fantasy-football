@@ -1,5 +1,5 @@
 import pytest
-from sffl.cbs_weekly import parse
+from sffl.cbs_weekly import classify_avail, parse
 
 FIXTURE = "tests/fixtures/cbs_weekly_rbwrte.txt"
 
@@ -120,3 +120,54 @@ def test_a_column_removed_from_the_stat_block_raises(tmp_path):
         "9.5 36.8 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2\n")
     with pytest.raises(ValueError, match="16"):
         parse(str(bad), group="RB-WR-TE", week=1)
+
+
+def test_a_line_without_a_leading_status_token_raises_naming_the_count(tmp_path):
+    """F4, the real observed bug: 'DJ Moore WR • CHI ...' has no leading
+    avail token. Before the fix this silently mis-parsed as name='Moore',
+    avail='DJ' - the two-initial first name swallowed as if it were a
+    status - attributing Moore's real stats to a fabricated 'Moore' while
+    the true 'DJ Moore' printed as 'no projection'. After tightening the
+    avail group so a bare two-letter token can no longer match, this line
+    fails `_LINE` entirely - and since it still looks like a player row
+    (contains ' • '), parse() must refuse the whole page rather than drop
+    it silently."""
+    bad = tmp_path / "no_token.txt"
+    bad.write_text(
+        "DJ Moore WR • CHI @LAR 22 11 86 63 8 "
+        "0.4 0.8 2.0 0.1 7.7 5.2 46.5 8.9 0.5 0.1 4.81\n")
+    with pytest.raises(ValueError, match="1 line"):
+        parse(str(bad), group="RB-WR-TE", week=1)
+
+
+def test_dj_moore_parses_correctly_with_a_leading_status_token(tmp_path):
+    """The other side of F4's fix: a two-initial name is not itself the
+    problem - DJ Moore parses under his real, full name once a genuine
+    status token precedes it, and that token is captured as `avail`."""
+    ok = tmp_path / "with_token.txt"
+    ok.write_text(
+        "FA DJ Moore WR • CHI @LAR 22 11 86 63 8 "
+        "0.4 0.8 2.0 0.1 7.7 5.2 46.5 8.9 0.5 0.1 4.81\n")
+    rows = parse(str(ok), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].name == "DJ Moore"
+    assert rows[0].avail == "FA"
+
+
+def test_classify_avail_recognizes_free_agent_and_waiver_as_available():
+    assert classify_avail("FA") == "available"
+    assert classify_avail("W") == "available"
+    assert classify_avail("W (9/16)") == "available"
+
+
+def test_classify_avail_recognizes_a_bare_team_code_as_owned():
+    """No parenthetical, letters only, length >= 3: on the ALL PLAYERS view
+    this is another manager's roster abbreviation, not a status (F3)."""
+    assert classify_avail("DAL") == "owned"
+
+
+def test_classify_avail_refuses_to_guess_an_unfamiliar_shape():
+    """A parenthetical status other than 'W (...)' - e.g. an injury flag -
+    is a shape this page has not been observed to produce. Guessing which
+    bucket it belongs in is the mistake F3 exists to prevent."""
+    assert classify_avail("IR (Q)") is None

@@ -337,3 +337,50 @@ def test_gate_a_is_redundant_only_while_the_defense_stats_are_dst_only():
     direct test. Fail here so the widening is a decision, not a discovery."""
     assert STAT_POSITIONS["def_pa"] == {"DST"}
     assert STAT_POSITIONS["def_ya"] == {"DST"}
+
+
+def test_score_week_uses_the_naive_band_above_the_curves_span():
+    """THE FIX FOR F1. calibrate.expected_points CLAMPS to the curve's last
+    anchor for any mean above it, and the curves are built from 2025 SEASON
+    per-game means (48 players) - rush_yds tops out at a 93.8 yd/game mean,
+    paying 3.18. A weekly PROJECTION routinely exceeds that: a back projected
+    for 150 rushing yards in a single week is not the same claim as a 150
+    yd/game season average, but expected_points cannot tell the difference
+    and would clamp to the same 3.18 paid to a back projected at 96 or 110.
+    Outside the curve's observed span there is no evidence behind the
+    calibrated number, so score_week must fall back to the naive band -
+    exactly what it already does when there is no curve at all."""
+    curves = load_curves("calibration/2025.yaml")
+    p = PlayerProjection(name="Big Game RB", team="GB", pos="RB", source="t",
+                         source_year=2026, games=1.0, stats={"rush_yds": 150.0})
+    assert score_week(LG, p, curves) == score_game(LG, p.stats, "RB")
+
+
+def test_score_week_still_calibrates_a_value_inside_the_span():
+    """The other side of the same fix: a value INSIDE the curve's observed
+    span must still be calibrated, not fall back to the naive band just
+    because the out-of-span guard now exists. Same fixture as
+    test_score_week_pays_a_projection_sitting_just_under_a_band_edge, given
+    its own name in this block so the in-span path is pinned alongside the
+    out-of-span one it is now adjacent to in the implementation."""
+    curves = load_curves("calibration/2025.yaml")
+    p = PlayerProjection(name="Test WR", team="GB", pos="WR", source="t",
+                         source_year=2026, games=1.0, stats={"rec_ct": 4.4})
+    naive = score_game(LG, p.stats, "WR")
+    assert naive == 0.0
+    assert score_week(LG, p, curves) > naive
+
+
+def test_score_week_does_not_collapse_two_backs_above_the_span_to_one_number():
+    """Measured before the fix: 96 and 110 rushing yards both clamped to the
+    curve's last anchor (3.18 pts) and scored identically despite being
+    visibly different projections - as would 150. The naive band tells them
+    apart (3.00 vs 4.00 vs 6.00), so score_week must too."""
+    curves = load_curves("calibration/2025.yaml")
+
+    def rb(rush_yds):
+        return PlayerProjection(name="RB %d" % rush_yds, team="GB", pos="RB",
+                                source="t", source_year=2026, games=1.0,
+                                stats={"rush_yds": rush_yds})
+
+    assert score_week(LG, rb(96), curves) != score_week(LG, rb(110), curves)
