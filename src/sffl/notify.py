@@ -6,13 +6,28 @@ seam every test uses; nothing here is exercised against the network.
 
 `PushNotification` IS DELIBERATELY NOT USED. It requires Remote Control to be
 connected, and a launchd job at 4:45pm on a Friday cannot rely on that.
+
+THE TOPIC IS INTERPOLATED STRAIGHT INTO A URL PATH (`NTFY_URL % topic`), so an
+unvalidated topic is an injection surface even though the only person who can
+ever WRITE the Keychain entry is Jeff himself: a stray space breaks the
+request, and `/`, `?`, `#`, or `@` would silently change which URL gets hit.
+`send()` validates the shape before it is ever used - see `_TOPIC_RE`. The
+validation error NAMES THE PROBLEM ("contains a space") and NEVER THE VALUE:
+this can land in a launchd log file, which is a place a secret must never
+reach, so the offending topic is never echoed into the exception.
 """
 
+import re
 import subprocess
 import urllib.request
 
 NTFY_URL = "https://ntfy.sh/%s"
 KEYCHAIN_ACCOUNT = "sffl-alert-ntfy-topic"
+
+# What ntfy itself accepts in a topic name. Anything else either breaks the
+# request (a space) or - worse - silently retargets it (a `/`, `?`, `#`, or
+# `@` changes what the URL actually points at).
+_TOPIC_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 def topic_from_keychain(account=KEYCHAIN_ACCOUNT):
@@ -31,9 +46,22 @@ def topic_from_keychain(account=KEYCHAIN_ACCOUNT):
 
 
 def send(topic, title, body, dry_run=False):
-    """POST `body` to the topic. Returns True if a request was actually made."""
+    """POST `body` to the topic. Returns True if a request was actually made.
+
+    Validated here, not in `topic_from_keychain`, so the guard protects every
+    caller regardless of where the topic came from.
+    """
     if not topic:
         raise ValueError("empty ntfy topic - refusing to post nowhere")
+    if not _TOPIC_RE.match(topic):
+        # NEVER interpolate `topic` into this message - see the module
+        # docstring. Name what's wrong, not what the value is.
+        problem = ("contains a space" if " " in topic
+                   else "contains a character outside [A-Za-z0-9_-]")
+        raise ValueError(
+            "invalid ntfy topic - %s. A valid ntfy topic uses only letters, "
+            "digits, underscore, and hyphen (e.g. 'sffl-alerts-9f2a')."
+            % problem)
     if not body or not body.strip():
         raise ValueError(
             "empty alert body - refusing to send. A push with no body looks "

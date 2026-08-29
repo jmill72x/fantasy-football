@@ -456,8 +456,45 @@ def cmd_plan(args):
     return 0
 
 
+def _avail_classifier(path, owner_codes):
+    """Pick cbs_weekly's tab-path or space-path `classify_avail*` for `path`.
+
+    `PlayerProjection` carries no per-row flag for which of cbs_weekly's two
+    row shapes produced it. `cbs_weekly._parse_row` dispatches PER LINE on a
+    literal tab while parsing, but that distinction does not survive onto
+    the `PlayerProjection` it returns - by the time this CLI sees the rows,
+    it is gone. (I looked at adding a field for this on `PlayerProjection`
+    and did not: other agents' tests construct that record directly, and
+    schema.py was out of this task's file scope - see the task-7 report.)
+
+    So this is necessarily a FILE-level signal, not `_parse_row`'s per-line
+    one: a Playwright `capture()` page has tab characters throughout its
+    ENTIRE rendered text - nav, headers, every row, not just player rows -
+    while the older browser-tool space-delimited save has none anywhere.
+    Checking for a literal tab ANYWHERE in the file is therefore a safe,
+    cheap stand-in for "which capture path produced this," for every file
+    this pipeline has ever actually produced. cbs_weekly's own docstring
+    notes a file COULD mix both row shapes; this cannot tell such a file's
+    rows apart (it would pick one classifier for the whole file) - no such
+    file has ever been observed, and refusing to guess PER ROW here would
+    require exactly the schema field this task declined to add.
+
+    `classify_avail_tab` needs no `owner_codes` (its own docstring explains
+    why: the tab path's owner cell cannot be confused with a name no matter
+    what it contains). `classify_avail` does, so it comes back pre-bound to
+    them - both branches return a one-argument `avail -> status` callable.
+    """
+    from sffl.cbs_weekly import classify_avail, classify_avail_tab
+
+    with open(path) as fh:
+        is_tab_delimited = any("\t" in line for line in fh)
+    if is_tab_delimited:
+        return classify_avail_tab
+    return lambda avail: classify_avail(avail, owner_codes)
+
+
 def _cmd_week(args):
-    from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes, classify_avail
+    from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import normalize_name
     from sffl.lineup import Candidate, best_lineup, delta
@@ -573,14 +610,26 @@ def _cmd_week(args):
     # ranked; a row confidently identified as owned is excluded and counted;
     # a row whose avail shape has never been seen before is refused rather
     # than guessed at, exactly like every other "raise rather than guess"
-    # gate in this project. See cbs_weekly.classify_avail.
+    # gate in this project.
+    #
+    # `classify` picks cbs_weekly's tab-path or space-path classifier for
+    # THIS file - see `_avail_classifier`. Wiring the space-path
+    # `classify_avail` unconditionally here (this command's only option
+    # before `classify_avail_tab` existed) is exactly the bug a real
+    # Playwright-captured `--projections` file hits: a tab-path owner cell
+    # like "Sgt Hu..." matches no configured `owner_codes` and is not
+    # "FA"/"W", so it comes back unclassified for every single owned row on
+    # that page - a noisy warning naming a dozen team names, and a waiver
+    # board that has silently stopped telling owned players from free
+    # agents on the format this pipeline now actually captures.
+    classify = _avail_classifier(args.projections, owner_codes)
     free_rows = [p for k, p in by_key.items() if k not in owned]
     available_rows = []
     excluded_owned = 0
     excluded_out_free = []
     unclassified_avail = set()
     for p in free_rows:
-        status = classify_avail(p.avail, owner_codes)
+        status = classify(p.avail)
         if status == "available":
             if is_out(p.status):
                 excluded_out_free.append(p)
@@ -731,6 +780,11 @@ def _cmd_alert(args):
     capture_error = None
     roster_names = []
     starters = []
+    # None means "capture never got far enough to know" - distinct from a
+    # successful parse that legitimately found nobody starting. `compose`
+    # renders those two states differently (see its docstring), so this
+    # must not default to `[]`.
+    current_starters = None
     reports = []
     sidelined = []
     result = None
@@ -741,10 +795,12 @@ def _cmd_alert(args):
         roster_path = written[urls["roster"]]
         proj_path = written[urls["projections"]]
         # parse_lineup, not parse_roster: the page also carries Jeff's
-        # CURRENT starting lineup, which is the actual start/sit value - see
-        # the start/sit diff printed below. `starters` and `reserves`
-        # together are the same player set `parse_roster` would return.
+        # CURRENT starting lineup, which is the actual start/sit value -
+        # compose() renders it against the optimum below. `starters` and
+        # `reserves` together are the same player set `parse_roster` would
+        # return.
         starters, reserves = parse_lineup(roster_path)
+        current_starters = starters
         roster_names = starters + [n for n in reserves if n not in starters]
         age_days = int(
             (datetime.datetime.now()
@@ -770,41 +826,49 @@ def _cmd_alert(args):
     if args.injuries and os.path.exists(args.injuries):
         reports = for_roster(load_injuries(args.injuries), roster_names)
 
+    # `current_starters` carries `parse_lineup`'s starters straight through
+    # so `compose` can render the START/SIT diff against the optimum
+    # itself - this used to be a second, stdout-only implementation of that
+    # same diff living here, which the alert.py owner flagged as certain to
+    # drift from compose's own rendering. One implementation now: compose's.
     body = compose(args.kind, age_days, reports, result, sidelined,
-                   capture_error=capture_error)
+                   capture_error=capture_error,
+                   current_starters=current_starters)
     print(body)
 
-    # NOT part of `body`: alert.compose owns every word the phone sees and
-    # its signature has no parameter for the current-vs-optimal lineup yet
-    # (see the task-7 report for that gap), so this print is
-    # terminal/log-only - it does not reach the push. Only shown when
-    # capture succeeded, since `result` and `starters` are otherwise
-    # meaningless.
-    if result is not None:
-        current_by_key = dict((normalize_name(n), n) for n in starters)
-        optimal_by_key = dict((normalize_name(p.name), p.name)
-                              for _slot, p in result.slots if p)
-        start = sorted(optimal_by_key[k] for k in optimal_by_key
-                       if k not in current_by_key)
-        sit = sorted(current_by_key[k] for k in current_by_key
-                     if k not in optimal_by_key)
-        if start or sit:
-            print("\n  START/SIT vs your current CBS lineup:")
-            print("  START           SIT")
-            for i in range(max(len(start), len(sit))):
-                a = start[i] if i < len(start) else ""
-                b = sit[i] if i < len(sit) else ""
-                print("    %-15s %s" % (a, b))
-        else:
-            print("\n  your current CBS lineup already matches the optimum.")
+    # ORDERING: the topic is fetched HERE, after the digest above is already
+    # composed and printed, not before capture/scoring even starts. This
+    # runs unattended under launchd, so a run that produced a correct alert
+    # but could not PUSH it is a different, more valuable failure to see in
+    # the log than one that produced nothing at all - the printed body above
+    # has standalone worth (it can be read straight out of the log) even
+    # when delivery fails, and fetching the topic first would throw that
+    # away for the sake of failing a few seconds earlier.
+    delivery_error = None
+    try:
+        topic = topic_from_keychain()
+        sent = send(topic, "SFFL %s" % args.kind.title(), body,
+                    dry_run=args.dry_run)
+        print("\n[%s]" % ("sent" if sent else "dry run - nothing sent"))
+    except (RuntimeError, ValueError, OSError) as exc:
+        # Caught here rather than left to propagate as a traceback: this
+        # runs unattended at 4:45pm on a Friday, and a raw Python traceback
+        # in a log file is not an actionable failure, it is a puzzle.
+        # RuntimeError is the no-Keychain-entry case (its message already
+        # names the exact `security add-generic-password` fix - surfaced
+        # verbatim); ValueError is an empty topic/body reaching `send`;
+        # OSError is the base of `urllib.error.URLError`, a real network
+        # failure talking to ntfy.sh. All three mean the same thing to
+        # launchd's log: the alert was built correctly but not delivered.
+        print("\n[DELIVERY FAILED] %s" % exc)
+        delivery_error = exc
 
-    topic = topic_from_keychain()
-    sent = send(topic, "SFFL %s" % args.kind.title(), body,
-                dry_run=args.dry_run)
-    print("\n[%s]" % ("sent" if sent else "dry run - nothing sent"))
-    # A capture failure is still DELIVERED (Jeff must learn the job broke),
-    # but the exit code is non-zero so launchd's log records it as a failure.
-    return 1 if capture_error else 0
+    # A capture failure OR a delivery failure is still DELIVERED-OR-NOT in a
+    # way launchd's log must be able to see, so either makes the exit code
+    # non-zero - but they are DIFFERENT failures (nothing produced, vs. a
+    # correct alert that could not be pushed), and the printed body above,
+    # not the exit code, is what tells them apart.
+    return 1 if (capture_error or delivery_error) else 0
 
 
 def main(argv=None):
