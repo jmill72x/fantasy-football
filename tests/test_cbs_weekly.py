@@ -1,7 +1,9 @@
 import pytest
-from sffl.cbs_weekly import classify_avail, parse
+from sffl.cbs_weekly import (build_line_re, classify_avail, classify_avail_tab,
+                              parse)
 
 FIXTURE = "tests/fixtures/cbs_weekly_rbwrte.txt"
+TAB_FIXTURE = "tests/fixtures/cbs_weekly_tab_rbwrte.txt"
 
 
 def by_name(rows):
@@ -155,19 +157,247 @@ def test_dj_moore_parses_correctly_with_a_leading_status_token(tmp_path):
 
 
 def test_classify_avail_recognizes_free_agent_and_waiver_as_available():
-    assert classify_avail("FA") == "available"
-    assert classify_avail("W") == "available"
-    assert classify_avail("W (9/16)") == "available"
+    assert classify_avail("FA", []) == "available"
+    assert classify_avail("W", []) == "available"
+    assert classify_avail("W (9/16)", []) == "available"
 
 
-def test_classify_avail_recognizes_a_bare_team_code_as_owned():
-    """No parenthetical, letters only, length >= 3: on the ALL PLAYERS view
-    this is another manager's roster abbreviation, not a status (F3)."""
-    assert classify_avail("DAL") == "owned"
+def test_classify_avail_no_longer_infers_owned_from_bare_letter_shape():
+    """Superseded by the enumerated-owner-codes design below. `classify_avail`
+    used to treat any bare, letters-only token of 3+ characters as "owned" by
+    SHAPE alone; that is exactly the looseness F4 exists to forbid, so a bare
+    token not present in `owner_codes` must now come back None rather than
+    "owned", even though "DAL" looks exactly like a team abbreviation."""
+    assert classify_avail("DAL", []) is None
+    assert classify_avail("DAL", ["DAL"]) == "owned"
 
 
 def test_classify_avail_refuses_to_guess_an_unfamiliar_shape():
     """A parenthetical status other than 'W (...)' - e.g. an injury flag -
     is a shape this page has not been observed to produce. Guessing which
     bucket it belongs in is the mistake F3 exists to prevent."""
-    assert classify_avail("IR (Q)") is None
+    assert classify_avail("IR (Q)", []) is None
+
+
+CODES = ["JM", "Bp3", "SMITH"]
+
+
+def test_a_two_letter_manager_code_parses():
+    m = build_line_re(CODES).match("JM Nick Chubb RB • CLE @PIT 1 2 3")
+    assert m is not None
+    assert m.group("avail") == "JM"
+    assert m.group("name") == "Nick Chubb"
+
+
+def test_a_mixed_case_code_with_a_digit_parses():
+    m = build_line_re(CODES).match("Bp3 Nick Chubb RB • CLE @PIT 1 2 3")
+    assert m is not None
+    assert m.group("avail") == "Bp3"
+
+
+def test_a_row_missing_its_status_token_still_does_not_match():
+    # F4. "DJ" is a first name here, not a manager code. It is not in
+    # CODES, so the line must fail rather than parse as avail="DJ",
+    # name="Moore" - which files a real player's stats under a fake one.
+    assert build_line_re(CODES).match("DJ Moore WR • CHI @GB 1 2 3") is None
+
+
+def test_an_injury_tag_after_the_position_is_captured_not_swallowed():
+    m = build_line_re(CODES).match("FA Nick Chubb RB Q • CLE @PIT 1 2 3")
+    assert m is not None
+    assert m.group("name") == "Nick Chubb"
+    assert (m.group("status1") or m.group("status2")) == "Q"
+
+
+def test_an_injury_tag_after_the_name_is_captured_not_swallowed():
+    m = build_line_re(CODES).match("FA Nick Chubb Q RB • CLE @PIT 1 2 3")
+    assert m is not None
+    # The bug: the greedy name group used to absorb this, renaming the
+    # player to "Nick Chubb Q" - who matches nothing downstream.
+    assert m.group("name") == "Nick Chubb"
+    assert (m.group("status1") or m.group("status2")) == "Q"
+
+
+@pytest.mark.parametrize("tag", ["Q", "D", "O", "IR", "PUP", "SUSP", "NA"])
+def test_every_standard_designation_is_recognized(tag):
+    m = build_line_re(CODES).match(
+        "FA Nick Chubb %s RB • CLE @PIT 1 2 3" % tag)
+    assert m is not None
+    assert (m.group("status1") or m.group("status2")) == tag
+
+
+def test_an_undesignated_row_still_parses_with_no_status():
+    m = build_line_re(CODES).match("FA Nick Chubb RB • CLE @PIT 1 2 3")
+    assert m is not None
+    assert (m.group("status1") or m.group("status2")) is None
+
+
+def test_waiver_and_free_agent_are_available():
+    assert classify_avail("FA", CODES) == "available"
+    assert classify_avail("W", CODES) == "available"
+    assert classify_avail("W (9/16)", CODES) == "available"
+
+
+def test_a_configured_manager_code_is_owned():
+    assert classify_avail("JM", CODES) == "owned"
+    assert classify_avail("Bp3", CODES) == "owned"
+
+
+def test_an_unconfigured_code_is_refused_not_guessed():
+    # Must not fall back to "owned". An unknown token means the config is
+    # stale, and guessing either way silently mis-ranks the waiver board.
+    assert classify_avail("ZZZ", CODES) is None
+
+
+def test_status_reaches_the_projection_record(tmp_path):
+    from sffl.cbs_weekly import parse
+    page = tmp_path / "p.txt"
+    # 17 tokens after the team code, matching sources/cbs-weekly.yaml.
+    stats = " ".join(["1"] * 17)
+    page.write_text(
+        "FA Nick Chubb O RB • CLE %s\n"
+        "FA Bijan Robinson RB • ATL %s\n" % (stats, stats))
+    rows = dict((p.name, p) for p in parse(str(page), group="RB-WR-TE", week=1))
+    assert rows["Nick Chubb"].status == "O"
+    assert rows["Bijan Robinson"].status == ""
+
+
+# Round 2 (in-season pipeline against the real captured page): the
+# Playwright `capture()` path used by the scheduled job emits TAB-delimited
+# rows, not the space-delimited text the browser-tool capture used for
+# FIXTURE above. TAB_FIXTURE is real data - the 100 player rows from a real
+# captured page, sanitized only in the fantasy TEAM NAME column (this repo
+# is public); every NFL player name and stat is untouched.
+
+
+def test_the_real_tab_delimited_capture_all_parses_as_one_group():
+    rows = parse(TAB_FIXTURE, group="RB-WR-TE", week=1)
+    assert len(rows) == 100
+
+
+def test_a_tab_row_stats_land_in_the_right_slots():
+    """Puka Nacua's real row: '\\tTeam J...\\tPuka Nacua WR • LAR \\tSF\\t18\\t
+    11\\t98\\t97\\t2\\t0.9\\t6.2\\t6.9\\t0.1\\t11.1\\t8.1\\t100.0\\t12.3\\t0.6\\t0.0\\t9.31'.
+    Tab-splitting the trailing fields (instead of whitespace-splitting) is
+    what lets 'N/R' (a non-numeric EXPERT rank, its own tab field) sit
+    safely in the ignored preamble on this path too - see
+    test_a_non_numeric_expert_rank... above for the space-path version of
+    the same guarantee."""
+    r = by_name(parse(TAB_FIXTURE, group="RB-WR-TE", week=1))["Puka Nacua"]
+    assert r.pos == "WR" and r.team == "LAR"
+    assert r.stats["rush_att"] == 0.9
+    assert r.stats["rec_yds"] == 100.0
+    assert r.stats["fum_lost"] == 0.0
+
+
+def test_a_tab_row_owned_by_another_manager_is_classified_owned():
+    """The owner cell is its own tab field: 'Team J...' is a sanitized
+    stand-in for a real (truncated) fantasy TEAM name, not FA/W, so
+    classify_avail_tab must call it owned - no owner_codes list involved,
+    since F4 cannot happen on this path by construction."""
+    r = by_name(parse(TAB_FIXTURE, group="RB-WR-TE", week=1))["Puka Nacua"]
+    assert r.avail == "Team J..."
+    assert classify_avail_tab(r.avail) == "owned"
+
+
+def test_a_tab_free_agent_row_is_available(tmp_path):
+    page = tmp_path / "tab_fa.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("\tFA\tNick Chubb RB • CLE\t@PIT\t%s\n" % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].avail == "FA"
+    assert classify_avail_tab(rows[0].avail) == "available"
+
+
+def test_a_tab_waiver_row_is_available(tmp_path):
+    page = tmp_path / "tab_waiver.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text(
+        "\tW (9/16)\tHarold Fannin Jr. TE • CLE\t@JAC\t%s\n" % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].avail == "W (9/16)"
+    assert classify_avail_tab(rows[0].avail) == "available"
+
+
+def test_an_empty_tab_owner_cell_does_not_silently_become_available(tmp_path):
+    """An empty owner cell means the column came back blank, not that the
+    player is confirmed unowned - those are different facts, and treating
+    the first as the second would rank an indeterminate row as claimable.
+    classify_avail_tab must refuse it (None), the same as any other
+    unrecognized shape - never fall through to 'available'."""
+    page = tmp_path / "tab_empty_owner.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("\t\tNick Chubb RB • CLE\t@PIT\t%s\n" % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].avail == ""
+    assert classify_avail_tab(rows[0].avail) is None
+    assert classify_avail_tab(rows[0].avail) != "available"
+
+
+def test_a_tab_injury_tag_after_the_position_is_captured():
+    """Same optional-status mechanism as the space path (see
+    test_an_injury_tag_after_the_position_is_captured_not_swallowed above),
+    exercised on the tab path's name cell, which the real capture did not
+    happen to contain any examples of this week."""
+    from sffl.cbs_weekly import _TAB_NAME
+    m = _TAB_NAME.match("Nick Chubb Q RB • CLE")
+    assert m is not None
+    assert m.group("name") == "Nick Chubb"
+    assert (m.group("status1") or m.group("status2")) == "Q"
+
+
+def test_the_space_delimited_fixture_is_unaffected_by_the_tab_path():
+    """Per-line dispatch (tab vs space) must not change a single result for
+    the OLDER, space-delimited capture path - FIXTURE contains no tabs at
+    all, so every row here must take exactly the path it always did."""
+    rows = parse(FIXTURE, group="RB-WR-TE", week=1)
+    assert len(rows) == 8
+    r = by_name(rows)["Braelon Allen"]
+    assert r.pos == "RB" and r.team == "NYJ"
+    assert r.stats["rush_yds"] == 36.8
+
+
+def test_a_whitespace_only_tab_owner_cell_is_refused_not_called_owned(tmp_path):
+    """M1. The tab path used to hand `avail` through unstripped while the
+    space path stripped it, so a cell holding only spaces was a non-empty
+    string and classify_avail_tab's "any other non-empty value means owned"
+    rule filed it as OWNED. That is the one classification made in silence -
+    an owned row is excluded from the waiver board with no warning at all -
+    so a blank column would quietly delete a genuine free agent from the
+    board. Stripped, it is indistinguishable from the empty cell above and
+    is refused loudly, which is what an indeterminate cell must do."""
+    page = tmp_path / "tab_blank_owner.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("\t   \tNick Chubb RB • CLE\t@PIT\t%s\n" % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].avail == ""
+    assert classify_avail_tab(rows[0].avail) is None
+    assert classify_avail_tab(rows[0].avail) != "owned"
+
+
+def test_a_numeric_owner_code_does_not_crash_the_row_regex():
+    """A human hand-edits `owner_codes` before week 1, and a code like `12`
+    YAML-parses to an int. `sorted(key=len)` and `re.escape` both raise
+    TypeError on an int, which took down the whole weekly command with a
+    traceback naming neither the file nor the field. Coerced with str()."""
+    line_re = build_line_re(["JM", 12, 50])
+    m = line_re.match("12 Nick Chubb RB • CLE @PIT 1 2 3")
+    assert m is not None
+    assert m.group("avail") == "12"
+    assert m.group("name") == "Nick Chubb"
+
+
+def test_numeric_owner_codes_from_yaml_also_classify_as_owned(tmp_path):
+    """The regex coercion alone is not enough: `classify_avail` tests
+    membership against the loaded list, and a page token is always a string,
+    so an int code would match the row and then classify as unknown."""
+    from sffl.cbs_weekly import _load_owner_codes
+    profile = tmp_path / "profile.yaml"
+    profile.write_text("owner_codes:\n  - JM\n  - 12\n")
+    codes = _load_owner_codes(str(profile))
+    assert codes == ["JM", "12"]
+    assert classify_avail("12", codes) == "owned"

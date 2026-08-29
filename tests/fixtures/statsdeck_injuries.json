@@ -1,0 +1,50 @@
+{
+  "_fixture_note": "The Ja'Marr Chase rows under 'intel' are verbatim from the real get_injuries capture in .superpowers/sdd/2026-08-29-in-season-automation/REAL-get_injuries-payload.json (2026-08-29, preseason). The 'report' array was empty at capture time (StatsDeck's own docs say that's expected before the season starts 2026-09-09), so the Nick Chubb rows below are a SYNTHETIC, PROVISIONAL stand-in for an official-report row and its paired intel row - not measured against a real 'report' entry. Re-verify against a real official row once the season starts.",
+  "report": [
+    {
+      "player": "Nick Chubb",
+      "player_id": "00-0034348",
+      "team": "CLE",
+      "status": "Out",
+      "notes": "foot",
+      "reported_date": "2026-09-05",
+      "practice": "DNP",
+      "tier": null
+    }
+  ],
+  "intel": [
+    {
+      "player": "Ja'Marr Chase",
+      "player_id": "00-0036900",
+      "team": "CIN",
+      "source": "sleeper_feed",
+      "status": "Questionable",
+      "notes": null,
+      "reported_date": "2026-08-26",
+      "tier": null,
+      "status_since": "2026-08-27",
+      "previous_status": "Questionable"
+    },
+    {
+      "player": "Ja'Marr Chase",
+      "player_id": "00-0036900",
+      "team": "CIN",
+      "source": "web_digest",
+      "status": "Day-to-Day",
+      "notes": "Bengals WR Ja'Marr Chase did not practice Wednesday after hyperextending his left knee in Tuesday's session, though he said he was okay and was not seen wearing a brace.",
+      "reported_date": "2026-08-26",
+      "tier": "corroborated",
+      "status_since": "2026-08-29"
+    },
+    {
+      "player": "Nick Chubb",
+      "player_id": "00-0034348",
+      "team": "CLE",
+      "source": "beat_writer",
+      "status": "",
+      "notes": "expected to be a game-time decision per beat writer",
+      "reported_date": "2026-09-06",
+      "tier": "unconfirmed"
+    }
+  ]
+}

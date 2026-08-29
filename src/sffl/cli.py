@@ -26,6 +26,20 @@ from sffl.value import _pool_of, assign_dollars, assign_vorp, replacement_levels
 
 DEFAULT_LEAGUE = "leagues/sffl/2026.yaml"
 
+# `sffl alert`'s CBS URLs.
+#
+# ROSTER: bare /teams, with NO team number. CBS resolves it to whoever is
+# logged in - identity-derived, so it can never drift onto another manager's
+# team the way a hardcoded /teams/<N> could.
+#
+# PROJECTIONS: week-parameterised. Built from --week rather than accepting a
+# hardcoded URL, so a new week never requires editing a URL by hand (and can
+# never silently run against last week's page because someone forgot to).
+CBS_LEAGUE_BASE = "https://stripesfantasyfootballleague.football.cbssports.com"
+DEFAULT_TEAM_URL = CBS_LEAGUE_BASE + "/teams"
+PROJECTIONS_URL_TEMPLATE = (
+    CBS_LEAGUE_BASE + "/stats/stats-main/all:RB:WR:TE/%d:p/standard/projections")
+
 
 def _value_pool(lg, args):
     """Build a pool and run it through the full valuation path: vendor
@@ -442,12 +456,51 @@ def cmd_plan(args):
     return 0
 
 
+def _avail_classifier(path, owner_codes):
+    """Pick cbs_weekly's tab-path or space-path `classify_avail*` for `path`.
+
+    `PlayerProjection` carries no per-row flag for which of cbs_weekly's two
+    row shapes produced it. `cbs_weekly._parse_row` dispatches PER LINE on a
+    literal tab while parsing, but that distinction does not survive onto
+    the `PlayerProjection` it returns - by the time this CLI sees the rows,
+    it is gone. (I looked at adding a field for this on `PlayerProjection`
+    and did not: other agents' tests construct that record directly, and
+    schema.py was out of this task's file scope - see the task-7 report.)
+
+    So this is necessarily a FILE-level signal, not `_parse_row`'s per-line
+    one: a Playwright `capture()` page has tab characters throughout its
+    ENTIRE rendered text - nav, headers, every row, not just player rows -
+    while the older browser-tool space-delimited save has none anywhere.
+    Checking for a literal tab ANYWHERE in the file is therefore a safe,
+    cheap stand-in for "which capture path produced this," for every file
+    this pipeline has ever actually produced. cbs_weekly's own docstring
+    notes a file COULD mix both row shapes; this cannot tell such a file's
+    rows apart (it would pick one classifier for the whole file) - no such
+    file has ever been observed, and refusing to guess PER ROW here would
+    require exactly the schema field this task declined to add.
+
+    `classify_avail_tab` needs no `owner_codes` (its own docstring explains
+    why: the tab path's owner cell cannot be confused with a name no matter
+    what it contains). `classify_avail` does, so it comes back pre-bound to
+    them - both branches return a one-argument `avail -> status` callable.
+    """
+    from sffl.cbs_weekly import classify_avail, classify_avail_tab
+
+    with open(path) as fh:
+        is_tab_delimited = any("\t" in line for line in fh)
+    if is_tab_delimited:
+        return classify_avail_tab
+    return lambda avail: classify_avail(avail, owner_codes)
+
+
 def _cmd_week(args):
-    from sffl.cbs_weekly import classify_avail
+    from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import normalize_name
     from sffl.lineup import Candidate, best_lineup, delta
     from sffl.pool import score_week
+
+    owner_codes = _load_owner_codes(DEFAULT_PROFILE)
 
     lg = load_league(args.league)
     curves = load_curves(args.curves) if args.curves else None
@@ -522,7 +575,29 @@ def _cmd_week(args):
         return Candidate(name=p.name, pos=p.pos,
                          points=score_week(lg, p, curves))
 
-    roster = [cand(by_key[k]) for k in owned if k in by_key]
+    # A player designated Out will not take the field and scores zero, so the
+    # optimiser would otherwise start him and report a lineup total that
+    # cannot happen. Excluded here - and NAMED, never dropped silently, the
+    # same treatment `missing` and `not_evaluated` already get, because a
+    # player who quietly vanishes from the board reads as "no longer on your
+    # roster" rather than as "ruled out."
+    from sffl.cbs_weekly import is_out
+    sidelined = sorted((by_key[k].name, by_key[k].status)
+                       for k in owned if k in by_key and is_out(by_key[k].status))
+    for name, status in sidelined:
+        print("  %s is %s - excluded from the lineup, he will not play"
+              % (name, status))
+
+    roster = [cand(by_key[k]) for k in owned
+              if k in by_key and not is_out(by_key[k].status)]
+
+    # Flagged, NOT excluded - see cbs_weekly.OUT_STATUSES.
+    questionable = sorted((by_key[k].name, by_key[k].status)
+                          for k in owned
+                          if k in by_key and by_key[k].status in ("Q", "D"))
+    for name, status in questionable:
+        print("  %s is %s - STARTED anyway; check his status before kickoff"
+              % (name, status))
 
     # F3: `avail` on CBS's ALL PLAYERS view names a genuine free agent
     # ("FA"), a waiver-claimable player ("W (9/16)"), or another manager's
@@ -535,19 +610,42 @@ def _cmd_week(args):
     # ranked; a row confidently identified as owned is excluded and counted;
     # a row whose avail shape has never been seen before is refused rather
     # than guessed at, exactly like every other "raise rather than guess"
-    # gate in this project. See cbs_weekly.classify_avail.
+    # gate in this project.
+    #
+    # `classify` picks cbs_weekly's tab-path or space-path classifier for
+    # THIS file - see `_avail_classifier`. Wiring the space-path
+    # `classify_avail` unconditionally here (this command's only option
+    # before `classify_avail_tab` existed) is exactly the bug a real
+    # Playwright-captured `--projections` file hits: a tab-path owner cell
+    # like "Sgt Hu..." matches no configured `owner_codes` and is not
+    # "FA"/"W", so it comes back unclassified for every single owned row on
+    # that page - a noisy warning naming a dozen team names, and a waiver
+    # board that has silently stopped telling owned players from free
+    # agents on the format this pipeline now actually captures.
+    classify = _avail_classifier(args.projections, owner_codes)
     free_rows = [p for k, p in by_key.items() if k not in owned]
     available_rows = []
     excluded_owned = 0
+    excluded_out_free = []
     unclassified_avail = set()
     for p in free_rows:
-        status = classify_avail(p.avail)
+        status = classify(p.avail)
         if status == "available":
-            available_rows.append(p)
+            if is_out(p.status):
+                excluded_out_free.append(p)
+            else:
+                available_rows.append(p)
         elif status == "owned":
             excluded_owned += 1
         else:
             unclassified_avail.add(p.avail)
+
+    # Free agents designated Out will not take the field and score zero. Exclude
+    # them from waiver ranking - and NAMED, never dropped silently, the same
+    # treatment owned and unclassified rows get.
+    for p in excluded_out_free:
+        print("  %s is %s - excluded from waivers, he will not play"
+              % (p.name, p.status))
 
     if unclassified_avail:
         print("  WARNING: %d distinct avail value(s) not recognized as "
@@ -648,6 +746,232 @@ def _cmd_week(args):
     return 0
 
 
+def _cmd_alert(args):
+    """Capture, score, and push one digest. The launchd entry point.
+
+    ORDER MATTERS. Capture first and let a failure short-circuit everything:
+    a stale or unverified page must never reach the composer, because an
+    expired CBS session parses to an empty roster that looks exactly like a
+    real one with nobody on it.
+    """
+    import datetime
+    import os
+
+    from sffl.alert import (POSITION_NOT_CAPTURED, PROJECTION_MISSING,
+                            STALE_INJURIES_MINUTES, compose)
+    from sffl.calibrate import load_curves
+    from sffl.capture import CaptureError, capture
+    from sffl.cbs_roster import parse_lineup, parse_positions
+    from sffl.cbs_weekly import is_out
+    from sffl.cbs_weekly import parse as parse_weekly
+    from sffl.identity import normalize_name
+    from sffl.injuries import for_roster, load as load_injuries
+    from sffl.league import load_league
+    from sffl.lineup import Candidate, best_lineup
+    from sffl.notify import send, topic_from_keychain
+    from sffl.pool import score_week
+
+    lg = load_league(args.league)
+    projections_url = args.projections_url or (PROJECTIONS_URL_TEMPLATE % args.week)
+    urls = {
+        "roster": args.team_url,
+        "projections": projections_url,
+    }
+
+    capture_error = None
+    roster_names = []
+    starters = []
+    # None means "capture never got far enough to know" - distinct from a
+    # successful parse that legitimately found nobody starting. `compose`
+    # renders those two states differently (see its docstring), so this
+    # must not default to `[]`.
+    current_starters = None
+    # Current starters that were never scored. `None` for the same reason
+    # `current_starters` is: until the projections parse, nobody knows.
+    unevaluated_starters = None
+    reports = []
+    sidelined = []
+    result = None
+    age_days = 0
+
+    try:
+        written = capture(urls, args.out_dir, args.profile_dir)
+        roster_path = written[urls["roster"]]
+        proj_path = written[urls["projections"]]
+        # parse_lineup, not parse_roster: the page also carries Jeff's
+        # CURRENT starting lineup, which is the actual start/sit value -
+        # compose() renders it against the optimum below. `starters` and
+        # `reserves` together are the same player set `parse_roster` would
+        # return.
+        starters, reserves = parse_lineup(roster_path)
+        current_starters = starters
+        roster_names = starters + [n for n in reserves if n not in starters]
+        age_days = int(
+            (datetime.datetime.now()
+             - datetime.datetime.fromtimestamp(os.path.getmtime(roster_path)))
+            .total_seconds() // 86400)
+
+        projections = parse_weekly(proj_path, group=args.group,
+                                   week=args.week, season=lg.season)
+        curves = load_curves(args.curves) if args.curves else None
+        by_key = dict((normalize_name(p.name), p) for p in projections)
+        owned = [normalize_name(n) for n in roster_names]
+
+        # C1. Which of CBS's eight starters could not be scored at all, and
+        # WHY. `--group` is RB-WR-TE, so the TQB, the kicker and the defense
+        # have no projection and are not in `by_key`; the START/SIT diff in
+        # `compose` is a set difference, so before this they landed in the
+        # SIT column every single week, dressed as merit-based bench advice.
+        #
+        # The covered positions are read off the parsed page itself rather
+        # than from the `--group` string: the group name is a label in
+        # sources/cbs-weekly.yaml, while what the page actually contains is
+        # the fact that decides whether a missing projection is expected.
+        # A starter whose position IS on the page and who still has no row
+        # is a different animal - a data problem, not a scope limit - and
+        # the two must not be reported as one thing.
+        covered_positions = set(p.pos for p in projections)
+        starter_positions = parse_positions(roster_path)
+        unevaluated_starters = []
+        for name in starters:
+            if normalize_name(name) in by_key:
+                continue
+            pos = starter_positions.get(name, "")
+            why = (PROJECTION_MISSING if pos and pos in covered_positions
+                   else POSITION_NOT_CAPTURED)
+            unevaluated_starters.append((name, pos, why))
+
+        sidelined = sorted((by_key[k].name, by_key[k].status)
+                           for k in owned
+                           if k in by_key and is_out(by_key[k].status))
+        result = best_lineup(lg, [
+            Candidate(name=by_key[k].name, pos=by_key[k].pos,
+                      points=score_week(lg, by_key[k], curves))
+            for k in owned if k in by_key and not is_out(by_key[k].status)])
+    except (CaptureError, ValueError) as exc:
+        capture_error = str(exc)
+
+    # C2. A failed injury fetch is NOT a quiet week. This used to be a bare
+    # `if args.injuries and os.path.exists(...)`: with StatsDeck down or
+    # `claude -p` failing there is no file, `reports` stayed [], and the
+    # digest printed "no designations on your roster." and "nothing new." -
+    # byte-identical to a genuinely quiet week - and exited 0. The only
+    # warning went to stderr, which never reaches the phone. Every branch
+    # below now produces either real rows or a reason the reader can see.
+    injury_error = None
+    injuries_age_minutes = None
+    injury_fetch_failed = False
+    if not args.injuries:
+        # Not a failure - nobody asked for injury data on this invocation -
+        # but the message must still not claim a clean roster it never
+        # looked at. Rendered, not counted against the exit code.
+        injury_error = ("no --injuries file was given to this run, so no "
+                        "injury feed was read at all")
+    elif not os.path.exists(args.injuries):
+        injury_error = (
+            "%s does not exist - the StatsDeck fetch step (see "
+            "ops/fetch_injuries.sh) did not produce a file" % args.injuries)
+        injury_fetch_failed = True
+    else:
+        try:
+            reports = for_roster(load_injuries(args.injuries), roster_names)
+            injuries_age_minutes = int(
+                (datetime.datetime.now()
+                 - datetime.datetime.fromtimestamp(
+                     os.path.getmtime(args.injuries)))
+                .total_seconds() // 60)
+        except Exception as exc:
+            # DELIBERATELY BROAD, and only around the injury payload - see
+            # the narrow `except (CaptureError, ValueError)` above, which
+            # must stay narrow because that path suppresses the lineup and
+            # broadening it would mask a real capture defect as a news
+            # problem.
+            #
+            # A file that exists but cannot be read or parsed is the same
+            # class of failure as no file at all, and must not take the
+            # whole alert down as a traceback: the lineup half of this
+            # digest is still worth pushing, and an unattended job that
+            # produces NOTHING ninety minutes before kickoff is the exact
+            # outcome this branch exists to prevent. ValueError covers
+            # json's decode error and injuries.load's own raise on a row
+            # with no player name; OSError a read failure - but a payload
+            # that is well-formed JSON of the WRONG SHAPE ({"report":
+            # ["some prose"]}, or a dict where a list belongs) reaches
+            # `row.get` and raises AttributeError/TypeError, which escaped
+            # every handler in this process. fetch_injuries.sh's shape check
+            # blocks the top-level case; it cannot vet each row. So every
+            # non-exiting exception from parsing this file degrades the run
+            # instead of ending it. KeyboardInterrupt and SystemExit derive
+            # from BaseException and are still not caught here.
+            reports = []
+            injuries_age_minutes = None
+            injury_error = (
+                "%s could not be parsed (%s: %s). The file EXISTS, so the "
+                "fetch step ran - this is a payload problem, not a failed "
+                "fetch, and the fix is at the source: check its shape "
+                "against ops/fetch_injuries.sh."
+                % (args.injuries, type(exc).__name__, exc))
+            injury_fetch_failed = True
+
+    # Data that is real but not from this run is its own kind of wrong: it
+    # renders last week's designations as today's. The alert says so, and
+    # the run counts as degraded.
+    if (injuries_age_minutes is not None
+            and injuries_age_minutes > STALE_INJURIES_MINUTES):
+        injury_fetch_failed = True
+
+    # `current_starters` carries `parse_lineup`'s starters straight through
+    # so `compose` can render the START/SIT diff against the optimum
+    # itself - this used to be a second, stdout-only implementation of that
+    # same diff living here, which the alert.py owner flagged as certain to
+    # drift from compose's own rendering. One implementation now: compose's.
+    body = compose(args.kind, age_days, reports, result, sidelined,
+                   capture_error=capture_error,
+                   current_starters=current_starters,
+                   unevaluated_starters=unevaluated_starters,
+                   injury_error=injury_error,
+                   injuries_age_minutes=injuries_age_minutes)
+    print(body)
+
+    # ORDERING: the topic is fetched HERE, after the digest above is already
+    # composed and printed, not before capture/scoring even starts. This
+    # runs unattended under launchd, so a run that produced a correct alert
+    # but could not PUSH it is a different, more valuable failure to see in
+    # the log than one that produced nothing at all - the printed body above
+    # has standalone worth (it can be read straight out of the log) even
+    # when delivery fails, and fetching the topic first would throw that
+    # away for the sake of failing a few seconds earlier.
+    delivery_error = None
+    try:
+        topic = topic_from_keychain()
+        sent = send(topic, "SFFL %s" % args.kind.title(), body,
+                    dry_run=args.dry_run)
+        print("\n[%s]" % ("sent" if sent else "dry run - nothing sent"))
+    except (RuntimeError, ValueError, OSError) as exc:
+        # Caught here rather than left to propagate as a traceback: this
+        # runs unattended at 4:45pm on a Friday, and a raw Python traceback
+        # in a log file is not an actionable failure, it is a puzzle.
+        # RuntimeError is the no-Keychain-entry case (its message already
+        # names the exact `security add-generic-password` fix - surfaced
+        # verbatim); ValueError is an empty topic/body reaching `send`;
+        # OSError is the base of `urllib.error.URLError`, a real network
+        # failure talking to ntfy.sh. All three mean the same thing to
+        # launchd's log: the alert was built correctly but not delivered.
+        print("\n[DELIVERY FAILED] %s" % exc)
+        delivery_error = exc
+
+    # A capture failure, a DEGRADED run (the injury fetch produced nothing,
+    # or produced something that is not from this run), or a delivery
+    # failure is each visible in a way launchd's log must be able to see, so
+    # each makes the exit code non-zero - but they are DIFFERENT failures
+    # (nothing produced, vs. an alert missing half its content, vs. a
+    # correct alert that could not be pushed), and the printed body above,
+    # not the exit code, is what tells them apart. A missing --injuries
+    # argument is NOT counted here: that is a deliberate invocation, not a
+    # failed step, and it is still stated in the body.
+    return 1 if (capture_error or injury_fetch_failed or delivery_error) else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sffl")
     sub = ap.add_subparsers(dest="cmd")
@@ -746,6 +1070,27 @@ def main(argv=None):
                          "without it the optimum is printed with no diff")
     wk.add_argument("--top", type=int, default=10)
     wk.set_defaults(func=_cmd_week)
+
+    alr = sub.add_parser("alert", help="capture, score, and push the weekly digest")
+    alr.add_argument("--kind", choices=["friday", "sunday"], required=True)
+    alr.add_argument("--league", default=DEFAULT_LEAGUE)
+    alr.add_argument("--week", type=int, required=True)
+    alr.add_argument("--group", default="RB-WR-TE")
+    alr.add_argument("--curves")
+    alr.add_argument("--injuries", help="JSON written by ops/fetch_injuries.sh")
+    alr.add_argument("--team-url", default=DEFAULT_TEAM_URL,
+                     help="CBS roster page (default: bare /teams, which CBS "
+                          "resolves to whoever is logged in - do not point "
+                          "this at a numbered /teams/<N>, that is a "
+                          "DIFFERENT manager's team)")
+    alr.add_argument("--projections-url",
+                     help="override the weekly projections URL; by default "
+                          "built from --week against CBS's stats-main page, "
+                          "so a new week never needs a hand-edited URL")
+    alr.add_argument("--out-dir", default="data/captures")
+    alr.add_argument("--profile-dir", default="data/browser-profile")
+    alr.add_argument("--dry-run", action="store_true")
+    alr.set_defaults(func=_cmd_alert)
 
     args = ap.parse_args(argv)
     if not getattr(args, "func", None):

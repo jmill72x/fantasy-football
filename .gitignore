@@ -23,3 +23,11 @@ data/weekly/
 
 # Subagent-driven-development scratch workspace
 .superpowers/
+
+# Playwright profile holding a live CBS login - a credential, never committed
+data/browser-profile/
+# Pages captured from the CBS league site
+data/captures/
+
+# launchd job output
+logs/
