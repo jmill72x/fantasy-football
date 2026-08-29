@@ -17,12 +17,16 @@ from playwright.sync_api import sync_playwright
 
 # Bootstrap sffl import path: sffl is not pip-installed, so this script must
 # be able to import it from <repo>/src no matter where the script is invoked from.
-_repo_src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
+_repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_repo_src = os.path.join(_repo_root, "src")
 sys.path.insert(0, _repo_src)
 
 from sffl.capture import _is_session_expired
 
-PROFILE_DIR = "data/browser-profile"
+# Resolve profile directory to an absolute path, always within the repo root.
+# This ensures the operator can log in from any working directory and the
+# session lands in the same place the automation will look for it.
+PROFILE_DIR = os.path.join(_repo_root, "data", "browser-profile")
 LEAGUE = "https://stripesfantasyfootballleague.football.cbssports.com/"
 
 
@@ -39,7 +43,9 @@ def main():
             if _is_session_expired(page.title(), page.url):
                 print("Still on the sign-in page - the session was NOT saved.")
                 return 1
-            print("Logged in. Session saved to %s" % PROFILE_DIR)
+            # Print the actual resolved path, not the string literal, so the
+            # operator can verify the session landed in the right place.
+            print("Logged in. Session saved to %s" % os.path.abspath(PROFILE_DIR))
             return 0
         finally:
             ctx.close()
