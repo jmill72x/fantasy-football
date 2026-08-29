@@ -358,3 +358,46 @@ def test_the_space_delimited_fixture_is_unaffected_by_the_tab_path():
     r = by_name(rows)["Braelon Allen"]
     assert r.pos == "RB" and r.team == "NYJ"
     assert r.stats["rush_yds"] == 36.8
+
+
+def test_a_whitespace_only_tab_owner_cell_is_refused_not_called_owned(tmp_path):
+    """M1. The tab path used to hand `avail` through unstripped while the
+    space path stripped it, so a cell holding only spaces was a non-empty
+    string and classify_avail_tab's "any other non-empty value means owned"
+    rule filed it as OWNED. That is the one classification made in silence -
+    an owned row is excluded from the waiver board with no warning at all -
+    so a blank column would quietly delete a genuine free agent from the
+    board. Stripped, it is indistinguishable from the empty cell above and
+    is refused loudly, which is what an indeterminate cell must do."""
+    page = tmp_path / "tab_blank_owner.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("\t   \tNick Chubb RB • CLE\t@PIT\t%s\n" % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].avail == ""
+    assert classify_avail_tab(rows[0].avail) is None
+    assert classify_avail_tab(rows[0].avail) != "owned"
+
+
+def test_a_numeric_owner_code_does_not_crash_the_row_regex():
+    """A human hand-edits `owner_codes` before week 1, and a code like `12`
+    YAML-parses to an int. `sorted(key=len)` and `re.escape` both raise
+    TypeError on an int, which took down the whole weekly command with a
+    traceback naming neither the file nor the field. Coerced with str()."""
+    line_re = build_line_re(["JM", 12, 50])
+    m = line_re.match("12 Nick Chubb RB • CLE @PIT 1 2 3")
+    assert m is not None
+    assert m.group("avail") == "12"
+    assert m.group("name") == "Nick Chubb"
+
+
+def test_numeric_owner_codes_from_yaml_also_classify_as_owned(tmp_path):
+    """The regex coercion alone is not enough: `classify_avail` tests
+    membership against the loaded list, and a page token is always a string,
+    so an int code would match the row and then classify as unknown."""
+    from sffl.cbs_weekly import _load_owner_codes
+    profile = tmp_path / "profile.yaml"
+    profile.write_text("owner_codes:\n  - JM\n  - 12\n")
+    codes = _load_owner_codes(str(profile))
+    assert codes == ["JM", "12"]
+    assert classify_avail("12", codes) == "owned"

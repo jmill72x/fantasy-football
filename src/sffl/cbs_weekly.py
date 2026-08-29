@@ -93,8 +93,17 @@ def build_line_re(owner_codes):
     either. It is optional: a healthy row has neither group.
     """
     tags = "|".join(_STATUS_TAGS)
-    codes = "|".join(re.escape(c) for c in sorted(owner_codes, key=len,
-                                                  reverse=True))
+    # str() every code before it is measured or escaped. `owner_codes` comes
+    # from hand-edited YAML and a human is expected to edit it before week 1;
+    # a code that looks numeric ("12", "50s" is fine but "12" is not) is
+    # YAML-parsed as an int, and both `len()` and `re.escape()` raise
+    # TypeError on it. Crashing the whole weekly command over a quoting
+    # detail in a config file is a failure the user cannot diagnose from the
+    # traceback, and there is no ambiguity about what an int owner code
+    # means as a page token: its decimal spelling.
+    codes = "|".join(re.escape(str(c))
+                     for c in sorted(owner_codes, key=lambda c: len(str(c)),
+                                     reverse=True))
     alternatives = [r"[A-Z]+\s*\([^)]*\)", "FA", "W"]
     if codes:
         alternatives.append(codes)
@@ -176,9 +185,17 @@ def _load_groups(profile_path):
 
 
 def _load_owner_codes(profile_path):
+    """The league's manager abbreviations, every one of them a string.
+
+    Coerced here as well as in `build_line_re` because `classify_avail`
+    tests `avail in owner_codes` against a token lifted from the page, which
+    is always a string: an int code from YAML would build into the regex
+    (after build_line_re's own str()) and then fail that membership test,
+    so the row would match and then classify as unknown.
+    """
     with open(profile_path) as fh:
         raw = yaml.safe_load(fh) or {}
-    return list(raw.get("owner_codes", []))
+    return [str(c) for c in raw.get("owner_codes", [])]
 
 
 def _parse_row(line, line_re):
@@ -204,7 +221,15 @@ def _parse_row(line, line_re):
         name_m = _TAB_NAME.match(m.group("namecell"))
         if not name_m:
             return None
-        return (m.group("avail"), name_m.group("name").strip(),
+        # .strip() here mirrors the space path below. Without it a
+        # whitespace-only owner cell ("\t \t") is a non-empty string and
+        # classify_avail_tab's "any other non-empty value means owned" rule
+        # files it as OWNED - the one classification that is silent (an
+        # owned row is merely excluded, with no warning), so a blank column
+        # would quietly remove a genuine free agent from the waiver board.
+        # Stripped, it becomes "" and classifies as None: refused loudly,
+        # which is the documented behavior for an indeterminate cell.
+        return (m.group("avail").strip(), name_m.group("name").strip(),
                 name_m.group("pos"), name_m.group("team"),
                 name_m.group("status1"), name_m.group("status2"),
                 m.group("rest").split("\t"))
