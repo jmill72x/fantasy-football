@@ -245,3 +245,16 @@ def test_an_unconfigured_code_is_refused_not_guessed():
     # Must not fall back to "owned". An unknown token means the config is
     # stale, and guessing either way silently mis-ranks the waiver board.
     assert classify_avail("ZZZ", CODES) is None
+
+
+def test_status_reaches_the_projection_record(tmp_path):
+    from sffl.cbs_weekly import parse
+    page = tmp_path / "p.txt"
+    # 17 tokens after the team code, matching sources/cbs-weekly.yaml.
+    stats = " ".join(["1"] * 17)
+    page.write_text(
+        "FA Nick Chubb O RB • CLE %s\n"
+        "FA Bijan Robinson RB • ATL %s\n" % (stats, stats))
+    rows = dict((p.name, p) for p in parse(str(page), group="RB-WR-TE", week=1))
+    assert rows["Nick Chubb"].status == "O"
+    assert rows["Bijan Robinson"].status == ""
