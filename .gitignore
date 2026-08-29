@@ -28,3 +28,6 @@ data/weekly/
 data/browser-profile/
 # Pages captured from the CBS league site
 data/captures/
+
+# launchd job output
+logs/
