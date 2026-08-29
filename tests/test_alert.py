@@ -259,3 +259,87 @@ def test_punctuation_differing_name_is_not_reported_as_a_change():
     msg = compose("friday", 2, [], LINEUP, [],
                   current_starters=["JaMarr Chase", "Bijan Robinson"])
     assert "lineup is already optimal" in msg.lower()
+
+
+# --- I2: a blank status is never rendered as data --------------------------
+
+# An official row whose status came back empty. The official-row field
+# mapping in sffl.injuries is PROVISIONAL - if the real feed spells the
+# field `report_status`, every official row arrives exactly like this.
+BLANK_OFFICIAL = Report(
+    name="Nick Chubb", team="CLE", status="", practice="",
+    reported_date="2026-09-05", detail="", source="official")
+
+BLANK_OFFICIAL_CHANGED = Report(
+    name="Nick Chubb", team="CLE", status="", practice="",
+    reported_date="2026-09-07", detail="", source="official", outlet="",
+    tier="", status_since="2026-09-06", previous_status="Questionable")
+
+
+def test_an_official_row_with_no_status_says_unknown_not_no_detail():
+    # "no detail" reads as "nothing wrong with this player". The whole row
+    # arriving empty is a DATA problem and must look like one.
+    msg = compose("friday", 2, [BLANK_OFFICIAL], LINEUP, [])
+    assert "STATUS UNKNOWN" in msg
+    assert "no detail" not in msg
+
+
+def test_a_blank_status_never_renders_as_an_empty_arrow_target():
+    # `"%s -> %s" % (prev, "")` produced "Questionable -> , since ..." - a
+    # line that reads as a change to nothing in particular.
+    msg = compose("sunday", 2, [BLANK_OFFICIAL_CHANGED], LINEUP, [])
+    assert "-> ," not in msg
+    assert "STATUS UNKNOWN" in msg
+
+
+def test_an_intel_row_with_no_status_is_not_flagged_as_unknown():
+    # Intel rows routinely carry only prose - the real captured feed has
+    # one. Only the official record is held to having a status.
+    msg = compose("friday", 2, [CHASE_INTEL], LINEUP, [])
+    assert "STATUS UNKNOWN" not in msg
+    assert "expected to play per beat writer" in msg
+
+
+# --- I4: row-level provenance actually reaches the phone -------------------
+
+CHASE_WEB_DIGEST = Report(
+    name="Ja'Marr Chase", team="CIN", status="Day-to-Day", practice="",
+    reported_date="2026-08-26", detail="did not practice Wednesday",
+    source="intel", outlet="web_digest", tier="corroborated")
+
+CHUBB_UNCONFIRMED = Report(
+    name="Nick Chubb", team="CLE", status="", practice="",
+    reported_date="2026-09-06", detail="game-time decision per beat writer",
+    source="intel", outlet="beat_writer", tier="unconfirmed")
+
+
+def test_an_intel_line_names_the_outlet_it_came_from():
+    # Without this every intel line read "[intel <date>]", which only
+    # repeats the block heading it already sits under - and two intel rows
+    # disagreeing about the same player were indistinguishable.
+    msg = compose("friday", 2, [CHASE_WEB_DIGEST, CHUBB_UNCONFIRMED],
+                  LINEUP, [])
+    assert "web_digest" in msg
+    assert "beat_writer" in msg
+
+
+def test_tier_is_rendered_as_corroboration_never_as_a_designation():
+    # `tier` is CORROBORATION STRENGTH, not injury severity. A bare
+    # "unconfirmed" next to a status would read as a second opinion on the
+    # player; it must always carry the word that says what it measures.
+    msg = compose("friday", 2, [CHASE_WEB_DIGEST, CHUBB_UNCONFIRMED],
+                  LINEUP, [])
+    assert "corroboration: corroborated" in msg
+    assert "corroboration: unconfirmed" in msg
+    for line in msg.splitlines():
+        for value in ("corroborated", "unconfirmed"):
+            if value in line:
+                assert "corroboration: %s" % value in line
+
+
+def test_an_official_row_carries_no_outlet_and_prints_none():
+    # Official rows never carry an outlet label (see sffl.injuries), so the
+    # tag stays the bare "[official <date>]" it always was.
+    msg = compose("friday", 2, [CHUBB_OUT], LINEUP, [])
+    assert "[official 2026-09-05]" in msg
+    assert "via" not in msg

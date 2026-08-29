@@ -25,7 +25,13 @@ never been exercised against a real official row. It is written defensively
 (same field names as an intel row, since nflverse injury-report rows are
 expected to share `player`/`team`/`status`/`notes`/`reported_date`) but is
 UNVERIFIED until the season starts on 2026-09-09. Re-confirm it against a
-real `report` row then.
+real `report` row then. Because it is provisional, `status` falls back to
+`report_status` and `game_status` - nflverse's own column names - the same
+way `detail` falls back from `notes`; a renamed field would otherwise blank
+out every official row, and a blank status prints as a player with no
+designation. An official row that still has no status is NEVER rendered as
+blank: `alert._status_text` prints it as an explicit unknown, so a broken
+mapping shows up as an obviously wrong message rather than as good news.
 
 `source` IS LOAD-BEARING. The official injury report is the record; intel
 supplements it and never overrides it. The two are kept as separate rows so
@@ -87,6 +93,19 @@ def _row_to_report(row, bucket):
     if detail is None:
         detail = row.get("detail") or row.get("note")
 
+    # STATUS, with the same defensive fallbacks `detail` gets, and for the
+    # same reason. The official-row mapping here is PROVISIONAL - it has
+    # never been exercised against a real `report` row (see the module
+    # docstring) - and if nflverse's injury report spells the field
+    # `report_status` or `game_status` instead of `status`, EVERY official
+    # row silently comes back blank, which the renderer would then print as
+    # a player with no designation. That is exactly the failure `notes` vs
+    # `detail` already produced once. These two names are the real column
+    # names in nflverse's injury report, not guesses at plausible ones.
+    status = row.get("status")
+    if status is None or not str(status).strip():
+        status = row.get("report_status") or row.get("game_status")
+
     # Official rows never carry their own outlet label; StatsDeck's outlet
     # names ("sleeper_feed", "web_digest") only appear on intel rows.
     outlet = "" if bucket == "official" else (row.get("source") or "")
@@ -94,7 +113,7 @@ def _row_to_report(row, bucket):
     return Report(
         name=str(name).strip(),
         team=(row.get("team") or "").strip(),
-        status=(row.get("status") or "").strip(),
+        status=(status or "").strip(),
         # Populated only when the row itself has a `practice` key - never
         # inferred from `notes` prose.
         practice=(row.get("practice") or "").strip(),
