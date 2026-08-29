@@ -880,15 +880,37 @@ def _cmd_alert(args):
                  - datetime.datetime.fromtimestamp(
                      os.path.getmtime(args.injuries)))
                 .total_seconds() // 60)
-        except (ValueError, OSError) as exc:
+        except Exception as exc:
+            # DELIBERATELY BROAD, and only around the injury payload - see
+            # the narrow `except (CaptureError, ValueError)` above, which
+            # must stay narrow because that path suppresses the lineup and
+            # broadening it would mask a real capture defect as a news
+            # problem.
+            #
             # A file that exists but cannot be read or parsed is the same
-            # class of failure as no file at all, and must not be allowed to
-            # take the whole alert down as a traceback: the lineup half of
-            # this digest is still worth pushing. ValueError covers both
+            # class of failure as no file at all, and must not take the
+            # whole alert down as a traceback: the lineup half of this
+            # digest is still worth pushing, and an unattended job that
+            # produces NOTHING ninety minutes before kickoff is the exact
+            # outcome this branch exists to prevent. ValueError covers
             # json's decode error and injuries.load's own raise on a row
-            # with no player name.
+            # with no player name; OSError a read failure - but a payload
+            # that is well-formed JSON of the WRONG SHAPE ({"report":
+            # ["some prose"]}, or a dict where a list belongs) reaches
+            # `row.get` and raises AttributeError/TypeError, which escaped
+            # every handler in this process. fetch_injuries.sh's shape check
+            # blocks the top-level case; it cannot vet each row. So every
+            # non-exiting exception from parsing this file degrades the run
+            # instead of ending it. KeyboardInterrupt and SystemExit derive
+            # from BaseException and are still not caught here.
             reports = []
-            injury_error = "%s could not be read: %s" % (args.injuries, exc)
+            injuries_age_minutes = None
+            injury_error = (
+                "%s could not be parsed (%s: %s). The file EXISTS, so the "
+                "fetch step ran - this is a payload problem, not a failed "
+                "fetch, and the fix is at the source: check its shape "
+                "against ops/fetch_injuries.sh."
+                % (args.injuries, type(exc).__name__, exc))
             injury_fetch_failed = True
 
     # Data that is real but not from this run is its own kind of wrong: it

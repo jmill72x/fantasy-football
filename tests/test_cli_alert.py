@@ -171,8 +171,50 @@ def test_an_unreadable_injuries_file_fails_loudly_without_killing_the_alert(
     code, out = alert_env.run(capsys, "--injuries", str(path))
     assert code == 1
     assert "INJURY DATA UNAVAILABLE" in out
-    assert "could not be read" in out
+    assert "could not be parsed" in out
     assert "BEST LINEUP" in out
+
+
+def test_a_wrong_shape_payload_degrades_the_run_instead_of_ending_it(
+        alert_env, capsys):
+    """Well-formed JSON, wrong shape: a list of STRINGS under "report".
+
+    `injuries.load` reaches `row.get(...)` on a string and raises
+    AttributeError, which is neither ValueError nor OSError, so it used to
+    escape every handler in the process: no digest composed, nothing pushed,
+    a traceback in a log nobody reads - on a Sunday morning, silence ninety
+    minutes before kickoff. That is precisely the outcome the injury-fetch
+    degradation exists to prevent, so a malformed payload must degrade the
+    same way a missing one does. ops/fetch_injuries.sh's shape check blocks
+    the top-level case; it cannot vet each row inside the arrays.
+    """
+    path = alert_env.tmp / "injuries-friday.json"
+    path.write_text(json.dumps({"report": ["some prose"], "intel": []}))
+    code, out = alert_env.run(capsys, "--injuries", str(path))
+    assert code == 1
+    # The alert still composed, and still carries the half that works.
+    assert "BEST LINEUP" in out
+    assert "Ja'Marr Chase" in out
+    # The problem is stated, and named as a PAYLOAD problem - a different
+    # cause with a different fix from "the fetch produced no file".
+    assert "INJURY DATA UNAVAILABLE" in out
+    assert "could not be parsed" in out
+    assert "AttributeError" in out
+    assert "no designations on your roster" not in out
+    # And it was actually delivered.
+    assert len(alert_env.sent_calls) == 1
+
+
+def test_a_dict_where_a_list_belongs_also_degrades(alert_env, capsys):
+    # The other half of the same shape hazard: `{"report": {...}}` iterates
+    # a dict's KEYS, handing `_row_to_report` a string again.
+    path = alert_env.tmp / "injuries-friday.json"
+    path.write_text(json.dumps({"report": {"player": "Nick Chubb"},
+                                "intel": []}))
+    code, out = alert_env.run(capsys, "--injuries", str(path))
+    assert code == 1
+    assert "BEST LINEUP" in out
+    assert "could not be parsed" in out
 
 
 def test_stale_injury_data_is_flagged_and_counts_as_a_degraded_run(
