@@ -41,6 +41,13 @@ never be rendered as, or read as, a severity signal.
 appears only as prose inside `notes` ("did not practice Wednesday..."), but
 a regex over free text would invent a fact StatsDeck never structured. This
 field is populated only when the row itself carries a `practice` key.
+
+`previous_status` + `status_since` ARE THE ONLY CHANGE SIGNAL AVAILABLE. The
+feed has no practice field, and this module keeps no history of its own -
+without these two, Friday's and Sunday's alerts would say the same thing
+about the same player, which trains the reader to ignore both. They are
+carried verbatim from the feed and never derived by comparing rows or
+parsing prose. Do not delete these as "unused" without checking alert.py.
 """
 
 import json
@@ -50,13 +57,14 @@ from sffl.identity import normalize_name
 
 Report = namedtuple(
     "Report",
-    "name team status practice reported_date detail source outlet tier",
+    "name team status practice reported_date detail source outlet tier "
+    "status_since previous_status",
 )
-# `outlet` and `tier` default to "" so existing 7-field positional
-# construction (name, team, status, practice, reported_date, detail,
-# source) - as used elsewhere in this codebase before these two fields were
-# added - keeps working unchanged.
-Report.__new__.__defaults__ = ("", "")
+# `outlet`, `tier`, `status_since`, and `previous_status` default to "" so
+# existing 7-field positional construction (name, team, status, practice,
+# reported_date, detail, source) - as used elsewhere in this codebase before
+# these fields were added - keeps working unchanged.
+Report.__new__.__defaults__ = ("", "", "", "")
 
 
 def _row_to_report(row, bucket):
@@ -95,6 +103,10 @@ def _row_to_report(row, bucket):
         source=bucket,
         outlet=outlet.strip(),
         tier=(row.get("tier") or "").strip(),
+        # The only change signal the feed gives us for free - see the
+        # module docstring. Carried verbatim; never derived here.
+        status_since=(row.get("status_since") or "").strip(),
+        previous_status=(row.get("previous_status") or "").strip(),
     )
 
 

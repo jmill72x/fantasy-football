@@ -89,6 +89,27 @@ def test_practice_is_populated_when_the_row_actually_carries_it():
     assert official.practice == "DNP"
 
 
+def test_a_row_carrying_status_since_and_previous_status_round_trips_them():
+    # This pair is the only change signal the feed gives us for free - the
+    # feed has no practice field and this module keeps no history of its
+    # own. Sunday needs to be able to say "changed from X on <date>".
+    chase = for_roster(load(FIXTURE), ["Ja'Marr Chase"])
+    sleeper_row = [r for r in chase if r.outlet == "sleeper_feed"][0]
+    assert sleeper_row.status_since == "2026-08-27"
+    assert sleeper_row.previous_status == "Questionable"
+
+
+def test_a_row_lacking_status_since_yields_empty_string_not_none():
+    # A bare `None` would render as the literal string "None" in a push
+    # notification - the kind of thing that reaches a phone and cannot be
+    # taken back.
+    official = for_roster(load(FIXTURE), ["Nick Chubb"])[0]
+    assert official.status_since == ""
+    assert official.previous_status == ""
+    assert official.status_since is not None
+    assert official.previous_status is not None
+
+
 def test_a_row_missing_a_player_name_key_raises_rather_than_blanking(tmp_path):
     import json
 
