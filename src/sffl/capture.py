@@ -25,8 +25,17 @@ a shorter string.
 import os
 
 # What CBS serves instead of the page when the session has expired. Verified
-# 2026-08-29: an unauthenticated GET of the league 302s to
-# cbssports.com/login and the resulting document carries this exact title.
+# 2026-08-29: an unauthenticated GET of the league 302s to cbssports.com/login.
+# The login page has:
+#   - HTML title: "Sign In - CBSSports.com"
+#   - final URL: https://www.cbssports.com/login?... (path contains /login)
+#   - body text: only 284 chars (but not all login pages may be short)
+# This constant checks the title (the title never appears in body text).
+# The URL /login path is checked separately. Body text is not checked for
+# session expiry, to prevent the danger: a long login page (>1000 chars) would
+# pass the character floor and save as a real capture, parsing downstream to
+# an empty roster ('Jeff rosters nobody') — the exact failure this guard exists
+# to prevent.
 SESSION_EXPIRED_TITLE = "Sign In - CBSSports.com"
 
 # A real CBS roster or projections page is thousands of characters. Anything
@@ -44,13 +53,33 @@ class SessionExpired(CaptureError):
     """CBS served its login page - the stored browser profile needs a re-login."""
 
 
-def check_page_text(text, url):
+def _is_session_expired(title, url):
+    """Return True if the page title or final URL indicate an expired session.
+
+    Used by both the capture validation and the manual login script to detect
+    when a redirect to the CBS login page has occurred.
+    """
+    return SESSION_EXPIRED_TITLE in title or "/login" in url
+
+
+def check_page_text(text, url, title=""):
     """Raise unless `text` is plausibly the real page for `url`.
+
+    Arguments:
+      text: the body text of the page
+      url: the final URL (after redirects), to detect /login redirects
+      title: the HTML page title (the <title> tag), to detect CBS login pages
 
     Returns None on success so callers read as `check_page_text(...)` followed
     by a write, rather than threading a boolean nobody checks.
+
+    Session expiry is checked first so the specific "log in again" diagnosis
+    wins over generic "too short" or "empty page" errors — it's the actionable one.
     """
-    if SESSION_EXPIRED_TITLE in text:
+    # Check for session expiry by title and/or redirect to /login.
+    # Title never appears in body text, so we need it explicitly.
+    # URL check catches cases where the title is unhelpful or missing.
+    if _is_session_expired(title, url):
         raise SessionExpired(
             "%s returned the CBS sign-in page, so the stored browser profile "
             "is no longer logged in. Nothing was saved - a login page parses "
@@ -94,7 +123,10 @@ def capture(urls, out_dir, profile_dir, timeout_ms=30000):
             for name, url in urls.items():
                 page.goto(url, timeout=timeout_ms, wait_until="networkidle")
                 text = page.inner_text("body")
-                check_page_text(text, url)
+                # Pass the final URL (after redirects) and page title, not the
+                # requested URL. A redirect to /login is invisible in requested URL
+                # but visible in page.url. Title never appears in body text.
+                check_page_text(text, page.url, page.title())
                 path = os.path.join(out_dir, "%s.txt" % name)
                 with open(path, "w") as fh:
                     fh.write(text)

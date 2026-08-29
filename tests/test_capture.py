@@ -3,11 +3,47 @@ import pytest
 from sffl import capture
 
 
-def test_a_login_page_is_reported_as_an_expired_session():
-    text = "Sign In - CBSSports.com\nLog In\nEmail\nPassword"
+def test_a_short_login_page_identified_by_title_alone_raises_session_expired():
+    # Real measured page: 284 characters of body text on a login redirect.
+    # Without title/URL signals, the character floor (1000 chars) would be the
+    # only guard, and would fail to catch this.
+    text = "Log In\n\nUse the email address and password for your CBS Sports account."
+    url = "https://www.cbssports.com/login?product_abbrev=mgmt&xurl=..."
+    title = capture.SESSION_EXPIRED_TITLE
     with pytest.raises(capture.SessionExpired) as exc:
-        capture.check_page_text(text, "https://example.invalid/teams/1")
+        capture.check_page_text(text, url, title)
     assert "log in again" in str(exc.value).lower()
+
+
+def test_a_long_login_page_over_char_floor_identified_by_title_raises_session_expired():
+    # The dangerous case: a login page that is long enough to pass the
+    # character floor. Without title/URL checks, it would be saved and parsed
+    # downstream as 'Jeff rosters nobody' — the exact failure we guard against.
+    text = "Log In\n\n" + ("x" * 1500)  # Over the 1000-char floor
+    title = capture.SESSION_EXPIRED_TITLE
+    url = "https://example.invalid/teams/1"
+    with pytest.raises(capture.SessionExpired) as exc:
+        capture.check_page_text(text, url, title)
+    assert "log in again" in str(exc.value).lower()
+
+
+def test_a_page_identified_by_login_url_path_alone_raises_session_expired():
+    # A login redirect where the title is unhelpful. The URL path is a reliable
+    # signal that CBS sends only on expired sessions.
+    text = "Some generic page content"
+    url = "https://www.cbssports.com/login?param=value"
+    title = "Some Page"  # Doesn't match SESSION_EXPIRED_TITLE
+    with pytest.raises(capture.SessionExpired) as exc:
+        capture.check_page_text(text, url, title)
+    assert "log in again" in str(exc.value).lower()
+
+
+def test_a_real_looking_page_with_normal_title_and_url_passes():
+    # A plausible roster or projections page with a normal title and URL.
+    text = "y" * 5000
+    url = "https://stripesfantasyfootballleague.football.cbssports.com/teams/1"
+    title = "My Team - Fantasy Football"
+    assert capture.check_page_text(text, url, title) is None
 
 
 def test_an_empty_page_is_refused_rather_than_saved():
