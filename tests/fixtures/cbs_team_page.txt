@@ -1,0 +1,98 @@
+League
+My Team
+Players
+Scores
+Standings
+Advice
+STRIPES FANTASY FOOTBALL LEAGUE
+Team Placeholder
+Team Placeholder
+Manager Placeholder
+(0-0-0)
+ 
+ADD/DROP
+ 
+TRADES
+8 / 12
+WAIVER #
+YEAR
+2026
+WEEK
+1
+OVERVIEW
+STATS
+PROJECTIONS
+USAGE
+RANKINGS
+SCHEDULE
+NEWS
+PLAYERS
+SET YOUR DEFAULT VIEW
+
+	
+SCHEDULE
+	
+ODDS
+	
+RANK
+	
+TRENDS
+	
+FANTASY POINTS
+
+EDIT	POS	PLAYERS	OPP	GAME TIME	BYE	O/U	POSRNK	OVP	ROST	START	2025	3YR AVG	PROJ
+
+id=8987		TQB	Chargers TQB • LAC	ARI	
+Sun 4:25pm EDT
+	7	45.5	---	---	91%	39%	222.00	157.42	163.74
+
+id=97360602		RB	Cam Skattebo RB • NYG	DAL	
+Sun 8:20pm EDT
+	8	48.0	25	25	66%	37%	52.16	46.76	92.31
+
+id=9845591		WR	Ja'Marr Chase WR • CIN 	TB	
+Sun 1:00pm EDT
+	6	52.0	34	31	85%	85%	122.71	68.54	82.03
+
+id=9233899		WR	Ladd McConkey WR • LAC 	ARI	
+Sun 4:25pm EDT
+	7	46.5	8	23	87%	79%	56.00	53.57	64.15
+
+id=9804182		WR	Jameson Williams WR • DET	NO	
+Sun 1:00pm EDT
+	6	47.5	37	29	81%	69%	73.91	42.56	50.04
+
+id=92503346		TE	Brock Bowers TE • LV	MIA	
+Sun 4:25pm EDT
+	13	39.0	31	23	100%	85%	68.70	60.86	59.44
+
+id=9939336		K	Evan McPherson K • CIN 	TB	
+Sun 1:00pm EDT
+	6	52.5	20	29	60%	50%	135.00	61.00	76.00
+
+id=8100		DST	Patriots DST • NE 	@SEA	
+Wed 8:20pm EDT
+	11	45.0	11	9	72%	70%	139.60	106.17	143.30
+RESERVES
+
+id=8063		TQB	49ers TQB • SF 	@LAR	
+Thurs 8:35pm EDT
+	8	50.5	---	---	100%	68%	223.97	200.58	158.63
+
+id=9116510		RB	Rico Dowdle RB • PIT	ATL	
+Sun 1:00pm EDT
+	9	43.5	34	24	81%	54%	65.00	48.00	39.16
+
+id=94823889		RB	TreVeyon Henderson RB • NE 	@SEA	
+Wed 8:20pm EDT
+	11	45.5	8	30	96%	44%	90.00	65.00	52.51
+
+id=9504729		RB	Rhamondre Stevenson RB • NE 	@SEA	
+Wed 8:20pm EDT
+	11	46.5	23	21	99%	44%	77.98	40.00	45.99
+
+id=9443231		WR	Courtland Sutton WR • DEN	@KC	
+Mon 8:15pm EDT
+	10	42.5	23	13	98%	69%	84.63	60.61	55.14
+ACTIVE: 8 RESERVE: 5
+InjurySuspendedPlayer NewsHot PlayerCold PlayerInactive Player
