@@ -40,9 +40,21 @@ silently break every delivery.
    This opens a real, visible browser window - it needs a GUI session and **cannot be
    completed over SSH** (there's no window server to show you the page), and is awkward
    over VNC too. Do it at the machine, logged in to the desktop.
-3. Put the ntfy topic in the login Keychain. **Do this at the machine (Terminal.app),
-   not over SSH** - `security` needs the window server to be able to unlock/write the
-   keychain, and an SSH session (e.g. Termius) does not have one:
+3. Put the ntfy topic in the login Keychain. **Generate an all-lowercase topic** -
+   ```
+   LC_ALL=C tr -dc 'a-z0-9' </dev/urandom | head -c 24; echo
+   ```
+   Uppercase is legal per ntfy's own spec, but **the ntfy iOS app fails on a mixed-case
+   topic**: it displays the subscription as `?/?`, receives nothing, and gives no error,
+   while the server stores the messages perfectly well (confirmed by polling ntfy.sh
+   directly for a 24-character mixed-case topic that never reached the phone; an
+   all-lowercase probe topic to the same phone delivered instantly). Do not tighten
+   `notify._TOPIC_RE` to lowercase-only in response to this - it would reject topics the
+   server accepts and other clients handle. This is a client bug, worked around here.
+
+   **Do this at the machine (Terminal.app), not over SSH** - `security` needs the window
+   server to be able to unlock/write the keychain, and an SSH session (e.g. Termius) does
+   not have one:
    ```
    security add-generic-password -a sffl-alert-ntfy-topic -s sffl -w <your-topic> -U
    ```
@@ -70,8 +82,11 @@ ops/run_alert.sh friday --dry-run
 (or `DRY_RUN=1 ops/run_alert.sh friday`). This runs the real capture and scoring
 pipeline and prints the full digest to stdout, but passes `--dry-run` through to `sffl
 alert` so nothing is pushed to the phone. Confirm the roster names are Jeff's, the
-digest reads sensibly for the current week, the roster age reads a small number of
-minutes-to-hours (not days), and no StatsDeck point values appear anywhere in the text.
+digest reads sensibly for the current week, and no StatsDeck point values appear anywhere
+in the text. Two age lines are printed for exactly this check: the roster age (captured
+by this run, so `0 days`) and the injury-data age (`fetched N minutes ago`) - if the
+second reads in the hours, or the message says `STALE INJURY DATA`, the fetch step did
+not run.
 
 ## The week number
 
@@ -135,6 +150,46 @@ Add the missing code to `owner_codes` and re-run. Do not loosen the matching pat
 itself to "fix" this - the parser refusing a shape it doesn't recognize, instead of
 guessing, is deliberate (see the comments in `src/sffl/cbs_weekly.py`).
 
+A code that looks like a number (`12`) is YAML-parsed as an integer rather than a string.
+That is handled - the loader coerces every code with `str()` - so it neither crashes the
+command nor silently fails to match. Quoting it (`"12"`) is still clearer.
+
+## "The alert says INJURY DATA UNAVAILABLE"
+
+The StatsDeck fetch (`ops/fetch_injuries.sh`) produced no usable file, so the digest has
+its lineup half but no injury news - and says so, in the message body, rather than
+printing "no designations on your roster" the way a genuinely quiet week does. The run
+exits non-zero. The alert is still sent: a lineup with no news beats no digest at all.
+
+Read `logs/alert-<kind>.err` for the fetch's own message. Common causes: StatsDeck was
+unreachable, or `claude -p` refused/denied the tool and exited without writing. The
+script removes its output file **before** fetching and again if the result is empty or is
+not `{"report": [...], "intel": [...]}`, so a failed fetch can never leave the previous
+run's file to be rendered as today's news.
+
+## "The alert says STALE INJURY DATA"
+
+The injuries file exists and parsed, but is older than an hour - so it was not written by
+this run's fetch, and the news in the digest is from an earlier run. Each row carries its
+own `reported_date`, so the message can be read with that in mind. This normally means
+the fetch step was skipped entirely (`sffl alert --injuries` pointed by hand at an old
+file); a *failed* fetch removes the file rather than leaving it behind. The run counts as
+degraded and exits non-zero.
+
+## "The alert lists players under NOT EVALUATED"
+
+Working as intended, and deliberately not phrased as advice. The projections page this
+job captures covers **RB/WR/TE only**, while CBS starts eight players, so the Team QB,
+the kicker and the defense are never scored and cannot appear in the optimal lineup. They
+used to fall out of the START/SIT diff into the SIT column every single week, which read
+as "bench your kicker". They are now named in their own section instead. Two different
+things are reported there and the distinction is the point:
+
+- *Their position is not in the projections page this job captures* - a limit of the
+  tool, no reflection on the player. Expected every week for TQB/K/DST.
+- *Their position IS captured and they still had no projection* - a **data problem**.
+  Check the projections capture; a rostered RB/WR/TE should have a row.
+
 ## "The roster is wrong" (wrong manager's team)
 
 `sffl alert`'s `--team-url` defaults to the bare CBS `/teams` URL with **no team
@@ -165,9 +220,18 @@ Three distinct causes produce keychain-flavored errors and are easy to mix up:
    app on the phone - the push succeeds server-side but never reaches the phone because
    nothing is subscribed to that topic. Fix: confirm both sides reference the same topic
    string.
+4. **The topic is mixed-case and the ntfy iOS app is silently dropping it** - the
+   subscription shows as `?/?` in the app with zero notifications while the server holds
+   the messages fine. Fix: switch to an all-lowercase topic on both sides (see
+   "First-time setup" step 3).
 
-If `topic_from_keychain()` finds no entry at all, the error message names the exact
-`security add-generic-password ... -U` command to run - see "First-time setup" above.
+`topic_from_keychain()` tells these apart rather than guessing: a genuinely missing entry
+names the exact `security add-generic-password ... -U` command to create one (see
+"First-time setup"), while a **locked** keychain says so explicitly and tells you NOT to
+re-create the entry. If you see the create-it message, the entry really is absent; if you
+see the unlock message, the entry is fine and creating a new one would only overwrite a
+working topic. Any other failure is reported with `security`'s own message and its exit
+code, unclassified, rather than being filed under "missing entry".
 
 ## What is deliberately NOT automated
 
