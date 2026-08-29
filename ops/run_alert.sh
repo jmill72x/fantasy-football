@@ -61,9 +61,15 @@ print(min(18, max(1, week)))
 
 # The injury fetch is allowed to fail without taking the alert with it: a
 # digest carrying the lineup but no news is far better than no digest at
-# all, and a missing --injuries file composes cleanly as "nothing new" (see
-# `sffl.cli._cmd_alert`). `set -e` is deliberately NOT set above so this
-# `||` fallback actually runs instead of the script aborting first.
+# all. A missing --injuries file is NOT rendered as a quiet week -
+# `sffl.cli._cmd_alert` notices the file doesn't exist, states that
+# explicitly in the pushed message body ("... the StatsDeck fetch step ...
+# did not produce a file"), and marks the run DEGRADED, so `sffl alert`
+# still composes and pushes the digest but exits non-zero. `set -e` is
+# deliberately NOT set above so this `||` fallback actually runs instead of
+# the script aborting first - the script must survive a failed fetch long
+# enough to hand the missing file off to `sffl alert`, which is what
+# actually reports it (both in the pushed body and in the exit code).
 INJ="data/captures/injuries-${KIND}.json"
 ops/fetch_injuries.sh "$INJ" || echo "WARN: injury fetch failed; continuing" >&2
 
