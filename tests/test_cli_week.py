@@ -531,3 +531,38 @@ def test_an_out_free_agent_does_not_appear_in_waiver_ranking(tmp_path, capsys):
     # But it must be named somewhere in the output (visible exclusion)
     assert "Sidelined Free Agent" in out, \
         "Out free agent must be named somewhere in output (excluded message)"
+
+
+TAB_PROJ = "tests/fixtures/cbs_weekly_tab_rbwrte.txt"
+
+
+def test_a_tab_delimited_owned_row_is_classified_owned_through_the_cli(tmp_path, capsys):
+    """Wiring regression, not a `cbs_weekly` unit test (the parser
+    implementer already covered `classify_avail_tab` itself). `_cmd_week`
+    used to call `classify_avail` - the SPACE-path classifier - on every
+    row unconditionally, regardless of which shape produced the file.
+
+    Fed a real Playwright-captured tab-delimited page, every owned row's
+    `avail` is a (possibly truncated) fantasy team name like "Team J..." -
+    not "FA"/"W", and not one of the space-path's enumerated `owner_codes`
+    from sources/cbs-weekly.yaml. The old wiring reported every single one
+    of those as an unrecognized avail shape: a noisy "not recognized"
+    warning naming a dozen team names, and a waiver board that had
+    silently stopped telling owned players from free agents on the format
+    this pipeline now actually captures. `_avail_classifier` must pick
+    `classify_avail_tab` for this file instead - this pins the WIRING.
+
+    TAB_PROJ has 100 rows: 22 are genuinely available ("W (9/16)") and 78
+    are owned by one of twelve sanitized team tokens. Rostering exactly one
+    of the 78 (Puka Nacua) leaves 77 owned + 22 available among the rest.
+    """
+    r = roster_file(tmp_path, ["Puka Nacua"])
+    rc = main(["week", "--projections", TAB_PROJ, "--group", "RB-WR-TE",
+               "--week", "1", "--roster", r, "--waivers"])
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    assert "not recognized as" not in out, (
+        "a tab-format owner cell must classify as owned, not fall through "
+        "to the unclassified-avail warning")
+    assert "22 free agents ranked (77 excluded - rostered by another team)" in out
