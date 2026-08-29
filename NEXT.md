@@ -9,6 +9,12 @@ Auction cheatsheet pipeline for the STRIPES Fantasy Football League (CBS). Four 
 artifacts render. **TODO B is done and answered NO** (see below). What remains is the
 08-21→08-23 data refresh, which needs Jeff at the Mac.
 
+**A fifth, later addition beyond the four auction plans: the read-only in-season core**
+(`sffl week` — weekly waivers and start/sit) **lives on branch `in-season-core` and is
+still UNMERGED.** It has had three pre-merge fix waves, all on 2026-08-28: a review wave
+(C1/I1-I5/I8), a verification-pass wave (F1/F3/F4/F5/F8), and a second C1 wave (the
+monotone-envelope fix). See the status table below and "What works today."
+
 **Jeff is not attending the auction.** A surrogate drafts for him on 08-26. **Jeff owns the
 BID; the surrogate owns the SELECTION.** The Excel + `Key & Intel` sheet is the deliverable;
 the PDF/iPad path is no longer the primary artifact and no annotation app needs buying.
@@ -19,6 +25,7 @@ the PDF/iPad path is no longer the primary artifact and no annotation app needs 
 | **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections, lineup floors and market calibration — 165 tests |
 | **Plan 3 — Excel + PDF renderers** | ✅ merged — 203 tests. `sffl render` writes both |
 | **Plan 4 — silent auction planner** | ✅ merged — 279 tests. `sffl plan`; the table is on PDF p17 |
+| **In-season core — weekly waivers & start/sit (read-only)** | ⏳ UNMERGED (branch `in-season-core`) — 409 tests, three pre-merge fix waves. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), ntfy/launchd delivery, `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop |
 
 Verify state in one command:
 
@@ -41,6 +48,31 @@ PYTHONPATH=src ./.venv/bin/python -m sffl.cli value \
 543 players, TQB=32. Every row carries **MY$** (worth against replacement) and **EST$**
 (what the room will pay). Swap `value` for `render` and add `--pdf`/`--xlsx` to write the
 artifacts — that is the command to run on 08-21.
+
+**What works today, in-season (read-only).** `sffl week` ranks waiver targets and flags
+start/sit changes from a saved CBS weekly-projections page — this module does no network
+I/O, so the page is fetched by a browser tool and saved first, same discipline as every
+other extract in this project:
+
+```bash
+PYTHONPATH=src ./.venv/bin/python -m sffl.cli week \
+  --projections tests/fixtures/cbs_weekly_rbwrte.txt --group RB-WR-TE --week 1 \
+  --roster roster.txt --curves calibration/2025.yaml --waivers
+```
+
+`--roster` (and, for `--start-sit`, `--current`) is a text file of one player name per
+line, saved the same way. The `--projections` path above is the tracked test fixture —
+8 real CBS rows, captured 2026-08-28 — since no full saved page is committed yet; a real
+week points this at a saved page under `data/weekly/` (gitignored). Swap `--waivers` for
+`--start-sit --current current.txt` to check whether the lineup currently set on CBS is
+already optimal. Only the `RB-WR-TE` group is defined in `sources/cbs-weekly.yaml` so far
+— TQB/K/DST would each need their own entry there, and that entry MUST set
+`expect_tokens`. It is opt-in (`groups[group].get("expect_tokens")` in `cbs_weekly.py`),
+not required by the schema, so a group added without it silently loses the whole-width
+layout guard — the exact Critical already fixed once on this branch, where a shifted
+column made a 0.9-reception back read as 7.9. **Ranks adds only:**
+it does not yet choose which rostered player to drop to make room, so the spec's
+`(add, drop)` pairing is half-built (see the plan's Self-Review).
 
 ## GOAL — the dry run is DONE. What is left is the refresh.
 
@@ -663,6 +695,21 @@ a small negative on a handful of players. Fix it with the 2026 rules pass, not t
    - Until someone separates "how much of $8.98 is the rushing-QB averaging bias" from
      "how much is un-fixable year-over-year turnover," TQB's mae is not comparable to
      FLEX's on the same terms.
+5. **The fixture cannot witness an in-season page.** `tests/fixtures/cbs_weekly_rbwrte.txt`
+   was captured 12 days before kickoff, in a week with no byes, no injury designations,
+   and no rows owned by other managers. Verified on the real parser: a manager's 2-letter
+   team abbreviation, or one with lowercase/digits, fails the `avail` regex and the whole
+   page is REFUSED; an injury tag between position and bullet ("Nick Chubb RB Q • CLE")
+   also refuses the page; a tag after the name silently renames the player ("Nick Chubb
+   Q"); a bye row parses only if it still totals 17 tokens. Failing loudly is the right
+   behavior — but the first bye week is exactly when this tool is most needed, and
+   nothing today warns that the regex may need widening on first live use.
+6. **`--week` is required but inert.** `cbs_weekly.parse(path, group, week, ...)` accepts
+   `week` and never reads it in the function body; nothing stores it on the returned
+   `PlayerProjection`, echoes it, or validates it against the page, and nothing reads the
+   page's "REPORT UPDATED AS OF" stamp that the spec names as the staleness signal.
+   Saving week 3's page and running `sffl week --week 4 ...` exits 0 with no warning.
+   Known gap, not yet fixed.
 
 ## OUTSIDE RANKINGS — the standing rule (reaffirmed 2026-08-19)
 
@@ -989,3 +1036,197 @@ factor to a single year.
 taken it and he paid ~$2-3 more than the minimum. That was still correct ex ante: $40
 carried 60% TIE1+ / 40% TIE2+ against $42's 20%/0%, and he bought certainty in what turned
 out to be the first tie-free year in six. Hindsight is not evidence the decision was wrong.
+
+## Weekly calibration — measured (2026-08-28, Task 7 of the in-season-core plan)
+
+The design spec's case for `score_week` rests on +4.88 across eight **hand-picked**
+low-projection lines (band edges bite hardest there). `poc/measure_weekly_calibration.py`
+measures the same comparison — `scoring.score_game` (CBS's banded point estimate) against
+`pool.score_week` (the calibrated expectation, `calibration/2025.yaml`, 48 players / 811
+player-weeks) — on real data instead of a chosen sample.
+
+**The input is 8 fixture rows from one saved CBS week-1 projections page
+(`tests/fixtures/cbs_weekly_rbwrte.txt`), not a real full page.** It is the only real
+weekly projection data captured before the season starts, so this is a measurement on
+what exists today, not on "a whole position group" as the brief's phrasing suggested.
+
+```
+n=8   CBS total 20.70   calibrated 28.67   diff +7.97
+players moved by >= 0.5 pts: 7 of 8
+```
+
+Every one of the 7 movers moved **up**. That direction is expected, not a bias finding:
+this fixture is all low-volume TE/WR/RB lines sitting below several band floors, exactly
+where `E[band(X)] > band(E[X])` — the same selection effect the spec's own +4.88 number
+came from, just not hand-picked this time.
+
+**Pairwise order — all 28 pairs of 8 players checked. Zero reorder.** 27 of the 28 pairs
+have a definite CBS order, and the calibrated scorer agrees with CBS on every one of
+them. The 28th pair, Elic Ayomanor vs. Kyle Pitts, is an exact CBS tie (2.50 = 2.50, no
+order to begin with); calibration separates it, Pitts (3.56) over Ayomanor (3.37).
+
+**Conclusion — a null result, reported plainly.** On the only real data available,
+calibration does not change a single real ranking decision in this sample; it only
+resolves one exact tie. That is a correction to what this section used to say: an
+earlier measurement (before the C1 monotone-envelope fix, `c1702e3`) reported a
+different pair of totals (28.16, diff +7.46) and named "1 pair reorders outright" — CBS
+ranking Braelon Allen above Woody Marks, calibration flipping them to Marks over Allen —
+as the concrete evidence that calibration moves a real decision. **That flip no longer
+exists.** Allen now scores 2.74 to Marks's 2.72, agreeing with CBS, and it should not
+have been reported as a stable finding in the first place. **Why it changed:** the C1
+fix raised calibrated values in the noisy low-mean region of the curves by replacing raw
+interpolation with a monotone envelope (see `_monotone_envelope` in `src/sffl/pool.py`);
+doing so removed the exact non-monotone inversion that used to put Marks above Allen.
+Nobody re-ran this measurement after that fix until now, which is why the section stayed
+wrong.
+
+This 8-row sample is itself low-projection and TE/WR/RB-only, so it still cannot speak
+to whether calibration changes orderings among higher-projection players, whose
+CBS-banded estimates sit further from band floors — that needs more saved CBS pages
+than exist right now, which is a data-collection gap, same shape as TODO B above.
+Extending the fixture to another position group is a separate, smaller gap: adding one
+to `sources/cbs-weekly.yaml` is not the one-entry, no-Python-change addition it might
+look like — the new entry must also set `expect_tokens`, which is opt-in
+(`.get("expect_tokens")` in `cbs_weekly.py`). Skip it and the whole-width layout guard is
+silently disabled for that group, which is exactly the Critical already fixed once on
+this branch (a shifted column made a 0.9-reception back read as 7.9).
+
+**Re-run this measurement after any change to `score_week` or the calibration curves.**
+It has now gone stale silently once already — do not assume the numbers above still hold:
+
+```
+PYTHONPATH=src ./.venv/bin/python poc/measure_weekly_calibration.py
+```
+
+## AUCTION-PATH AUDIT (2026-08-28) — findings that must survive the branch cleanup
+
+An independent audit of the MERGED auction pipeline, run because the 2026 auction is
+over but the code runs again in 2027 and may be pointed at a second league. Everything
+below was MEASURED against the real production board, not argued.
+
+### CRITICAL — the 2027 pre-auction run cannot be done legitimately today
+
+`cli.py`'s cross-season guard checks only `tqb_starters_season(--tqb-starters) != --year`.
+**The prices CSV carries no season metadata at all**, so the TQB map is only a PROXY for
+the prices' season. Three verified holes:
+
+1. **Mismatched prices with a matched map passes silently.** `--year 2026 --prices
+   auction-rosters-2025.csv --tqb-starters tqb-2026-starters.yaml` runs to completion and
+   refits the artifact-era curve: **b = 0.531** against the year-matched truth of 0.662,
+   TQB joins silently degrade 21 -> 15. This is byte-for-byte the configuration that
+   manufactured the phantom +$13.2 bias.
+2. **A starter map with no `season:` key skips the guard entirely** (`_map_season is None`).
+3. **The guard exists only in `cli._value_pool`.** Direct `fit.load_prices` callers get
+   `DEFAULT_TQB_STARTERS` (the 2025 map) forever with no check.
+
+**The structural problem:** before auction night 2027 there is no 2027 price file, so
+`--policy fit` must use 2026 prices. Pass the 2026 map (correct for those prices) and the
+guard REFUSES. Pass a 2027 map and you get hole #1 — a silent cross-season fit. A
+year-matched EST$ is therefore only computable AFTER the auction it was meant to inform.
+
+**The fix, and it is architectural, not a patch: SEPARATE FITTING FROM APPLYING.** Fit the
+curve now, on year-matched 2026 prices and 2026 projections, and PERSIST the coefficients
+(e.g. `market/2026.yaml`). In 2027, APPLY that saved curve to 2027 projections. That is
+what you actually want — last year's model of how this room behaves — and it makes the
+guard honest: refuse a cross-season FIT, permit a cross-season APPLY, and print which
+curve is in use and from which year. It also removes the prices file from the pre-auction
+run entirely, which closes all three holes at once.
+
+### The `expected_points` clamp does NOT affect the 2026 board — but the margin is thin
+
+Measured across all 1,477 curve consultations on the real board: **no FLEX player is out
+of span on any stat** (max rush_yds mean is Bijan at 85.1 against a 93.8 anchor; max
+rec_yds Nacua 99.0 vs 107.2). Only LAR TQB is materially understated, by ~$2-3. Under the
+defensible counterfactual, **zero dollars move on any player**.
+
+**The 2027 latency:** the clamp becomes material when a projected mean crosses the next
+scoring-band boundary above an anchor. Realistic trigger is a **100+ rush-yd/game RB
+projection** (a 1,700-yard season, which vendors do project) — clamp 3.18/gm against a
+true ~4.2/gm, i.e. **~17 season points ~ $13 understated on the #1 RB, silently.** Today's
+margin is 15 yd/game and nothing warns when it erodes. TQB is already sitting on the
+anchor (LAR 104%, CIN 101%). **Add a warning when any projection comes within ~10% of a
+curve's top anchor.** (The in-season path solved the same problem differently — see
+`_monotone_envelope` in `pool.py` — but `score_season_calibrated` still clamps.)
+
+### `fit.top10_cost` is sound — but its tests pin a fabricated number
+
+The metric and the reasoning hold: draftable's top-10 error is entirely one-directional
+(mae $10.34 = |bias| $10.34), starter's is noise, and starter wins for any bias weight
+above 0.25, so the choice is not knife-edge. The top-10 set is chosen BY PRICE, so
+policies cannot reshuffle their own scoring population.
+
+**But `tests/test_fit.py` (~lines 244-251, 276-285) pins "the real 2026 numbers" with
+starter `top10_bias = -0.25`. The real value is +5.10.** The -0.25 belongs to the $26+
+band from a different table. The decision the tests pin is right either way, but a green
+test asserting starter's top-10 is unbiased when it over-prices by $5.10 is this
+codebase's signature failure in miniature. **Fix the numbers or drop them.**
+
+**Latent gaming hole:** `top10_cost` has no term for spread or ordering fidelity. A future
+third policy that compresses the top AND recenters it (bias ~0, mae ~ spread) would beat
+starter while destroying discrimination among the best players. Harmless while POLICIES is
+(starter, draftable); a trap the day a "calibrated" policy is added.
+
+### SECOND LEAGUE — what silently produces a plausible wrong board
+
+Ordered most-silent first. A crash is fine; these do not crash.
+
+1. **The calibration curves ARE this league's scoring table.** `score_season_calibrated`
+   replaces the banded portion of scoring ENTIRELY with curve values. **Demonstrated:
+   doubling one band table and zeroing another in a copied league YAML changes the
+   no-curves score by 51 points and the with-curves score by 0.000 — identical to 13
+   decimals.** A second league running with `--curves` gets STRIPES scoring regardless of
+   its own YAML, and nothing warns: no league name, no band hash, no season in the curve
+   file, and `load_curves` validates nothing. **A second league needs its own weekly
+   ground truth and its own `poc/build_calibration.py` run.**
+2. **Team QB is hardwired, not configured.** `build_pool` unconditionally drops individual
+   QBs and fabricates franchise units. A normal-QB league gets a board of 32 team units
+   and every other position reshaped around them.
+3. **Lineup structure and floors live in CODE, not the YAML.** `value._starter_counts`
+   hardcodes 1 TQB + flex + 1 K + 1 DST; `_select_flex_starters` hardcodes the 1 RB /
+   1 WR-TE floor; WR/TE-as-one-position is baked into the FLEX tuple. `starters: 8` in the
+   YAML is loaded and used for nothing on the auction path.
+4. **Season-bound defaults.** `DEFAULT_BYES` is the 2026 bye file — a 2027 render silently
+   prints 2026 byes. `DEFAULT_LEAGUE` is the 2026 profile. `lg.season` is never compared
+   to `--year`.
+5. **`DEFAULT_BIDS` is an absolute path into THIS repo's bid history** — a second league
+   with a `silent_auction:` key renders STRIPES' five-year bid table on its page.
+6. **Price joining is keyed to this league's artifacts** — `identity/aliases.yaml` holds
+   this room's typos; join keys are name-only, so same-named players collide.
+
+What DOES fail loudly and should stay that way: `flat_priced_pools` validation,
+`fit_price_curve`'s refusals, `build_curves`' STAT_POSITIONS check, profile stat-key
+validation, `_check_width`. `league.py` validates TYPES, not SEMANTICS.
+
+### The RB positional gap — hypothesis strengthened, plus an unrecorded confounder
+
+The pooled-replacement mechanism is real and measured: moving flex demand from 19 RB /
+41 WRTE to 24/36 drops RB replacement 64.6 -> 54.0 while WRTE moves only +2.0 — RB
+drop-off at the margin is ~5x steeper. The residual shape matches a level effect, not a
+slope (RB residual vs MY$ slope is -0.09, flat). **A 24 RB / 36 WRTE split reproduces
+about 80% of the observed gap with the right shape.** The room's RB capital share was
+42.9% in 2025 and 39.6% in 2026 against the model's 24.9% — two independent years.
+
+**UNRECORDED CONFOUNDER: the calibration curves themselves redistribute points by
+position.** Calibration adds **+33% to top-12 TEs**, +33% to mid WRs, -3% to top WRs, +21%
+to mid RBs. The rec-stat curves were built from a 48-player set of 30 RBs plus an 18-player
+seed with few TEs, so the low-catch region driving the TE boost is WR-shaped. That is the
+likely source of the recorded TE +$4.65 overprice. **Any split-replacement test must
+separate "replacement is pooled" from "WR/TE mid-tier points are calibration-inflated" —
+both push dollars the same way.**
+
+**The distinguishing test does NOT need 2027 prices.** Prices only reveal the room's
+beliefs again. The 2026 SEASON, scored under this league's own rules, settles which side
+was wrong: if the mid-tier RBs bought at +$10 over model fail to clear flex replacement's
+weekly output, the room burned money and the board's fade was an edge worth keeping; if
+they beat it comfortably, the shared replacement (or the calibration) understates RBs and
+the split ships for 2027. **The in-season core can measure this weekly.** Stating it now,
+before results exist, is the pre-registration this file has been asking for.
+
+### One more, and it is the same trap as the artifact
+
+`cli.py`'s printed "bias against observed prices, by model dollar band" table conditions on
+MODEL DOLLARS — the same selection geometry that produced the phantom bias — and on fully
+year-matched 2026 data it still prints **+$12.7 at $30+**, two screens below a fit whose
+top-10-by-price bias is +$5.10. No caveat is printed. **A future session could re-fit
+something to remove that number and repeat the 2026 mistake with year-matching intact.**
+Either print the caveat or drop the table.

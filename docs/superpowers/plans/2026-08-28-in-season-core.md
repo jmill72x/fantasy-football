@@ -49,7 +49,7 @@ The league YAML records `starters: 8` and `flex_slots: 5` — counts, not slots.
 - Test: `tests/test_league.py`
 
 **Interfaces:**
-- Produces: `League.lineup` — a `List[Tuple[str, Tuple[str, ...]]]` of `(slot_label, eligible_positions)`, in the order written in the YAML.
+- Produces: `LeagueProfile.lineup` — a `List[Tuple[str, Tuple[str, ...]]]` of `(slot_label, eligible_positions)`, in the order written in the YAML.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -77,14 +77,14 @@ def test_the_slot_list_must_agree_with_the_starter_and_flex_counts():
     assert len(flex) == lg.flex_slots
 
 
-def test_a_lineup_slot_naming_an_unknown_position_is_rejected(tmp_path):
-    raw = open("leagues/sffl/2026.yaml").read()
-    raw = raw.replace('- {slot: "K", eligible: ["K"]}',
-                      '- {slot: "K", eligible: ["PUNTER"]}')
-    bad = tmp_path / "bad.yaml"
-    bad.write_text(raw)
+def test_a_lineup_slot_naming_an_unknown_position_is_rejected():
+    """Built from the parsed dict, not by string-replacing the YAML: the file
+    is column-aligned, and a test that depends on its incidental whitespace
+    breaks the next time someone reformats it."""
+    raw = yaml.safe_load(open("leagues/sffl/2026.yaml"))
+    raw["lineup"] = [{"slot": "K", "eligible": ["PUNTER"]}]
     with pytest.raises(ValueError, match="PUNTER"):
-        load_league(str(bad))
+        LeagueProfile(raw)
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -300,7 +300,7 @@ git commit -m "feat(pool): score_week - calibrated expectation for one week"
 - Test: `tests/test_lineup.py`
 
 **Interfaces:**
-- Consumes: `League.lineup` from Task 1.
+- Consumes: `LeagueProfile.lineup` from Task 1.
 - Produces:
   - `lineup.Candidate` — `namedtuple("Candidate", "name pos points")`
   - `lineup.best_lineup(lg, candidates)` -> `LineupResult`, a `namedtuple("LineupResult", "slots total")` where `slots` is `List[Tuple[str, Optional[Candidate]]]` in league slot order and `total` is a `float`
@@ -577,7 +577,9 @@ Reading right to left the stat block is fixed for the RB-WR-TE view: `rush_att r
 
 - [ ] **Step 1: Create the fixture**
 
-Create `tests/fixtures/cbs_weekly_rbwrte.txt` with exactly these five lines (real projections captured 2026-08-28; no licensed vendor content, these are CBS's own public league-view numbers for free agents):
+Create `tests/fixtures/cbs_weekly_rbwrte.txt` with exactly these eight lines (real projections captured 2026-08-28; no licensed vendor content, these are CBS's own league-view numbers for free agents).
+
+**Eight, not five, and the count matters:** there are five flex slots, so a five-player fixture can never produce a benched player and the start/sit and bench-stash assertions in Tasks 5 and 6 could not pass.
 
 ```
 W (9/16) Harold Fannin Jr. TE • CLE @JAC 22 11 86 63 8 0.4 0.8 2.0 0.1 7.7 5.2 46.5 8.9 0.5 0.1 4.81
@@ -585,7 +587,12 @@ W (9/16) Isaiah Likely TE • NYG DAL 13 8 50 25 9 0.0 0.0 0.0 0.0 6.0 4.4 59.7 
 W (9/16) Elic Ayomanor WR • TEN NYJ 13 9 10 1 N/R 0.0 0.0 0.0 0.0 5.1 2.6 36.0 13.8 0.5 0.0 2.51
 W (9/16) Braelon Allen RB • NYJ @TEN 17 13 25 1 55 9.5 36.8 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 1.70
 W (9/16) Tyrone Tracy Jr. RB • NYG DAL 31 8 75 26 58 7.9 36.6 4.6 0.2 2.6 1.9 16.0 8.4 0.1 0.1 1.10
+W (9/16) Sam LaPorta TE • DET NO 16 6 64 25 5 0.0 0.0 0.0 0.0 5.3 4.1 53.9 13.2 0.4 0.0 3.01
+W (9/16) Kyle Pitts TE • ATL @PIT 27 11 92 72 7 0.0 0.0 0.0 0.0 6.1 4.4 50.2 11.4 0.3 0.0 2.51
+W (9/16) Woody Marks RB • HOU BUF 24 8 79 25 45 8.9 37.8 4.2 0.2 1.8 1.1 9.3 8.4 0.2 0.0 1.60
 ```
+
+Scored with `score_game` (no curves) these rank: Fannin 4.80, Likely 3.50, LaPorta 3.00, Pitts 2.50, Ayomanor 2.50, Allen 1.70, Marks 1.60, Tracy 1.10.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -602,7 +609,7 @@ def by_name(rows):
 
 def test_every_line_parses_and_nothing_is_silently_dropped():
     rows = parse(FIXTURE, group="RB-WR-TE", week=1)
-    assert len(rows) == 5
+    assert len(rows) == 8
 
 
 def test_stats_land_in_the_right_slots():
@@ -824,8 +831,11 @@ def test_waivers_ranks_free_agents_by_what_they_add_to_the_lineup(tmp_path, caps
 
 def test_waivers_names_the_slot_a_claim_would_fill(tmp_path, capsys):
     """A claim that cracks the lineup is a different recommendation from a
-    bench stash, and the output must not present them identically."""
-    r = roster_file(tmp_path, ["Tyrone Tracy Jr."])
+    bench stash, and the output must not present them identically. With six
+    owned players against five flex slots, a weak free agent benches."""
+    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
+                               "Sam LaPorta", "Kyle Pitts", "Braelon Allen",
+                               "Elic Ayomanor"])
     main(["week", "--projections", PROJ, "--group", "RB-WR-TE",
           "--week", "1", "--roster", r, "--waivers"])
     out = capsys.readouterr().out
@@ -962,10 +972,15 @@ The restricted case: the same optimizer with the candidate pool limited to owned
 - [ ] **Step 1: Write the failing test**
 
 ```python
+OPTIMAL_FIVE = ["Harold Fannin Jr.", "Isaiah Likely", "Sam LaPorta",
+                "Kyle Pitts", "Braelon Allen"]
+SIX = OPTIMAL_FIVE + ["Tyrone Tracy Jr."]
+
+
 def test_start_sit_is_silent_when_the_current_lineup_is_already_optimal(tmp_path, capsys):
-    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Braelon Allen"])
+    r = roster_file(tmp_path, SIX)
     cur = tmp_path / "current.txt"
-    cur.write_text("Harold Fannin Jr.\nBraelon Allen\n")
+    cur.write_text("\n".join(OPTIMAL_FIVE) + "\n")
     main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
           "--roster", r, "--current", str(cur), "--start-sit"])
     out = capsys.readouterr().out
@@ -973,20 +988,22 @@ def test_start_sit_is_silent_when_the_current_lineup_is_already_optimal(tmp_path
 
 
 def test_start_sit_names_both_sides_of_a_swap(tmp_path, capsys):
-    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
-                               "Braelon Allen", "Tyrone Tracy Jr."])
+    """Six players, five flex slots: Tracy (1.10) is the odd one out, so a
+    lineup that starts him instead of Allen (1.70) is one swap from optimal."""
+    r = roster_file(tmp_path, SIX)
     cur = tmp_path / "current.txt"
-    cur.write_text("Tyrone Tracy Jr.\nIsaiah Likely\n")   # weaker of each pair
+    swapped = [n for n in OPTIMAL_FIVE if n != "Braelon Allen"]
+    cur.write_text("\n".join(swapped + ["Tyrone Tracy Jr."]) + "\n")
     main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
           "--roster", r, "--current", str(cur), "--start-sit"])
     out = capsys.readouterr().out
     assert "START" in out and "SIT" in out
-    assert "Harold Fannin Jr." in out
+    assert "Braelon Allen" in out
     assert "Tyrone Tracy Jr." in out
 
 
 def test_start_sit_without_a_current_lineup_prints_the_optimum_and_says_so(tmp_path, capsys):
-    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Braelon Allen"])
+    r = roster_file(tmp_path, SIX)
     main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
           "--roster", r, "--start-sit"])
     out = capsys.readouterr().out
@@ -1130,8 +1147,10 @@ git commit -m "test: measure the weekly calibration edge across a full page"
 
 **Spec coverage.** Lineup slots (Task 1), weekly calibrated scoring (Task 2), the optimizer and marginal delta (Task 3), the CBS weekly parser (Task 4), waivers as the general case with the slot named (Task 5), start/sit as the restricted case (Task 6), and the honesty check on the calibration claim (Task 7). Not covered here, deliberately, and deferred to a second plan: the **write path** (waiver submission, lineup setting), **ntfy + launchd delivery**, **`--trade`**, and the **state file** for "what changed since the last run" — all of which need the write path proven first.
 
+**Also not covered here, and previously unrecorded: `(add, drop)` pairing.** The spec (`docs/superpowers/specs/2026-08-27-in-season-tooling-design.md`) says `--waivers` should "rank `(add, drop)` pairs. The drop is chosen as the player whose removal costs least, not simply the lowest-projected." Task 5 ships the `(add)` half only — `delta` ranks free agents against the roster as it stands, and names the slot a claim would fill, but nothing selects which rostered player to drop to make room. A user still has to work out the drop by hand. Real drop selection needs its own marginal-cost computation (removal cost, not raw projection) and belongs with the write path above, since a recommendation nobody can act on without also submitting it is of limited use.
+
 **Placeholder scan.** No TBD/TODO. Every step carries the code or the exact command.
 
-**Type consistency.** `Candidate(name, pos, points)` and `LineupResult(slots, total)` are defined in Task 3 and used unchanged in Tasks 5 and 6. `score_week(lg, player, curves)` is defined in Task 2 and called in Tasks 5, 6 and 7. `parse(path, group, week, profile_path, season)` is defined in Task 4 and called with `season=lg.season` in Tasks 5 and 7. `League.lineup` is produced in Task 1 and consumed in Task 3.
+**Type consistency.** `Candidate(name, pos, points)` and `LineupResult(slots, total)` are defined in Task 3 and used unchanged in Tasks 5 and 6. `score_week(lg, player, curves)` is defined in Task 2 and called in Tasks 5, 6 and 7. `parse(path, group, week, profile_path, season)` is defined in Task 4 and called with `season=lg.season` in Tasks 5 and 7. `LeagueProfile.lineup` is produced in Task 1 and consumed in Task 3.
 
-**Known gap, stated rather than hidden.** `sources/cbs-weekly.yaml` defines only the `RB-WR-TE` group. Those are the five flex slots and every waiver decision that matters, and TQB/K/DST slots are constant across a waiver comparison so they cancel in the delta. Adding the other groups is a one-entry-per-group edit to the same YAML with no Python change — which is the point of the profile — but it is not in this plan.
+**Known gap, stated rather than hidden.** `sources/cbs-weekly.yaml` defines only the `RB-WR-TE` group. Those are the five flex slots and every waiver decision that matters, and TQB/K/DST slots are constant across a waiver comparison so they cancel in the delta. Adding the other groups is a per-group edit to the same YAML with no Python change to `parse` itself — which is the point of the profile — but it is not a bare one-entry addition: each new group's entry MUST also set `expect_tokens` (the whole-post-team-segment width check added for C1). `expect_tokens` is opt-in — `groups[group].get("expect_tokens")` — not required by the schema, so a group added without it silently loses the layout guard and reintroduces exactly the Critical C1 fixed (a shifted column reads a different, still-plausible stat block; the fixed case read a 0.9-reception back as 7.9). This is not in this plan.

@@ -1,9 +1,11 @@
 import pytest
 
 from sffl import pool as pool_module
+from sffl.calibrate import STAT_POSITIONS, load_curves
 from sffl.league import load_league
-from sffl.pool import build_pool, score_season, score_season_calibrated
+from sffl.pool import build_pool, score_season, score_season_calibrated, score_week
 from sffl.schema import PlayerProjection
+from sffl.scoring import score_game
 
 LG = load_league("leagues/sffl/2026.yaml")
 DS_PROFILE = "sources/draftsharks.yaml"
@@ -254,3 +256,260 @@ def test_calibrated_kicker_scores_correctly_against_a_fully_populated_curve_set(
                          source_year=2026, games=17,
                          stats=dict(xp_made=34.0, fg_40_49=17.0), raw_name="K")
     assert score_season_calibrated(lg, p, curves) == pytest.approx(102.0)
+
+
+def test_score_week_with_no_curves_is_exactly_score_game():
+    """Without curves there is nothing to calibrate, so the weekly scorer must
+    not drift from the validated engine by even a rounding step."""
+    p = PlayerProjection(name="Test WR", team="GB", pos="WR", source="t",
+                         source_year=2026, games=1.0,
+                         stats={"rec_ct": 4.4, "rec_yds": 59.7, "rec_td": 0.5})
+    assert score_week(LG, p, None) == score_game(LG, p.stats, "WR")
+
+
+def test_score_week_pays_a_projection_sitting_just_under_a_band_edge():
+    """The whole point. 4.4 receptions is under the 5-reception band, so the
+    naive band pays 0 - but a player projected at 4.4 clears 5 in plenty of
+    weeks and has a real expectation."""
+    curves = load_curves("calibration/2025.yaml")
+    p = PlayerProjection(name="Test WR", team="GB", pos="WR", source="t",
+                         source_year=2026, games=1.0, stats={"rec_ct": 4.4})
+    naive = score_game(LG, p.stats, "WR")
+    assert naive == 0.0
+    assert score_week(LG, p, curves) > 0.5
+
+
+def test_score_week_does_not_leak_a_passing_curve_into_a_receiver():
+    """Gate (b) protects against curve leakage: expected_points clamps below
+    its lowest anchor where band_points floors to 0. pass_yds curves are built
+    from QB weeks only, so their lowest anchor sits well above zero; this test
+    verifies a receiver never queries a passing curve. (Does NOT test gate (a),
+    the DST position filter for def_pa/def_ya - see the separate DST tests.)"""
+    curves = load_curves("calibration/2025.yaml")
+    receiver = PlayerProjection(name="Test WR", team="GB", pos="WR", source="t",
+                                source_year=2026, games=1.0,
+                                stats={"rec_ct": 4.4, "def_pa": 0.0, "def_ya": 0.0})
+    assert score_week(LG, receiver, curves) < 5.0
+
+
+def test_score_week_does_not_pay_a_kicker_from_a_passing_curve():
+    """expected_points CLAMPS below the lowest anchor where band_points FLOORS.
+    pass_yds curves are built from QB weeks only, so their lowest anchor is far
+    above zero; asking one about a kicker's 0.0 pays phantom points."""
+    curves = load_curves("calibration/2025.yaml")
+    k = PlayerProjection(name="Test K", team="GB", pos="K", source="t",
+                         source_year=2026, games=1.0,
+                         stats={"xp_made": 2.0, "pass_yds": 0.0})
+    naive = score_game(LG, k.stats, "K")
+    assert score_week(LG, k, curves) == naive
+
+
+def test_score_week_calibrates_a_defense_s_banded_points():
+    """The other side of gate (a): for a DST, def_pa and def_ya DO go through
+    the curves, so the calibrated result must differ from the naive band."""
+    curves = load_curves("calibration/2025.yaml")
+    d = PlayerProjection(name="Test DST", team="GB", pos="DST", source="t",
+                         source_year=2026, games=1.0,
+                         stats={"def_pa": 17.0, "def_ya": 305.0})
+    assert score_week(LG, d, curves) != score_game(LG, d.stats, "DST")
+
+
+def test_score_week_refuses_a_season_line():
+    """score_week takes ONE week's projected line; score_season_calibrated
+    takes a season total - same PlayerProjection type, opposite shape.
+    Before this guard existed, a 95-catch, 1300-yard SEASON line handed to
+    score_week would silently return some plausible-looking number, with
+    nothing to say it was never a week. This repo refuses this class of
+    mistake elsewhere (tqb_starters_season, the flat_priced_pools price
+    guard, build_pool's multi-set refusal) rather than documenting it and
+    hoping - this is the same discipline applied here."""
+    p = PlayerProjection(name="Season WR", team="GB", pos="WR", source="t",
+                         source_year=2026, games=17,
+                         stats={"rec_ct": 95.0, "rec_yds": 1300.0})
+    with pytest.raises(ValueError, match="games"):
+        score_week(LG, p, None)
+
+
+def test_gate_a_is_redundant_only_while_the_defense_stats_are_dst_only():
+    """score_week's `applicable` gate and STAT_POSITIONS currently encode the
+    same condition, which is why deleting the gate changes nothing today. If
+    STAT_POSITIONS ever widens, that gate becomes load-bearing - and it has no
+    direct test. Fail here so the widening is a decision, not a discovery."""
+    assert STAT_POSITIONS["def_pa"] == {"DST"}
+    assert STAT_POSITIONS["def_ya"] == {"DST"}
+
+
+def test_score_week_uses_the_naive_band_above_the_curves_span():
+    """THE FIX FOR F1. calibrate.expected_points CLAMPS to the curve's last
+    anchor for any mean above it, and the curves are built from 2025 SEASON
+    per-game means (48 players) - rush_yds tops out at a 93.8 yd/game mean,
+    paying 3.18. A weekly PROJECTION routinely exceeds that: a back projected
+    for 150 rushing yards in a single week is not the same claim as a 150
+    yd/game season average, but expected_points cannot tell the difference
+    and would clamp to the same 3.18 paid to a back projected at 96 or 110.
+    Outside the curve's observed span there is no evidence behind the
+    calibrated number, so `_calibrated_band_value` takes
+    `max(naive band, envelope top)` there (the C1 monotone-envelope fix) -
+    it does not unconditionally fall back to the naive band. At 150 yards
+    the naive band (6.00) already exceeds the envelope's top anchor (3.18),
+    so the max resolves to the naive value and this assertion holds; see
+    test_score_week_does_not_collapse_two_backs_above_the_span_to_one_number
+    below for a value (96 yards) where the two disagree and the envelope's
+    top, not the naive band, wins."""
+    curves = load_curves("calibration/2025.yaml")
+    p = PlayerProjection(name="Big Game RB", team="GB", pos="RB", source="t",
+                         source_year=2026, games=1.0, stats={"rush_yds": 150.0})
+    assert score_week(LG, p, curves) == score_game(LG, p.stats, "RB")
+
+
+def test_score_week_still_calibrates_a_value_inside_the_span():
+    """The other side of the same fix: a value INSIDE the curve's observed
+    span must still be calibrated, not fall back to the naive band just
+    because the out-of-span guard now exists. Same fixture as
+    test_score_week_pays_a_projection_sitting_just_under_a_band_edge, given
+    its own name in this block so the in-span path is pinned alongside the
+    out-of-span one it is now adjacent to in the implementation."""
+    curves = load_curves("calibration/2025.yaml")
+    p = PlayerProjection(name="Test WR", team="GB", pos="WR", source="t",
+                         source_year=2026, games=1.0, stats={"rec_ct": 4.4})
+    naive = score_game(LG, p.stats, "WR")
+    assert naive == 0.0
+    assert score_week(LG, p, curves) > naive
+
+
+def test_score_week_does_not_collapse_two_backs_above_the_span_to_one_number():
+    """Measured before the fix: 96 and 110 rushing yards both clamped to the
+    curve's last anchor (3.18 pts) and scored identically despite being
+    visibly different projections. The fix - `_calibrated_band_value`'s
+    `max(naive band, envelope top)` - separates them again, but not by
+    simply reading the naive band back: 96 yards' naive band is 3.00, still
+    BELOW the envelope's top anchor of 3.18, so the max picks the envelope
+    value (96 pays 3.18, not 3.00); 110's naive band is 4.00, already above
+    the envelope top, so the max picks the naive value there instead. Two
+    different reasons, but 96 and 110 no longer collapse to the same
+    number."""
+    curves = load_curves("calibration/2025.yaml")
+
+    def rb(rush_yds):
+        return PlayerProjection(name="RB %d" % rush_yds, team="GB", pos="RB",
+                                source="t", source_year=2026, games=1.0,
+                                stats={"rush_yds": rush_yds})
+
+    assert score_week(LG, rb(96), curves) != score_week(LG, rb(110), curves)
+
+
+def test_score_week_seam_at_the_top_anchor_does_not_decrease():
+    """C1(b), the seam a previous fix introduced. The rush_yds curve's top
+    anchor sits at 93.824 yds and pays 3.176 - the highest expected value
+    anywhere on the curve. Before the monotone envelope, a value one tenth
+    of a yard past it (94.0) fell back to band_points and paid only 3.000: a
+    DROP as production rose, immediately above the point score_week's own
+    fallback logic is supposed to protect. `max(band_points(value),
+    envelope_at_top_anchor)` must keep 94.0 at or above 93.824's value."""
+    curves = load_curves("calibration/2025.yaml")
+
+    def rb(rush_yds):
+        return PlayerProjection(name="RB", team="GB", pos="RB", source="t",
+                                source_year=2026, games=1.0,
+                                stats={"rush_yds": rush_yds})
+
+    at_top_anchor = score_week(LG, rb(93.824), curves)
+    just_past_it = score_week(LG, rb(94.0), curves)
+    assert just_past_it >= at_top_anchor, (
+        "the seam at the top anchor decreased: 93.824 yds scored %.4f but "
+        "94.0 yds scored %.4f" % (at_top_anchor, just_past_it))
+
+
+# C1: the property test. Sweeps a 0.1 grid across a generous range for
+# EVERY banded stat calibration/2025.yaml defines and asserts score_week's
+# contribution only ever moves the direction band_points already moves for
+# that stat - never the other way. This single test is the one that would
+# have caught all three defects in the report at once:
+#   (a) intra-span anchor noise - measured pre-fix: a projected RB averaging
+#       21.0 rush_yds/game scored 0.525 while one averaging 25.7 (MORE
+#       production) scored only 0.119; the 0.1-yard sweep below over
+#       rush_yds alone found 201 inverted steps before the fix.
+#   (b) the top-of-span seam (see the dedicated test above).
+#   (c) the mirrored bottom-of-span seam on a DESCENDING stat: a defense
+#       projected to allow 16.0 points (worse than allowing none) scored
+#       0.0, but one projected to allow 18.2 (WORSE still) scored 1.118 -
+#       a worse defense paying more.
+#
+# Ranges are generous on both sides of each curve's observed span - see
+# calibration/2025.yaml for the actual anchors - so the sweep exercises the
+# bottom seam, the interior, and the top seam together. rush_yds's 0-120 is
+# the exact range the defect report measured its 201 inversions across.
+_GRID_RANGES = {
+    "pass_yds": (0.0, 500.0),
+    "pass_cmp": (0.0, 45.0),
+    "rush_yds": (0.0, 120.0),
+    "rec_yds": (0.0, 220.0),
+    "rec_ct": (0.0, 20.0),
+    "def_pa": (0.0, 60.0),
+    "def_ya": (0.0, 600.0),
+}
+
+# Any one position valid for the stat exercises the same curve - curves are
+# keyed by stat only, never by position; STAT_POSITIONS only gates WHETHER
+# score_week consults a curve at all, not which one.
+_GRID_POS = {
+    "pass_yds": "TQB",
+    "pass_cmp": "TQB",
+    "rush_yds": "RB",
+    "rec_yds": "WR",
+    "rec_ct": "WR",
+    "def_pa": "DST",
+    "def_ya": "DST",
+}
+
+
+def _table_direction(table):
+    """Ground truth direction read straight off the band table's first and
+    last (low, high, pts) rows - deliberately NOT importing
+    pool._band_direction, so a bug in that helper cannot also blind the
+    test meant to catch it. Every table this league defines is monotonic
+    pts-wise end to end (see test_league.py / leagues/sffl/2026.yaml), so
+    comparing only the endpoints is sufficient here."""
+    first_pts, last_pts = table[0][2], table[-1][2]
+    if last_pts > first_pts:
+        return 1
+    if last_pts < first_pts:
+        return -1
+    raise AssertionError(
+        "table's first and last band pay the same, no direction to check: %r"
+        % (table,))
+
+
+@pytest.mark.parametrize("stat", sorted(LG.bands))
+def test_score_week_is_monotone_across_a_grid_for_every_banded_stat(stat):
+    assert stat in _GRID_RANGES and stat in _GRID_POS, (
+        "%s has no grid range/position configured for this property test - "
+        "a new banded stat must be added here, not skipped" % stat)
+    curves = load_curves("calibration/2025.yaml")
+    lo, hi = _GRID_RANGES[stat]
+    pos = _GRID_POS[stat]
+    direction = _table_direction(LG.bands[stat])
+
+    def score_at(value):
+        p = PlayerProjection(name="Probe", team="GB", pos=pos, source="t",
+                             source_year=2026, games=1.0,
+                             stats={stat: value})
+        return score_week(LG, p, curves)
+
+    steps = int(round((hi - lo) / 0.1))
+    prev_x, prev_y = lo, score_at(lo)
+    for i in range(1, steps + 1):
+        x = round(lo + i * 0.1, 6)
+        y = score_at(x)
+        if direction > 0:
+            assert y >= prev_y - 1e-9, (
+                "%s must pay AT LEAST as much as production rises, but "
+                "%r scored %.6f while the lower input %r scored %.6f"
+                % (stat, x, y, prev_x, prev_y))
+        else:
+            assert y <= prev_y + 1e-9, (
+                "%s must pay AT MOST as much as the raw value rises (fewer "
+                "points/yards allowed is the better outcome), but %r scored "
+                "%.6f while the lower input %r scored %.6f"
+                % (stat, x, y, prev_x, prev_y))
+        prev_x, prev_y = x, y
