@@ -42,7 +42,7 @@ _POS = r"TQB|QB|RB|WR|TE|K|DST"
 # sits in the live page), then the opponent. Anchored on a leading tab and a
 # bare position code so page furniture cannot match.
 _ROW = re.compile(
-    r"^\t(?:%s)\t"
+    r"^\t(?P<slot>%s)\t"
     r"(?P<name>[A-Za-z0-9.'\- ]+?)\s+"
     r"(?:%s)"
     r"\s*[•-]\s*"
@@ -93,6 +93,31 @@ def parse_roster(path):
     if not names:
         raise _empty_roster_error(path)
     return names
+
+
+def parse_positions(path):
+    """{display name: position code} for every player row on the page.
+
+    The position column is right there in column 1 of every row, and the
+    alert needs it to tell two very different things apart: a starter with
+    no projection because his POSITION is not in the projections page we
+    capture (a known scope limitation - the group is RB/WR/TE only, so a
+    TQB, K or DST is never scored) versus a starter whose position IS
+    captured and who still has no projection (a data problem). Conflating
+    those costs a real signal, and the alternative - `parse_lineup`
+    returning names only - leaves the caller guessing from the name alone.
+
+    Returned as a separate function rather than folded into `parse_lineup`
+    so that parser's (starters, reserves) contract, which several callers
+    and tests depend on, does not change shape.
+    """
+    positions = {}
+    for line in _iter_lines(path):
+        m = _ROW.match(line)
+        if not m:
+            continue
+        positions.setdefault(m.group("name").strip(), m.group("slot"))
+    return positions
 
 
 def parse_lineup(path):

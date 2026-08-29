@@ -1,6 +1,7 @@
 import pytest
 
-from sffl.alert import STALE_ROSTER_DAYS, compose
+from sffl.alert import (POSITION_NOT_CAPTURED, PROJECTION_MISSING,
+                        STALE_ROSTER_DAYS, compose)
 from sffl.injuries import Report
 from sffl.lineup import Candidate, LineupResult
 
@@ -381,3 +382,91 @@ def test_an_official_row_carries_no_outlet_and_prints_none():
     msg = compose("friday", 2, [CHUBB_OUT], LINEUP, [])
     assert "[official 2026-09-05]" in msg
     assert "via" not in msg
+
+
+# --- C1: a player who was never evaluated is never a SIT -------------------
+
+def test_an_unevaluated_starter_is_never_rendered_as_a_sit():
+    # The real shape of this bug: CBS sets eight starters, the projections
+    # group covers RB/WR/TE only, so the TQB, the kicker and the defense
+    # could NEVER be in the optimal lineup and landed in SIT every single
+    # week - merit-based bench advice, in the block placed first.
+    msg = compose(
+        "friday", 2, [], LINEUP, [],
+        current_starters=["Bijan Robinson", "Ja'Marr Chase", "Chargers",
+                          "Evan McPherson", "Patriots"],
+        unevaluated_starters=[("Chargers", "TQB", POSITION_NOT_CAPTURED),
+                              ("Evan McPherson", "K", POSITION_NOT_CAPTURED),
+                              ("Patriots", "DST", POSITION_NOT_CAPTURED)])
+    block = _block(msg, "START / SIT vs your current CBS lineup:")
+    for name in ("Chargers", "Evan McPherson", "Patriots"):
+        assert name not in block
+        # Named, not silently dropped: vanishing reads as "no longer on your
+        # roster" rather than "not evaluated" - _cmd_week's own reasoning.
+        assert name in msg
+
+
+def test_the_unevaluated_section_does_not_read_as_advice():
+    msg = compose("friday", 2, [], LINEUP, [],
+                  current_starters=["Bijan Robinson", "Ja'Marr Chase",
+                                    "Evan McPherson"],
+                  unevaluated_starters=[("Evan McPherson", "K",
+                                         POSITION_NOT_CAPTURED)])
+    section = _block(msg, "NOT EVALUATED for start/sit")
+    assert "NOT recommendations to bench anyone" in section
+    assert "Evan McPherson (K)" in section
+
+
+def test_a_scope_limit_and_a_data_problem_are_told_apart():
+    # Conflating them costs a real signal: one is a known limit of what this
+    # job captures, the other means a player who SHOULD have had a
+    # projection did not.
+    msg = compose("friday", 2, [], LINEUP, [],
+                  current_starters=["Bijan Robinson", "Ja'Marr Chase",
+                                    "Evan McPherson", "Jameson Williams"],
+                  unevaluated_starters=[
+                      ("Evan McPherson", "K", POSITION_NOT_CAPTURED),
+                      ("Jameson Williams", "WR", PROJECTION_MISSING)])
+    section = _block(msg, "NOT EVALUATED for start/sit")
+    assert "DATA PROBLEM" in section
+    scope_at = section.index("Evan McPherson")
+    data_at = section.index("Jameson Williams")
+    limit_at = section.index("not in the projections page this job captures")
+    problem_at = section.index("DATA PROBLEM")
+    # Each name sits under its own explanation, not lumped under one.
+    assert limit_at < scope_at < problem_at < data_at
+
+
+def test_already_optimal_is_not_claimed_when_someone_was_not_evaluated():
+    # "lineup is already optimal" claims a comparison that did not happen
+    # for part of the lineup.
+    msg = compose("friday", 2, [], LINEUP, [],
+                  current_starters=["Bijan Robinson", "Ja'Marr Chase",
+                                    "Patriots"],
+                  unevaluated_starters=[("Patriots", "DST",
+                                         POSITION_NOT_CAPTURED)])
+    assert "already optimal" not in msg.lower()
+    assert "could be evaluated" in msg
+
+
+def test_no_unevaluated_starters_renders_no_section_and_keeps_the_old_wording():
+    msg = compose("friday", 2, [], LINEUP, [],
+                  current_starters=["Bijan Robinson", "Ja'Marr Chase"],
+                  unevaluated_starters=[])
+    assert "NOT EVALUATED" not in msg
+    assert "lineup is already optimal" in msg.lower()
+
+
+def test_the_parameter_defaults_so_existing_callers_are_unaffected():
+    args = ("sunday", 2, [CHUBB_OUT], LINEUP, [("Nick Chubb", "O")])
+    assert compose(*args) == _PRE_CURRENT_STARTERS_PINNED_OUTPUT
+    assert (compose(*args, unevaluated_starters=None)
+            == _PRE_CURRENT_STARTERS_PINNED_OUTPUT)
+
+
+def test_an_unknown_unevaluated_reason_raises_rather_than_guessing():
+    # The reason decides whether the reader is told "known limit of the
+    # tool" or "your data is broken". Guessing tells them the wrong one.
+    with pytest.raises(ValueError):
+        compose("friday", 2, [], LINEUP, [], current_starters=[],
+                unevaluated_starters=[("Evan McPherson", "K", "who-knows")])
