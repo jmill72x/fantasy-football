@@ -157,3 +157,105 @@ def test_no_statsdeck_fantasy_points_can_leak_in():
 def test_an_unknown_kind_raises_rather_than_guessing():
     with pytest.raises(ValueError):
         compose("tuesday", 2, [], LINEUP, [])
+
+
+# --- current_starters / START-SIT diff -------------------------------------
+
+# The exact string `compose` produced before `current_starters` existed, for
+# this exact call, pinned verbatim (not re-derived) so a change to the
+# default behavior would have to edit this literal, not slip past silently.
+_PRE_CURRENT_STARTERS_PINNED_OUTPUT = (
+    "Sunday inactives\nWhat changed since Friday. Kickoff is close.\n\n"
+    "Roster captured 2 days ago.\n\n"
+    "WHAT CHANGED since the last report:\n"
+    "  no status changes since the previous report.\n\n"
+    "OFFICIAL STATUS on your roster:\n"
+    "  - Nick Chubb (CLE) Out / practice: DNP / foot [official 2026-09-05]\n\n"
+    "INTEL (supplements the official report, never overrides it):\n"
+    "  nothing new.\n\n"
+    "EXCLUDED from the lineup - will not play:\n"
+    "  - Nick Chubb (O)\n\n"
+    "BEST LINEUP (34.50 pts, this league's scoring):\n"
+    "  RB     Bijan Robinson\n"
+    "  WR/TE  Ja'Marr Chase"
+)
+
+
+def test_current_starters_none_renders_exactly_as_before():
+    # `current_starters` defaults to None, and None must mean "the caller
+    # does not know" - not "known and empty" - so it must render NOTHING
+    # extra: the message is byte-for-byte identical to what this module
+    # produced before the parameter existed. Pinned against a literal
+    # captured from the pre-change implementation, not re-derived from the
+    # current code, so a regression here cannot silently pass.
+    args = ("sunday", 2, [CHUBB_OUT], LINEUP, [("Nick Chubb", "O")])
+    assert compose(*args) == _PRE_CURRENT_STARTERS_PINNED_OUTPUT
+    assert compose(*args, current_starters=None) == _PRE_CURRENT_STARTERS_PINNED_OUTPUT
+    assert "START / SIT" not in compose(*args)
+
+
+def test_a_real_difference_renders_both_the_start_and_the_sit_name():
+    # Bijan is started both places (no mention needed); Chase is optimal but
+    # not currently started (a START); Chubb is currently started but not in
+    # the optimal two (a SIT).
+    msg = compose("friday", 2, [], LINEUP, [],
+                  current_starters=["Nick Chubb", "Bijan Robinson"])
+    assert "START / SIT vs your current CBS lineup:" in msg
+    assert "Ja'Marr Chase" in msg
+    assert "Nick Chubb" in msg
+    assert "already optimal" not in msg.lower()
+
+
+def test_an_already_optimal_lineup_says_so_and_prints_no_empty_block():
+    msg = compose("friday", 2, [], LINEUP, [],
+                  current_starters=["Bijan Robinson", "Ja'Marr Chase"])
+    assert "lineup is already optimal" in msg.lower()
+    # No dangling two-column header with nothing under it.
+    assert "START           SIT" not in msg
+
+
+def test_current_starters_empty_list_is_known_and_empty_not_unknown():
+    # [] means "known: nothing is started" - a real state that CAN recommend
+    # starting every optimal player, unlike None.
+    msg = compose("friday", 2, [], LINEUP, [], current_starters=[])
+    assert "START / SIT vs your current CBS lineup:" in msg
+    assert "already optimal" not in msg.lower()
+    assert "Bijan Robinson" in msg
+    assert "Ja'Marr Chase" in msg
+
+
+def _start_sit_block(msg):
+    """The text of the START/SIT section only, for assertions that must not
+    be satisfied by the same name appearing in some other block (e.g. the
+    EXCLUDED list)."""
+    start = msg.index("START / SIT vs your current CBS lineup:")
+    end = msg.index("\n\n", start)
+    return msg[start:end]
+
+
+def test_a_sidelined_player_is_never_recommended_as_a_start():
+    # Nick Chubb is (unrealistically, for this test) present in the optimal
+    # lineup's own slots AND sidelined. The diff must not recommend starting
+    # him regardless of how he got into lineup_result - the guard does not
+    # get to assume upstream filtering already handled it.
+    lineup_with_sidelined_pick = LineupResult(
+        slots=[("RB", Candidate("Nick Chubb", "RB", 5.0)),
+               ("WR/TE", Candidate("Ja'Marr Chase", "WR", 16.5))],
+        total=21.5)
+    msg = compose("friday", 2, [], lineup_with_sidelined_pick,
+                  [("Nick Chubb", "O")], current_starters=[])
+    block = _start_sit_block(msg)
+    assert "Nick Chubb" not in block
+    assert "Ja'Marr Chase" in block
+    # He is still named - just in EXCLUDED, not as a start recommendation.
+    assert "Nick Chubb" in msg
+
+
+def test_punctuation_differing_name_is_not_reported_as_a_change():
+    # The roster page and the projections page disagree about punctuation.
+    # "JaMarr Chase" (no apostrophe) here must be recognized as the same
+    # player as "Ja'Marr Chase" in LINEUP's optimal slot, via normalize_name -
+    # a literal comparison would invent a phantom START and a phantom SIT.
+    msg = compose("friday", 2, [], LINEUP, [],
+                  current_starters=["JaMarr Chase", "Bijan Robinson"])
+    assert "lineup is already optimal" in msg.lower()
