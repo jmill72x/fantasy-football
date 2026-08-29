@@ -26,6 +26,14 @@ LINEUP = LineupResult(
     total=34.5)
 
 
+def _block(msg, heading):
+    """The text under one heading only, so an assertion cannot be satisfied
+    by the same name appearing in a different block of the message."""
+    start = msg.index(heading)
+    end = msg.find("\n\n", start)
+    return msg[start:end if end != -1 else len(msg)]
+
+
 class _ReportPlusPoints(object):
     """Duck-types a `Report` plus a `points` attribute a future StatsDeck
     payload could add. Used only to give teeth to the points-leak test - see
@@ -84,6 +92,36 @@ def test_sunday_change_block_names_previous_status_and_change_date():
     assert "Doubtful" in msg
     assert "Questionable" in msg
     assert "2026-09-06" in msg  # status_since - the date it moved
+
+    # AND the row is still in the official block below. This test fed
+    # exactly the input that broke it - an OFFICIAL row that also CHANGED -
+    # and asserted nothing about that block, so the change block emptying
+    # the record passed unchallenged: "OFFICIAL STATUS on your roster: no
+    # designations on your roster." printed while the row said Out.
+    assert "no designations on your roster" not in msg
+    official = _block(msg, "OFFICIAL STATUS on your roster:")
+    assert "Ja'Marr Chase" in official
+    assert "Questionable" in official
+
+
+def test_a_row_that_is_both_official_and_changed_still_appears_in_the_record():
+    # The worst case the previous behavior produced: a starter ruled OUT on
+    # Sunday morning is BOTH official AND changed, so he was the one row
+    # removed from the official block - which then declared the roster
+    # clean, ninety minutes before kickoff.
+    chubb_ruled_out = Report(
+        name="Nick Chubb", team="CLE", status="Out", practice="",
+        reported_date="2026-09-07", detail="foot", source="official",
+        outlet="", tier="", status_since="2026-09-07",
+        previous_status="Questionable")
+    msg = compose("sunday", 2, [chubb_ruled_out], LINEUP, [])
+    assert "no designations on your roster" not in msg
+    official = _block(msg, "OFFICIAL STATUS on your roster:")
+    assert "Nick Chubb" in official
+    assert "Out" in official
+    # Still LED with as a change - the Sunday differentiator is intact.
+    assert msg.index("WHAT CHANGED") < msg.index("OFFICIAL STATUS")
+    assert "Questionable -> Out" in msg
 
 
 def test_sunday_with_no_changes_says_so_explicitly():
