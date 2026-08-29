@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from sffl.injuries import Report, for_roster, load
@@ -125,3 +127,46 @@ def test_a_row_missing_a_player_name_key_raises_rather_than_blanking(tmp_path):
 def test_a_missing_file_raises_rather_than_returning_nothing(tmp_path):
     with pytest.raises(IOError):
         load(str(tmp_path / "nope.json"))
+
+
+def test_an_official_row_spelling_status_as_report_status_still_carries_it(tmp_path):
+    """The official-row mapping is PROVISIONAL - it has never been run
+    against a real `report` row. nflverse's injury report names the column
+    `report_status`/`game_status` in places, and if that is what arrives,
+    every official row would come back with status="" and print as a player
+    with no designation. Same defensive fallback `notes`/`detail` already
+    has, for the same failure."""
+    p = tmp_path / "inj.json"
+    p.write_text(json.dumps({
+        "report": [{"player": "Nick Chubb", "team": "CLE",
+                    "report_status": "Out", "notes": "foot",
+                    "reported_date": "2026-09-05"}],
+        "intel": [],
+    }))
+    rows = load(str(p))
+    assert len(rows) == 1
+    assert rows[0].status == "Out"
+
+
+def test_a_whitespace_only_status_is_treated_as_absent_not_as_a_status(tmp_path):
+    p = tmp_path / "inj.json"
+    p.write_text(json.dumps({
+        "report": [{"player": "Nick Chubb", "team": "CLE", "status": "   ",
+                    "game_status": "Doubtful", "reported_date": "2026-09-05"}],
+        "intel": [],
+    }))
+    assert load(str(p))[0].status == "Doubtful"
+
+
+def test_an_official_row_with_no_status_field_at_all_stays_empty(tmp_path):
+    """Not raised here: one malformed row must not take down the whole
+    unattended alert. The honesty guarantee lives one layer up, where
+    `alert._status_text` renders an official row's blank status as an
+    explicit unknown rather than as a clean bill of health."""
+    p = tmp_path / "inj.json"
+    p.write_text(json.dumps({
+        "report": [{"player": "Nick Chubb", "team": "CLE",
+                    "reported_date": "2026-09-05"}],
+        "intel": [],
+    }))
+    assert load(str(p))[0].status == ""

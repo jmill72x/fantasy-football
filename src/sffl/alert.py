@@ -35,6 +35,20 @@ point, and pushes rows with no recorded change down into the ordinary
 status block below. When nothing changed, Sunday says so explicitly instead
 of printing an empty "WHAT CHANGED" heading.
 
+WHAT A ROW IS NOT ALLOWED TO RENDER AS. Two blank-field failures used to
+print as good news. An official row whose `status` arrived empty - the exact
+shape a renamed feed field produces, and `sffl.injuries` says that mapping
+is still provisional - collapsed to "no detail" in the status block and to
+"Questionable -> , since ..." in the change block; both read as "nothing
+wrong with this player". `_status_text` prints an official row's missing
+status as an explicit unknown instead. And a row with no status, practice,
+OR detail now says so, rather than "no detail". Meanwhile `outlet` and
+`tier` were carried all the way here and then dropped on the floor, so every
+intel line read `[intel <date>]` - a repeat of its own heading, with
+`sleeper_feed` vs `web_digest` lost. `_provenance` renders both, `tier`
+always behind the literal word "corroboration" because it is SOURCING
+STRENGTH, never injury severity.
+
 THE START/SIT BLOCK (`current_starters`). Task 7's orchestrator found that
 the single most actionable fact in the whole system - the diff between
 Jeff's CURRENT CBS lineup and the optimal one this module already computes -
@@ -78,18 +92,73 @@ def _roster_age_line(days):
     return "Roster captured %d day%s ago." % (days, "" if days == 1 else "s")
 
 
+_UNKNOWN_STATUS = "STATUS UNKNOWN (feed carried no status for this row)"
+
+
+def _status_text(r):
+    """The row's status, or an explicit unknown for an official row.
+
+    An official row with a blank status is a DATA PROBLEM, never a clean
+    bill of health. The official-row field mapping in `sffl.injuries` is
+    provisional (it has never been exercised against a real `report` row),
+    and if the feed spells the field differently every official row arrives
+    blank - which, interpolated raw, produced "Questionable -> , since ..."
+    in the change block and collapsed to "no detail" in the status block.
+    Both read as "nothing wrong with this player". Printed as an explicit
+    unknown instead, a broken mapping is unmissable in the message itself.
+
+    An INTEL row with no status is ordinary and stays blank: intel rows
+    routinely carry only prose (the real feed has one), and their detail
+    text is the content. Only the record is held to having a status.
+    """
+    if r.status:
+        return r.status
+    if r.source == "official":
+        return _UNKNOWN_STATUS
+    return ""
+
+
+def _provenance(r):
+    """The `[bucket date]` tag, plus the row-level provenance it carries.
+
+    `outlet` is the feed's OWN label for where a row came from
+    ("sleeper_feed", "web_digest", a beat writer) and is the whole reason
+    intel rows are worth reading separately from each other - without it
+    every intel line reads `[intel <date>]`, which merely repeats the block
+    heading. Official rows never carry one (see `sffl.injuries`).
+
+    `tier` IS CORROBORATION STRENGTH, NEVER INJURY SEVERITY - "corroborated"
+    vs "unconfirmed" says how sure StatsDeck's pipeline is that the report
+    is real, not how bad the injury is. Rendered ONLY behind the literal
+    word "corroboration" so it cannot be read as a designation: a bare
+    "unconfirmed" sitting next to "Questionable" would look like a second
+    opinion on the player rather than a note about the sourcing.
+    """
+    bits = ["%s %s" % (r.source, r.reported_date or "undated")]
+    if getattr(r, "outlet", ""):
+        bits.append("via %s" % r.outlet)
+    if getattr(r, "tier", ""):
+        bits.append("corroboration: %s" % r.tier)
+    return "[%s]" % ", ".join(bits)
+
+
 def _report_line(r):
     """One feed row. `source` and `reported_date` always travel with it."""
     bits = []
-    if r.status:
-        bits.append(r.status)
+    status = _status_text(r)
+    if status:
+        bits.append(status)
     if r.practice:
         bits.append("practice: %s" % r.practice)
     if r.detail:
         bits.append(r.detail)
-    return "  - %s (%s) %s [%s %s]" % (
-        r.name, r.team or "?", " / ".join(bits) or "no detail",
-        r.source, r.reported_date or "undated")
+    # NOT "no detail" - that reads as "nothing to report about this player",
+    # i.e. as health, when what actually happened is that the row arrived
+    # carrying no information at all. Say which.
+    return "  - %s (%s) %s %s" % (
+        r.name, r.team or "?",
+        " / ".join(bits) or "row carried no status, practice, or detail",
+        _provenance(r))
 
 
 def _change_line(r):
@@ -102,10 +171,11 @@ def _change_line(r):
     the change instead of the static status.
     """
     detail = " - %s" % r.detail if r.detail else ""
-    return "  - %s (%s): %s -> %s, since %s%s [%s %s]" % (
-        r.name, r.team or "?", r.previous_status or "unknown", r.status,
+    return "  - %s (%s): %s -> %s, since %s%s %s" % (
+        r.name, r.team or "?", r.previous_status or "unknown",
+        _status_text(r) or "unknown",
         r.status_since or "date unknown", detail,
-        r.source, r.reported_date or "undated")
+        _provenance(r))
 
 
 def _is_changed(r):
