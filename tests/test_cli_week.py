@@ -12,7 +12,17 @@ PROJ = "tests/fixtures/cbs_weekly_rbwrte.txt"
 # than reaching classify_avail as "owned" - so tests that need an
 # owned-by-another-team row use whatever code is actually configured instead
 # of a hardcoded guess like "DAL".
-OWNER_CODE = _load_owner_codes(DEFAULT_PROFILE)[0]
+#
+# Deliberately NOT read at module scope: sources/cbs-weekly.yaml's
+# owner_codes currently holds a placeholder someone will edit before Week 1,
+# and an empty or missing list must fail as a legible, per-test skip - not
+# as a bare IndexError at collection time that disappears every test in this
+# file with no clue why.
+def _owner_code():
+    codes = _load_owner_codes(DEFAULT_PROFILE)
+    if not codes:
+        pytest.skip("sources/cbs-weekly.yaml has no owner_codes configured")
+    return codes[0]
 
 # "    3.20     WR/TE  Harold Fannin Jr. (TE)" -> (3.20, "WR/TE", "Harold
 # Fannin Jr.", "TE"). Slot/bench and position are single tokens (no internal
@@ -259,7 +269,7 @@ def test_a_waiver_row_owned_by_another_team_is_excluded_and_reported(tmp_path, c
     lines = open(PROJ).read().splitlines()
     lines.append(
         "%s Ghost Player RB • SF @LAR 22 11 86 63 8 "
-        "9.5 99.9 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 9.99" % OWNER_CODE)
+        "9.5 99.9 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 9.99" % _owner_code())
     proj = tmp_path / "with_owned.txt"
     proj.write_text("\n".join(lines) + "\n")
 
