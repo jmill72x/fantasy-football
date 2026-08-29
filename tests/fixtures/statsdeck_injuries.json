@@ -1,0 +1,13 @@
+{
+  "injuries": [
+    {"player": "Ja'Marr Chase", "team": "CIN", "status": "Questionable",
+     "practice": "Limited", "reported_date": "2026-09-05",
+     "detail": "hyperextended knee", "source": "official"},
+    {"player": "Nick Chubb", "team": "CLE", "status": "Out",
+     "practice": "DNP", "reported_date": "2026-09-05",
+     "detail": "foot", "source": "official"},
+    {"player": "Ja'Marr Chase", "team": "CIN", "status": "",
+     "practice": "", "reported_date": "2026-09-06",
+     "detail": "expected to play per beat writer", "source": "intel"}
+  ]
+}
