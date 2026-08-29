@@ -10,8 +10,10 @@ artifacts render. **TODO B is done and answered NO** (see below). What remains i
 08-21→08-23 data refresh, which needs Jeff at the Mac.
 
 **A fifth, later addition beyond the four auction plans: the read-only in-season core**
-(`sffl week` — weekly waivers and start/sit) **is also merged,** including a post-merge
-fix wave (C1/I1-I5/I8, 2026-08-28). See the status table below and "What works today."
+(`sffl week` — weekly waivers and start/sit) **lives on branch `in-season-core` and is
+still UNMERGED.** It has had three pre-merge fix waves, all on 2026-08-28: a review wave
+(C1/I1-I5/I8), a verification-pass wave (F1/F3/F4/F5/F8), and a second C1 wave (the
+monotone-envelope fix). See the status table below and "What works today."
 
 **Jeff is not attending the auction.** A surrogate drafts for him on 08-26. **Jeff owns the
 BID; the surrogate owns the SELECTION.** The Excel + `Key & Intel` sheet is the deliverable;
@@ -23,7 +25,7 @@ the PDF/iPad path is no longer the primary artifact and no annotation app needs 
 | **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections, lineup floors and market calibration — 165 tests |
 | **Plan 3 — Excel + PDF renderers** | ✅ merged — 203 tests. `sffl render` writes both |
 | **Plan 4 — silent auction planner** | ✅ merged — 279 tests. `sffl plan`; the table is on PDF p17 |
-| **In-season core — weekly waivers & start/sit (read-only)** | ✅ merged — 386 tests. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), ntfy/launchd delivery, `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop |
+| **In-season core — weekly waivers & start/sit (read-only)** | ⏳ UNMERGED (branch `in-season-core`) — 409 tests, three pre-merge fix waves. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), ntfy/launchd delivery, `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop |
 
 Verify state in one command:
 
@@ -64,7 +66,11 @@ line, saved the same way. The `--projections` path above is the tracked test fix
 week points this at a saved page under `data/weekly/` (gitignored). Swap `--waivers` for
 `--start-sit --current current.txt` to check whether the lineup currently set on CBS is
 already optimal. Only the `RB-WR-TE` group is defined in `sources/cbs-weekly.yaml` so far
-— TQB/K/DST would need their own one-entry addition, no Python change. **Ranks adds only:**
+— TQB/K/DST would each need their own entry there, and that entry MUST set
+`expect_tokens`. It is opt-in (`groups[group].get("expect_tokens")` in `cbs_weekly.py`),
+not required by the schema, so a group added without it silently loses the whole-width
+layout guard — the exact Critical already fixed once on this branch, where a shifted
+column made a 0.9-reception back read as 7.9. **Ranks adds only:**
 it does not yet choose which rostered player to drop to make room, so the spec's
 `(add, drop)` pairing is half-built (see the plan's Self-Review).
 
@@ -689,6 +695,21 @@ a small negative on a handful of players. Fix it with the 2026 rules pass, not t
    - Until someone separates "how much of $8.98 is the rushing-QB averaging bias" from
      "how much is un-fixable year-over-year turnover," TQB's mae is not comparable to
      FLEX's on the same terms.
+5. **The fixture cannot witness an in-season page.** `tests/fixtures/cbs_weekly_rbwrte.txt`
+   was captured 12 days before kickoff, in a week with no byes, no injury designations,
+   and no rows owned by other managers. Verified on the real parser: a manager's 2-letter
+   team abbreviation, or one with lowercase/digits, fails the `avail` regex and the whole
+   page is REFUSED; an injury tag between position and bullet ("Nick Chubb RB Q • CLE")
+   also refuses the page; a tag after the name silently renames the player ("Nick Chubb
+   Q"); a bye row parses only if it still totals 17 tokens. Failing loudly is the right
+   behavior — but the first bye week is exactly when this tool is most needed, and
+   nothing today warns that the regex may need widening on first live use.
+6. **`--week` is required but inert.** `cbs_weekly.parse(path, group, week, ...)` accepts
+   `week` and never reads it in the function body; nothing stores it on the returned
+   `PlayerProjection`, echoes it, or validates it against the page, and nothing reads the
+   page's "REPORT UPDATED AS OF" stamp that the spec names as the staleness signal.
+   Saving week 3's page and running `sffl week --week 4 ...` exits 0 with no warning.
+   Known gap, not yet fixed.
 
 ## OUTSIDE RANKINGS — the standing rule (reaffirmed 2026-08-19)
 
@@ -1030,7 +1051,7 @@ weekly projection data captured before the season starts, so this is a measureme
 what exists today, not on "a whole position group" as the brief's phrasing suggested.
 
 ```
-n=8   CBS total 20.70   calibrated 28.16   diff +7.46
+n=8   CBS total 20.70   calibrated 28.67   diff +7.97
 players moved by >= 0.5 pts: 7 of 8
 ```
 
@@ -1039,18 +1060,40 @@ this fixture is all low-volume TE/WR/RB lines sitting below several band floors,
 where `E[band(X)] > band(E[X])` — the same selection effect the spec's own +4.88 number
 came from, just not hand-picked this time.
 
-**Pairwise order — all 28 pairs of 8 players checked.** 26 of 28 (93%) keep the same
-relative order under both scorers. **1 pair reorders outright**: CBS ranks Braelon Allen
-(1.70) above Woody Marks (1.60); calibrated flips them, Marks (2.63) over Allen (2.60).
-A second pair, Elic Ayomanor vs. Kyle Pitts, is an exact CBS tie (2.50 = 2.50, no order to
-begin with) that calibration separates (Pitts 3.56 over Ayomanor 3.18).
+**Pairwise order — all 28 pairs of 8 players checked. Zero reorder.** 27 of the 28 pairs
+have a definite CBS order, and the calibrated scorer agrees with CBS on every one of
+them. The 28th pair, Elic Ayomanor vs. Kyle Pitts, is an exact CBS tie (2.50 = 2.50, no
+order to begin with); calibration separates it, Pitts (3.56) over Ayomanor (3.37).
 
-**Conclusion.** On the only real data available, the effect is real but modest, not the
-"barely matters" null and not a wholesale re-ranking either: most pairwise decisions
-(26 of 28 here) come out the same either way, and the one genuine flip is a ~0.03-point
-margin — the kind of decision that's a coin flip under either scorer. This 8-row sample
-is itself low-projection and TE/WR/RB-only, so it cannot speak to whether calibration
-changes more orderings among higher-projection players, whose CBS-banded estimates sit
-further from band floors. That question needs more saved CBS pages than exist right now,
-which is not a code gap — `sources/cbs-weekly.yaml` already generalizes to any group with
-a one-entry YAML addition — it is a data-collection one, same shape as TODO B above.
+**Conclusion — a null result, reported plainly.** On the only real data available,
+calibration does not change a single real ranking decision in this sample; it only
+resolves one exact tie. That is a correction to what this section used to say: an
+earlier measurement (before the C1 monotone-envelope fix, `c1702e3`) reported a
+different pair of totals (28.16, diff +7.46) and named "1 pair reorders outright" — CBS
+ranking Braelon Allen above Woody Marks, calibration flipping them to Marks over Allen —
+as the concrete evidence that calibration moves a real decision. **That flip no longer
+exists.** Allen now scores 2.74 to Marks's 2.72, agreeing with CBS, and it should not
+have been reported as a stable finding in the first place. **Why it changed:** the C1
+fix raised calibrated values in the noisy low-mean region of the curves by replacing raw
+interpolation with a monotone envelope (see `_monotone_envelope` in `src/sffl/pool.py`);
+doing so removed the exact non-monotone inversion that used to put Marks above Allen.
+Nobody re-ran this measurement after that fix until now, which is why the section stayed
+wrong.
+
+This 8-row sample is itself low-projection and TE/WR/RB-only, so it still cannot speak
+to whether calibration changes orderings among higher-projection players, whose
+CBS-banded estimates sit further from band floors — that needs more saved CBS pages
+than exist right now, which is a data-collection gap, same shape as TODO B above.
+Extending the fixture to another position group is a separate, smaller gap: adding one
+to `sources/cbs-weekly.yaml` is not the one-entry, no-Python-change addition it might
+look like — the new entry must also set `expect_tokens`, which is opt-in
+(`.get("expect_tokens")` in `cbs_weekly.py`). Skip it and the whole-width layout guard is
+silently disabled for that group, which is exactly the Critical already fixed once on
+this branch (a shifted column made a 0.9-reception back read as 7.9).
+
+**Re-run this measurement after any change to `score_week` or the calibration curves.**
+It has now gone stale silently once already — do not assume the numbers above still hold:
+
+```
+PYTHONPATH=src ./.venv/bin/python poc/measure_weekly_calibration.py
+```

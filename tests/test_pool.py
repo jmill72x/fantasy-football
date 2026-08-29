@@ -316,13 +316,13 @@ def test_score_week_calibrates_a_defense_s_banded_points():
 
 def test_score_week_refuses_a_season_line():
     """score_week takes ONE week's projected line; score_season_calibrated
-    takes a season total - same PlayerProjection type, opposite shape, no
-    guard. A 95-catch, 1300-yard SEASON line silently returned a
-    plausible-looking 51.25 with nothing to say it was never a week. This
-    repo refuses this class of mistake elsewhere (tqb_starters_season, the
-    flat_priced_pools price guard, build_pool's multi-set refusal) rather
-    than documenting it and hoping - this is the same discipline applied
-    here."""
+    takes a season total - same PlayerProjection type, opposite shape.
+    Before this guard existed, a 95-catch, 1300-yard SEASON line handed to
+    score_week would silently return some plausible-looking number, with
+    nothing to say it was never a week. This repo refuses this class of
+    mistake elsewhere (tqb_starters_season, the flat_priced_pools price
+    guard, build_pool's multi-set refusal) rather than documenting it and
+    hoping - this is the same discipline applied here."""
     p = PlayerProjection(name="Season WR", team="GB", pos="WR", source="t",
                          source_year=2026, games=17,
                          stats={"rec_ct": 95.0, "rec_yds": 1300.0})
@@ -348,8 +348,14 @@ def test_score_week_uses_the_naive_band_above_the_curves_span():
     yd/game season average, but expected_points cannot tell the difference
     and would clamp to the same 3.18 paid to a back projected at 96 or 110.
     Outside the curve's observed span there is no evidence behind the
-    calibrated number, so score_week must fall back to the naive band -
-    exactly what it already does when there is no curve at all."""
+    calibrated number, so `_calibrated_band_value` takes
+    `max(naive band, envelope top)` there (the C1 monotone-envelope fix) -
+    it does not unconditionally fall back to the naive band. At 150 yards
+    the naive band (6.00) already exceeds the envelope's top anchor (3.18),
+    so the max resolves to the naive value and this assertion holds; see
+    test_score_week_does_not_collapse_two_backs_above_the_span_to_one_number
+    below for a value (96 yards) where the two disagree and the envelope's
+    top, not the naive band, wins."""
     curves = load_curves("calibration/2025.yaml")
     p = PlayerProjection(name="Big Game RB", team="GB", pos="RB", source="t",
                          source_year=2026, games=1.0, stats={"rush_yds": 150.0})
@@ -374,8 +380,14 @@ def test_score_week_still_calibrates_a_value_inside_the_span():
 def test_score_week_does_not_collapse_two_backs_above_the_span_to_one_number():
     """Measured before the fix: 96 and 110 rushing yards both clamped to the
     curve's last anchor (3.18 pts) and scored identically despite being
-    visibly different projections - as would 150. The naive band tells them
-    apart (3.00 vs 4.00 vs 6.00), so score_week must too."""
+    visibly different projections. The fix - `_calibrated_band_value`'s
+    `max(naive band, envelope top)` - separates them again, but not by
+    simply reading the naive band back: 96 yards' naive band is 3.00, still
+    BELOW the envelope's top anchor of 3.18, so the max picks the envelope
+    value (96 pays 3.18, not 3.00); 110's naive band is 4.00, already above
+    the envelope top, so the max picks the naive value there instead. Two
+    different reasons, but 96 and 110 no longer collapse to the same
+    number."""
     curves = load_curves("calibration/2025.yaml")
 
     def rb(rush_yds):
