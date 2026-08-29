@@ -1,7 +1,9 @@
 import pytest
-from sffl.cbs_weekly import build_line_re, classify_avail, parse
+from sffl.cbs_weekly import (build_line_re, classify_avail, classify_avail_tab,
+                              parse)
 
 FIXTURE = "tests/fixtures/cbs_weekly_rbwrte.txt"
+TAB_FIXTURE = "tests/fixtures/cbs_weekly_tab_rbwrte.txt"
 
 
 def by_name(rows):
@@ -258,3 +260,101 @@ def test_status_reaches_the_projection_record(tmp_path):
     rows = dict((p.name, p) for p in parse(str(page), group="RB-WR-TE", week=1))
     assert rows["Nick Chubb"].status == "O"
     assert rows["Bijan Robinson"].status == ""
+
+
+# Round 2 (in-season pipeline against the real captured page): the
+# Playwright `capture()` path used by the scheduled job emits TAB-delimited
+# rows, not the space-delimited text the browser-tool capture used for
+# FIXTURE above. TAB_FIXTURE is real data - the 100 player rows from a real
+# captured page, sanitized only in the fantasy TEAM NAME column (this repo
+# is public); every NFL player name and stat is untouched.
+
+
+def test_the_real_tab_delimited_capture_all_parses_as_one_group():
+    rows = parse(TAB_FIXTURE, group="RB-WR-TE", week=1)
+    assert len(rows) == 100
+
+
+def test_a_tab_row_stats_land_in_the_right_slots():
+    """Puka Nacua's real row: '\\tTeam J...\\tPuka Nacua WR • LAR \\tSF\\t18\\t
+    11\\t98\\t97\\t2\\t0.9\\t6.2\\t6.9\\t0.1\\t11.1\\t8.1\\t100.0\\t12.3\\t0.6\\t0.0\\t9.31'.
+    Tab-splitting the trailing fields (instead of whitespace-splitting) is
+    what lets 'N/R' (a non-numeric EXPERT rank, its own tab field) sit
+    safely in the ignored preamble on this path too - see
+    test_a_non_numeric_expert_rank... above for the space-path version of
+    the same guarantee."""
+    r = by_name(parse(TAB_FIXTURE, group="RB-WR-TE", week=1))["Puka Nacua"]
+    assert r.pos == "WR" and r.team == "LAR"
+    assert r.stats["rush_att"] == 0.9
+    assert r.stats["rec_yds"] == 100.0
+    assert r.stats["fum_lost"] == 0.0
+
+
+def test_a_tab_row_owned_by_another_manager_is_classified_owned():
+    """The owner cell is its own tab field: 'Team J...' is a sanitized
+    stand-in for a real (truncated) fantasy TEAM name, not FA/W, so
+    classify_avail_tab must call it owned - no owner_codes list involved,
+    since F4 cannot happen on this path by construction."""
+    r = by_name(parse(TAB_FIXTURE, group="RB-WR-TE", week=1))["Puka Nacua"]
+    assert r.avail == "Team J..."
+    assert classify_avail_tab(r.avail) == "owned"
+
+
+def test_a_tab_free_agent_row_is_available(tmp_path):
+    page = tmp_path / "tab_fa.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("\tFA\tNick Chubb RB • CLE\t@PIT\t%s\n" % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].avail == "FA"
+    assert classify_avail_tab(rows[0].avail) == "available"
+
+
+def test_a_tab_waiver_row_is_available(tmp_path):
+    page = tmp_path / "tab_waiver.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text(
+        "\tW (9/16)\tHarold Fannin Jr. TE • CLE\t@JAC\t%s\n" % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].avail == "W (9/16)"
+    assert classify_avail_tab(rows[0].avail) == "available"
+
+
+def test_an_empty_tab_owner_cell_does_not_silently_become_available(tmp_path):
+    """An empty owner cell means the column came back blank, not that the
+    player is confirmed unowned - those are different facts, and treating
+    the first as the second would rank an indeterminate row as claimable.
+    classify_avail_tab must refuse it (None), the same as any other
+    unrecognized shape - never fall through to 'available'."""
+    page = tmp_path / "tab_empty_owner.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("\t\tNick Chubb RB • CLE\t@PIT\t%s\n" % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].avail == ""
+    assert classify_avail_tab(rows[0].avail) is None
+    assert classify_avail_tab(rows[0].avail) != "available"
+
+
+def test_a_tab_injury_tag_after_the_position_is_captured():
+    """Same optional-status mechanism as the space path (see
+    test_an_injury_tag_after_the_position_is_captured_not_swallowed above),
+    exercised on the tab path's name cell, which the real capture did not
+    happen to contain any examples of this week."""
+    from sffl.cbs_weekly import _TAB_NAME
+    m = _TAB_NAME.match("Nick Chubb Q RB • CLE")
+    assert m is not None
+    assert m.group("name") == "Nick Chubb"
+    assert (m.group("status1") or m.group("status2")) == "Q"
+
+
+def test_the_space_delimited_fixture_is_unaffected_by_the_tab_path():
+    """Per-line dispatch (tab vs space) must not change a single result for
+    the OLDER, space-delimited capture path - FIXTURE contains no tabs at
+    all, so every row here must take exactly the path it always did."""
+    rows = parse(FIXTURE, group="RB-WR-TE", week=1)
+    assert len(rows) == 8
+    r = by_name(rows)["Braelon Allen"]
+    assert r.pos == "RB" and r.team == "NYJ"
+    assert r.stats["rush_yds"] == 36.8

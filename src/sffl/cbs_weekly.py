@@ -44,6 +44,35 @@ def is_out(status):
 
 _AVAIL_WAIVER = re.compile(r"^W(\s*\(.*\))?$")
 
+# The Playwright `capture()` path (used by the scheduled in-season job)
+# produces TAB-delimited rows, not the space-delimited text the browser-tool
+# capture used for the committed fixture. Both are real, observed shapes -
+# see build_line_re vs _TAB_LINE/_TAB_NAME below - and a line is dispatched
+# to whichever path matches its own delimiter, per line, so a file can even
+# mix the two without either path misreading the other's rows.
+#
+# Row shape: "\t<owner cell>\t<Name POS • TEAM>\t<OPP>\t<stat1>\t...".
+# The owner cell is its OWN tab field here, structurally separated from the
+# name - unlike the space path, there is no possible reading in which a
+# player's first name gets swallowed as an owner token, because there is no
+# token boundary to get wrong: the tab already told us where the cell ends.
+# So, unlike build_line_re, this pattern does NOT need owner_codes and is a
+# plain module-level constant.
+_TAB_LINE = re.compile(
+    r"^\t(?P<avail>[^\t]*)\t(?P<namecell>[^\t]+)\t(?P<rest>.+)$")
+
+# The "Name POS • TEAM" cell, split out from the rest of the tab row.
+# Same status-tag handling as build_line_re's per-line pattern (captured in
+# both observed positions, optional either way) - the mechanism the two
+# paths share is finding the name/status/position/team inside one blob of
+# text; only where the OWNER token lives differs between them.
+_TAB_NAME = re.compile(
+    r"^(?P<name>.+?)\s+"
+    r"(?:(?P<status1>" + "|".join(_STATUS_TAGS) + r")\s+)?"
+    r"(?P<pos>TQB|QB|RB|WR|TE|K|DST)\s+"
+    r"(?:(?P<status2>" + "|".join(_STATUS_TAGS) + r")\s+)?"
+    r"[•\-]\s*(?P<team>[A-Z]{2,3})\s*$")
+
 
 def build_line_re(owner_codes):
     """The row regex, with the league's manager abbreviations built into it.
@@ -83,6 +112,14 @@ def build_line_re(owner_codes):
 def classify_avail(avail, owner_codes):
     """Sort a raw `avail` token into "available", "owned", or None.
 
+    SPACE PATH ONLY. On that page the owner token sits in the running text
+    with no delimiter marking where it ends, so a closed list is the only
+    thing standing between a real manager code and a mis-parsed first name
+    (F4) - see build_line_re's docstring. classify_avail_tab below is the
+    tab-delimited page's counterpart, and needs no such list, because that
+    page's owner cell is its own tab field and cannot be confused with a
+    player's name no matter what it contains.
+
     "available" covers a genuine free agent ("FA") or a waiver-claimable
     player ("W" or "W (9/16)") - both fair game for a waiver ranking.
     "owned" is a token in the league's CONFIGURED manager list: that player is
@@ -100,6 +137,38 @@ def classify_avail(avail, owner_codes):
     return None
 
 
+def classify_avail_tab(avail):
+    """Sort a TAB-PATH owner cell into "available", "owned", or None.
+
+    TAB PATH ONLY - classify_avail above is the space-delimited page's
+    counterpart. There, an enumerated owner_codes list is essential because
+    the owner token is embedded in running text with no delimiter, so a
+    player's own first name could be mistaken for one (F4). Here the owner
+    cell is its OWN tab field: it cannot be confused with any part of the
+    name/position/team cell next to it, no matter what text it holds. F4 is
+    therefore impossible BY CONSTRUCTION on this path, not merely guarded
+    against by a closed list - and a closed list would not even work here,
+    since a real value is a (possibly truncated, ellipsised) fantasy TEAM
+    name - "Stupid...", "EM 50s" - not a manager abbreviation. The set of
+    truncated team names is open-ended and depends on the export's column
+    width, so there is nothing stable to enumerate.
+
+    "available" still covers a genuine free agent ("FA") or a
+    waiver-claimable player ("W" or "W (9/16)"). Any OTHER non-empty value
+    means the cell names a fantasy team, i.e. the player is owned.
+
+    An EMPTY cell is deliberately NOT "available": "no owner" and "the
+    column came back blank" are different facts, and treating the second as
+    the first would silently rank an indeterminate row as claimable. Returns
+    None so the caller refuses it, the same as any other unrecognized shape.
+    """
+    if avail == "FA" or _AVAIL_WAIVER.match(avail):
+        return "available"
+    if avail == "":
+        return None
+    return "owned"
+
+
 def _load_groups(profile_path):
     with open(profile_path) as fh:
         raw = yaml.safe_load(fh) or {}
@@ -112,6 +181,42 @@ def _load_owner_codes(profile_path):
     return list(raw.get("owner_codes", []))
 
 
+def _parse_row(line, line_re):
+    """One row's (avail, name, pos, team, status1, status2, tokens), or None.
+
+    Dispatches PER LINE on whether it contains a tab: the Playwright
+    `capture()` path used by the scheduled in-season job emits TAB-delimited
+    rows (`_TAB_LINE`/`_TAB_NAME`); the older browser-tool capture path -
+    the source of the committed fixture - emits space-delimited rows matched
+    by `line_re` (`build_line_re`). Both are real, currently-produced
+    shapes, so a file is never assumed to be entirely one or the other -
+    each line is matched against whichever pattern fits its own delimiter.
+
+    `tokens` is the "rest" segment (OPP plus the trailing stat columns)
+    split into individual fields - by tab on the tab path, by whitespace on
+    the space path - so `expect_tokens`/the stat-block slice downstream work
+    identically regardless of which path produced the row.
+    """
+    if "\t" in line:
+        m = _TAB_LINE.match(line)
+        if not m:
+            return None
+        name_m = _TAB_NAME.match(m.group("namecell"))
+        if not name_m:
+            return None
+        return (m.group("avail"), name_m.group("name").strip(),
+                name_m.group("pos"), name_m.group("team"),
+                name_m.group("status1"), name_m.group("status2"),
+                m.group("rest").split("\t"))
+    m = line_re.match(line)
+    if not m:
+        return None
+    return (m.group("avail").strip(), m.group("name").strip(),
+            m.group("pos"), m.group("team"),
+            m.group("status1"), m.group("status2"),
+            m.group("rest").split())
+
+
 def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
     """Rows from one saved weekly-projections page, as PlayerProjection.
 
@@ -120,16 +225,16 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
     every field.
 
     Also raises (F4) if any line looks like a player row - a reasonable
-    signal being that it contains " • " - but does not match the built row
-    regex (`build_line_re`) at all, naming the count and the first offending
-    line. A line that fails to match this way is not necessarily "not a
-    player row": the observed real case ("DJ Moore WR • CHI ...", missing
-    its leading avail token) is a
-    genuine player row that the regex would otherwise misread under the
-    WRONG NAME once the avail group is loose enough to match it by accident.
-    Reading a page PARTIALLY - silently dropping the lines that do not fit -
-    is worse than refusing it outright, so every such line is collected and
-    reported together rather than skipped one at a time.
+    signal being that it contains " • " - but does not match either the
+    tab-delimited or the space-delimited row shape (see `_parse_row`),
+    naming the count and the first offending line. A line that fails to
+    match this way is not necessarily "not a player row": the observed real
+    case ("DJ Moore WR • CHI ...", missing its leading avail token) is a
+    genuine player row that the (space-path) regex would otherwise misread
+    under the WRONG NAME once the avail group is loose enough to match it by
+    accident. Reading a page PARTIALLY - silently dropping the lines that do
+    not fit - is worse than refusing it outright, so every such line is
+    collected and reported together rather than skipped one at a time.
     """
     groups = _load_groups(profile_path)
     if group not in groups:
@@ -149,12 +254,12 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
             line = raw_line.rstrip("\n")
             if not line.strip():
                 continue
-            m = line_re.match(line)
-            if not m:
+            parsed = _parse_row(line, line_re)
+            if parsed is None:
                 if " • " in line:
                     unmatched.append(line)
                 continue
-            tokens = m.group("rest").split()
+            avail, name, pos, team, status1, status2, tokens = parsed
             if expect_tokens is not None and len(tokens) != expect_tokens:
                 raise ValueError(
                     "%s: %r has %d tokens after the team code, expected %d - "
@@ -162,14 +267,14 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                     "reads the wrong stat into every field, even though the "
                     "trailing slice below would still return a plausible "
                     "block of the right WIDTH"
-                    % (path, m.group("name"), len(tokens), expect_tokens))
+                    % (path, name, len(tokens), expect_tokens))
             block = tokens[-len(fields):]
             if len(block) != len(fields):
                 raise ValueError(
                     "%s: stat block for %r has %d columns, expected %d - the "
                     "layout is positional and a shift reads the wrong stat "
                     "into every field"
-                    % (path, m.group("name"), len(block), len(fields)))
+                    % (path, name, len(block), len(fields)))
             stats = {}
             for field_name, token in zip(fields, block):
                 if field_name == "_":
@@ -179,18 +284,18 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                 except ValueError:
                     raise ValueError(
                         "%s: %r has non-numeric %s %r"
-                        % (path, m.group("name"), field_name, token))
-            status = m.group("status1") or m.group("status2") or ""
+                        % (path, name, field_name, token))
+            status = status1 or status2 or ""
             out.append(PlayerProjection(
-                name=m.group("name").strip(),
-                team=normalize_team(m.group("team")),
-                pos=m.group("pos"),
+                name=name,
+                team=normalize_team(team),
+                pos=pos,
                 source="cbs-weekly",
                 source_year=season,
                 games=1.0,
                 stats=stats,
-                raw_name=m.group("name").strip(),
-                avail=m.group("avail").strip(),
+                raw_name=name,
+                avail=avail,
                 status=status,
             ))
 
