@@ -1,9 +1,18 @@
 import re
 
 import pytest
+from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
 from sffl.cli import main
 
 PROJ = "tests/fixtures/cbs_weekly_rbwrte.txt"
+
+# _cmd_week has no --profile override, so it always classifies against the
+# real profile's owner_codes. A fabricated manager token has to be one of
+# those configured codes or the row simply fails to match at all (F4) rather
+# than reaching classify_avail as "owned" - so tests that need an
+# owned-by-another-team row use whatever code is actually configured instead
+# of a hardcoded guess like "DAL".
+OWNER_CODE = _load_owner_codes(DEFAULT_PROFILE)[0]
 
 # "    3.20     WR/TE  Harold Fannin Jr. (TE)" -> (3.20, "WR/TE", "Harold
 # Fannin Jr.", "TE"). Slot/bench and position are single tokens (no internal
@@ -249,8 +258,8 @@ def test_a_waiver_row_owned_by_another_team_is_excluded_and_reported(tmp_path, c
     target, and the exclusion must be visible in the output, not silent."""
     lines = open(PROJ).read().splitlines()
     lines.append(
-        "DAL Ghost Player RB • SF @LAR 22 11 86 63 8 "
-        "9.5 99.9 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 9.99")
+        "%s Ghost Player RB • SF @LAR 22 11 86 63 8 "
+        "9.5 99.9 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 9.99" % OWNER_CODE)
     proj = tmp_path / "with_owned.txt"
     proj.write_text("\n".join(lines) + "\n")
 

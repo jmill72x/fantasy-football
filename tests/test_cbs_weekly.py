@@ -1,5 +1,5 @@
 import pytest
-from sffl.cbs_weekly import classify_avail, parse
+from sffl.cbs_weekly import build_line_re, classify_avail, parse
 
 FIXTURE = "tests/fixtures/cbs_weekly_rbwrte.txt"
 
@@ -155,19 +155,93 @@ def test_dj_moore_parses_correctly_with_a_leading_status_token(tmp_path):
 
 
 def test_classify_avail_recognizes_free_agent_and_waiver_as_available():
-    assert classify_avail("FA") == "available"
-    assert classify_avail("W") == "available"
-    assert classify_avail("W (9/16)") == "available"
+    assert classify_avail("FA", []) == "available"
+    assert classify_avail("W", []) == "available"
+    assert classify_avail("W (9/16)", []) == "available"
 
 
-def test_classify_avail_recognizes_a_bare_team_code_as_owned():
-    """No parenthetical, letters only, length >= 3: on the ALL PLAYERS view
-    this is another manager's roster abbreviation, not a status (F3)."""
-    assert classify_avail("DAL") == "owned"
+def test_classify_avail_no_longer_infers_owned_from_bare_letter_shape():
+    """Superseded by the enumerated-owner-codes design below. `classify_avail`
+    used to treat any bare, letters-only token of 3+ characters as "owned" by
+    SHAPE alone; that is exactly the looseness F4 exists to forbid, so a bare
+    token not present in `owner_codes` must now come back None rather than
+    "owned", even though "DAL" looks exactly like a team abbreviation."""
+    assert classify_avail("DAL", []) is None
+    assert classify_avail("DAL", ["DAL"]) == "owned"
 
 
 def test_classify_avail_refuses_to_guess_an_unfamiliar_shape():
     """A parenthetical status other than 'W (...)' - e.g. an injury flag -
     is a shape this page has not been observed to produce. Guessing which
     bucket it belongs in is the mistake F3 exists to prevent."""
-    assert classify_avail("IR (Q)") is None
+    assert classify_avail("IR (Q)", []) is None
+
+
+CODES = ["JM", "Bp3", "SMITH"]
+
+
+def test_a_two_letter_manager_code_parses():
+    m = build_line_re(CODES).match("JM Nick Chubb RB • CLE @PIT 1 2 3")
+    assert m is not None
+    assert m.group("avail") == "JM"
+    assert m.group("name") == "Nick Chubb"
+
+
+def test_a_mixed_case_code_with_a_digit_parses():
+    m = build_line_re(CODES).match("Bp3 Nick Chubb RB • CLE @PIT 1 2 3")
+    assert m is not None
+    assert m.group("avail") == "Bp3"
+
+
+def test_a_row_missing_its_status_token_still_does_not_match():
+    # F4. "DJ" is a first name here, not a manager code. It is not in
+    # CODES, so the line must fail rather than parse as avail="DJ",
+    # name="Moore" - which files a real player's stats under a fake one.
+    assert build_line_re(CODES).match("DJ Moore WR • CHI @GB 1 2 3") is None
+
+
+def test_an_injury_tag_after_the_position_is_captured_not_swallowed():
+    m = build_line_re(CODES).match("FA Nick Chubb RB Q • CLE @PIT 1 2 3")
+    assert m is not None
+    assert m.group("name") == "Nick Chubb"
+    assert (m.group("status1") or m.group("status2")) == "Q"
+
+
+def test_an_injury_tag_after_the_name_is_captured_not_swallowed():
+    m = build_line_re(CODES).match("FA Nick Chubb Q RB • CLE @PIT 1 2 3")
+    assert m is not None
+    # The bug: the greedy name group used to absorb this, renaming the
+    # player to "Nick Chubb Q" - who matches nothing downstream.
+    assert m.group("name") == "Nick Chubb"
+    assert (m.group("status1") or m.group("status2")) == "Q"
+
+
+@pytest.mark.parametrize("tag", ["Q", "D", "O", "IR", "PUP", "SUSP", "NA"])
+def test_every_standard_designation_is_recognized(tag):
+    m = build_line_re(CODES).match(
+        "FA Nick Chubb %s RB • CLE @PIT 1 2 3" % tag)
+    assert m is not None
+    assert (m.group("status1") or m.group("status2")) == tag
+
+
+def test_an_undesignated_row_still_parses_with_no_status():
+    m = build_line_re(CODES).match("FA Nick Chubb RB • CLE @PIT 1 2 3")
+    assert m is not None
+    assert (m.group("status1") or m.group("status2")) is None
+
+
+def test_waiver_and_free_agent_are_available():
+    assert classify_avail("FA", CODES) == "available"
+    assert classify_avail("W", CODES) == "available"
+    assert classify_avail("W (9/16)", CODES) == "available"
+
+
+def test_a_configured_manager_code_is_owned():
+    assert classify_avail("JM", CODES) == "owned"
+    assert classify_avail("Bp3", CODES) == "owned"
+
+
+def test_an_unconfigured_code_is_refused_not_guessed():
+    # Must not fall back to "owned". An unknown token means the config is
+    # stale, and guessing either way silently mis-ranks the waiver board.
+    assert classify_avail("ZZZ", CODES) is None
