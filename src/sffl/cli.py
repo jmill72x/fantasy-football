@@ -495,6 +495,29 @@ def _cmd_week(args):
         print("  no projection for %s - excluded from the lineup, NOT scored "
               "as zero" % name)
 
+    # I2. The guard above only catches an empty roster FILE. A roster whose
+    # every name fails to resolve is the same failure by a different route:
+    # `roster` below ends up empty either way, `best_lineup` optimises an
+    # empty lineup to 0.00, and every free agent then ranks as a claim, at
+    # exit 0 - the exact "would recommend claiming everyone" outcome the
+    # empty-file guard exists to prevent. Realistic cause: get_page_text can
+    # emit a non-breaking space where CBS renders a normal one, and
+    # normalize_name's `[^a-z0-9 ]` strip DELETES \xa0 rather than treating
+    # it as a word separator, so "Woody\xa0Marks" collapses to "woodymarks",
+    # which matches nothing. Raise here, naming the count and the likely
+    # cause, instead of silently proceeding.
+    resolved = len(owned_raw) - len(missing)
+    if resolved == 0:
+        raise SystemExit(
+            "0 of %d roster name(s) in %s resolved to a projection; every "
+            "one would be excluded, the lineup would optimise to empty, and "
+            "every free agent would rank as a claim - the same failure an "
+            "empty roster file raises for. A likely cause is a non-breaking "
+            "space or other invisible character from the saved page "
+            "(normalize_name strips it rather than splitting on it); check "
+            "%s against the names in %s." % (len(owned_raw), args.roster,
+                                              args.roster, args.projections))
+
     def cand(p):
         return Candidate(name=p.name, pos=p.pos,
                          points=score_week(lg, p, curves))
@@ -537,8 +560,8 @@ def _cmd_week(args):
     # Denominators, not just results - this repo's convention (see
     # fit.PriceMap.total_rows, _board_rows' dropped-count print) is to say
     # "n matched of N loaded" rather than a bare count with nothing to
-    # compare it against.
-    resolved = len(owned_raw) - len(missing)
+    # compare it against. `resolved` was already computed above, where the
+    # I2 guard needs it first.
     print("  %d rows parsed from %s" % (len(projections), args.projections))
     print("  %d of %d roster names resolved to a projection"
           % (resolved, len(owned_raw)))

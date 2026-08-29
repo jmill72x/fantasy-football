@@ -384,3 +384,120 @@ def test_score_week_does_not_collapse_two_backs_above_the_span_to_one_number():
                                 stats={"rush_yds": rush_yds})
 
     assert score_week(LG, rb(96), curves) != score_week(LG, rb(110), curves)
+
+
+def test_score_week_seam_at_the_top_anchor_does_not_decrease():
+    """C1(b), the seam a previous fix introduced. The rush_yds curve's top
+    anchor sits at 93.824 yds and pays 3.176 - the highest expected value
+    anywhere on the curve. Before the monotone envelope, a value one tenth
+    of a yard past it (94.0) fell back to band_points and paid only 3.000: a
+    DROP as production rose, immediately above the point score_week's own
+    fallback logic is supposed to protect. `max(band_points(value),
+    envelope_at_top_anchor)` must keep 94.0 at or above 93.824's value."""
+    curves = load_curves("calibration/2025.yaml")
+
+    def rb(rush_yds):
+        return PlayerProjection(name="RB", team="GB", pos="RB", source="t",
+                                source_year=2026, games=1.0,
+                                stats={"rush_yds": rush_yds})
+
+    at_top_anchor = score_week(LG, rb(93.824), curves)
+    just_past_it = score_week(LG, rb(94.0), curves)
+    assert just_past_it >= at_top_anchor, (
+        "the seam at the top anchor decreased: 93.824 yds scored %.4f but "
+        "94.0 yds scored %.4f" % (at_top_anchor, just_past_it))
+
+
+# C1: the property test. Sweeps a 0.1 grid across a generous range for
+# EVERY banded stat calibration/2025.yaml defines and asserts score_week's
+# contribution only ever moves the direction band_points already moves for
+# that stat - never the other way. This single test is the one that would
+# have caught all three defects in the report at once:
+#   (a) intra-span anchor noise - measured pre-fix: a projected RB averaging
+#       21.0 rush_yds/game scored 0.525 while one averaging 25.7 (MORE
+#       production) scored only 0.119; the 0.1-yard sweep below over
+#       rush_yds alone found 201 inverted steps before the fix.
+#   (b) the top-of-span seam (see the dedicated test above).
+#   (c) the mirrored bottom-of-span seam on a DESCENDING stat: a defense
+#       projected to allow 16.0 points (worse than allowing none) scored
+#       0.0, but one projected to allow 18.2 (WORSE still) scored 1.118 -
+#       a worse defense paying more.
+#
+# Ranges are generous on both sides of each curve's observed span - see
+# calibration/2025.yaml for the actual anchors - so the sweep exercises the
+# bottom seam, the interior, and the top seam together. rush_yds's 0-120 is
+# the exact range the defect report measured its 201 inversions across.
+_GRID_RANGES = {
+    "pass_yds": (0.0, 500.0),
+    "pass_cmp": (0.0, 45.0),
+    "rush_yds": (0.0, 120.0),
+    "rec_yds": (0.0, 220.0),
+    "rec_ct": (0.0, 20.0),
+    "def_pa": (0.0, 60.0),
+    "def_ya": (0.0, 600.0),
+}
+
+# Any one position valid for the stat exercises the same curve - curves are
+# keyed by stat only, never by position; STAT_POSITIONS only gates WHETHER
+# score_week consults a curve at all, not which one.
+_GRID_POS = {
+    "pass_yds": "TQB",
+    "pass_cmp": "TQB",
+    "rush_yds": "RB",
+    "rec_yds": "WR",
+    "rec_ct": "WR",
+    "def_pa": "DST",
+    "def_ya": "DST",
+}
+
+
+def _table_direction(table):
+    """Ground truth direction read straight off the band table's first and
+    last (low, high, pts) rows - deliberately NOT importing
+    pool._band_direction, so a bug in that helper cannot also blind the
+    test meant to catch it. Every table this league defines is monotonic
+    pts-wise end to end (see test_league.py / leagues/sffl/2026.yaml), so
+    comparing only the endpoints is sufficient here."""
+    first_pts, last_pts = table[0][2], table[-1][2]
+    if last_pts > first_pts:
+        return 1
+    if last_pts < first_pts:
+        return -1
+    raise AssertionError(
+        "table's first and last band pay the same, no direction to check: %r"
+        % (table,))
+
+
+@pytest.mark.parametrize("stat", sorted(LG.bands))
+def test_score_week_is_monotone_across_a_grid_for_every_banded_stat(stat):
+    assert stat in _GRID_RANGES and stat in _GRID_POS, (
+        "%s has no grid range/position configured for this property test - "
+        "a new banded stat must be added here, not skipped" % stat)
+    curves = load_curves("calibration/2025.yaml")
+    lo, hi = _GRID_RANGES[stat]
+    pos = _GRID_POS[stat]
+    direction = _table_direction(LG.bands[stat])
+
+    def score_at(value):
+        p = PlayerProjection(name="Probe", team="GB", pos=pos, source="t",
+                             source_year=2026, games=1.0,
+                             stats={stat: value})
+        return score_week(LG, p, curves)
+
+    steps = int(round((hi - lo) / 0.1))
+    prev_x, prev_y = lo, score_at(lo)
+    for i in range(1, steps + 1):
+        x = round(lo + i * 0.1, 6)
+        y = score_at(x)
+        if direction > 0:
+            assert y >= prev_y - 1e-9, (
+                "%s must pay AT LEAST as much as production rises, but "
+                "%r scored %.6f while the lower input %r scored %.6f"
+                % (stat, x, y, prev_x, prev_y))
+        else:
+            assert y <= prev_y + 1e-9, (
+                "%s must pay AT MOST as much as the raw value rises (fewer "
+                "points/yards allowed is the better outcome), but %r scored "
+                "%.6f while the lower input %r scored %.6f"
+                % (stat, x, y, prev_x, prev_y))
+        prev_x, prev_y = x, y

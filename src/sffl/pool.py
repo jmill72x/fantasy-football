@@ -121,6 +121,158 @@ def score_season_calibrated(lg, player, curves):
     return (linear_total + calibrated_banded) * player.games
 
 
+def _band_direction(table):
+    """Whether `band_points` pays MORE (+1) or LESS (-1) as the raw stat
+    value climbs, read off the table itself rather than a hardcoded list of
+    stat names.
+
+    Five of the seven banded stats reward more of the raw number: more
+    rushing yards, more catches, more completions all score more, and
+    `band_points`'s own docstring calls this "monotonic in the value: more
+    production can never score less." def_pa/def_ya invert it - fewer
+    points or yards allowed is the better defensive outcome, so those two
+    tables (leagues/sffl/2026.yaml) pay the MOST at the low end and taper to
+    zero (def_pa) or negative (def_ya) as the raw value climbs; NEXT.md's "a
+    zero is not a no-op for def_pa and def_ya" note is the same fact from
+    the scoring side. `_monotone_envelope` below has to run whichever
+    direction `band_points` already runs for THIS table, or "fixing"
+    monotonicity for the five ascending stats would silently re-break it for
+    the two descending ones (see `_calibrated_band_value`, case (c)).
+    """
+    sign = 0
+    for i in range(1, len(table)):
+        delta = table[i][2] - table[i - 1][2]
+        if delta > 0:
+            step = 1
+        elif delta < 0:
+            step = -1
+        else:
+            continue
+        if sign == 0:
+            sign = step
+        elif sign != step:
+            raise ValueError(
+                "band table is not monotonic in either direction, so there "
+                "is no single envelope direction to build: %r" % (table,))
+    return sign or 1
+
+
+def _monotone_envelope(curve, direction):
+    """`curve`'s `(mean, expected)` anchors, coerced to move only one way as
+    `mean` rises.
+
+    `curve` is built by `calibrate.build_curves` from single-player SEASON
+    aggregates - 48 players, no smoothing (see TODO B in NEXT.md) - so two
+    anchors close together in `mean` can land far apart in `expected` purely
+    from which player happened to produce that mean. Measured on the real
+    rush_yds curve: a 21.0 yd/game anchor pays 0.525, a 25.7 yd/game anchor
+    four yards HEAVIER pays only 0.119. Raw linear interpolation between
+    anchors like that is not merely noisy, it is NOT MONOTONE - and
+    `score_week` feeds it straight into a ranking (`sffl week --waivers`),
+    so a non-monotone curve does not just look odd, it makes the tool
+    recommend the strictly worse of two free agents (the 21.0-yard back
+    over the 25.7-yard one - see test_cli_week's end-to-end regression for
+    this exact pair).
+
+    The fix is a running extremum over the anchors in ascending `mean`
+    order: a running MAXIMUM when `band_points` pays more as the value rises
+    (`direction=+1` - rush_yds, rec_yds, rec_ct, pass_yds, pass_cmp), a
+    running MINIMUM when it pays less (`direction=-1` - def_pa, def_ya).
+    Either way the result never moves the wrong way as `mean` rises, and
+    linear interpolation between two points that only move one way is
+    itself monotone the same way - it cannot reintroduce the noise this
+    removes.
+
+    Every point this returns is >= (direction=+1) or <= (direction=-1) the
+    raw curve's value at that same mean - a running extremum can only move
+    toward its own bound, never away from it. That is what keeps existing
+    calibration values from ever being LOWERED by this (e.g. the 4.4-catch
+    case only ever goes up or holds), and why the docstring above can
+    promise "raise or hold, never lower."
+    """
+    if not curve:
+        return curve
+    ordered = sorted(curve)
+    out = []
+    running = None
+    for mean, exp in ordered:
+        if running is None:
+            running = exp
+        elif direction > 0:
+            if exp > running:
+                running = exp
+        else:
+            if exp < running:
+                running = exp
+        out.append((mean, running))
+    return out
+
+
+def _calibrated_band_value(lg, stat, curve, value):
+    """The monotone replacement for `expected_points(curve, value)`.
+
+    Three fixes live here. None are tuned to the specific numbers below -
+    those are just how the bug was found and how to check it stayed fixed.
+
+    (a) INTRA-SPAN NOISE - `_monotone_envelope` above, which this calls
+    before ever interpolating. See its docstring for the 21.0-vs-25.7
+    rush_yds case.
+
+    (b) THE TOP SEAM. Outside the envelope's span there is no curve
+    evidence, so the fallback is `band_points` (unchanged from before this
+    fix) - but `band_points` and the envelope are two independently built
+    functions that happen to meet at the span's edge, and nothing guaranteed
+    they meet at the SAME height. Measured: the rush_yds envelope's top
+    anchor (93.824 yds) pays 3.176, while `band_points` at 94.0 yds - a
+    tenth of a yard further in the direction that is supposed to pay MORE -
+    pays only 3.000, a drop. `max(band_points(value), envelope_top)` fixes
+    it: `band_points` is itself non-decreasing out there and the envelope's
+    top is a constant, so their max is non-decreasing and can never dip
+    below what the envelope already proved.
+
+    (c) THE MIRROR SEAM. def_pa/def_ya run the other direction (see
+    `_band_direction`), so their vulnerable seam is the BOTTOM: a defense
+    projected for 16 points allowed (below the curve's lowest anchor, so the
+    `band_points` fallback -> 0) scored LESS than one projected for 18.2
+    (inside the span, envelope -> 1.118) - a worse defense paying more. Not
+    reachable today - no DST group is wired into sources/cbs-weekly.yaml, so
+    score_week never sees pos="DST" in production - but the code path exists
+    and would fire the moment one is added. Same fix, mirrored by direction:
+    below the bottom anchor, a direction=-1 stat needs
+    `max(band_points(value), envelope_bottom)` (the fallback must not pay
+    LESS than the envelope already proved a higher, worse value pays); a
+    direction=+1 stat needs `min(...)` at that same bottom edge. That `min`
+    is a no-op for all five ascending stats in this league today -
+    `band_points` floors to exactly 0 below its first band, and every one of
+    their curves is built from non-negative points, so there is nothing for
+    it to clamp - but it is checked anyway, on the same principle
+    score_week's old span check applied to both bounds: the curve has
+    evidence on one side and none past it, in either direction.
+
+    Never mutates `curve` - it is `curves[stat]`, the SAME list object
+    `score_season_calibrated` reads for the auction path in this same
+    process (see `cli._value_pool`). Building a fresh envelope here, rather
+    than sorting or clamping `curve` in place, is what keeps that path
+    bit-for-bit unchanged.
+    """
+    table = lg.bands[stat]
+    if not curve:
+        return band_points(table, value)
+
+    direction = _band_direction(table)
+    envelope = _monotone_envelope(curve, direction)
+    lo_mean, lo_val = envelope[0]
+    hi_mean, hi_val = envelope[-1]
+
+    if lo_mean <= value <= hi_mean:
+        return expected_points(envelope, value)
+
+    raw = band_points(table, value)
+    if value > hi_mean:
+        return max(raw, hi_val) if direction > 0 else min(raw, hi_val)
+    return min(raw, lo_val) if direction > 0 else max(raw, lo_val)
+
+
 def score_week(lg, player, curves):
     """Expected points for ONE week from a projected stat line.
 
@@ -179,30 +331,27 @@ def score_week(lg, player, curves):
         # would make that claim false and let the weekly path skip
         # calibration with no signal at all.
         if curve and player.pos in STAT_POSITIONS[stat]:
-            # F1. The curve's observed span is [curve[0][0], curve[-1][0]] -
+            # F1/C1. curve's observed span is [curve[0][0], curve[-1][0]] -
             # the range of PER-GAME MEANS actually measured when it was
             # built (calibrate.build_curves draws these from 2025 SEASON
             # per-game means across 48 players; rush_yds tops out at a 93.8
             # yd/game mean). A weekly PROJECTION is also a per-game mean, but
             # nothing stops it from landing above the highest one ever
             # observed - a back projected for 150 yards in a single week
-            # exceeds that span by construction, not by error. Outside the
-            # span, expected_points does not extrapolate; it CLAMPS to the
-            # last anchor, so every value above 93.8 - 96, 110, 150, all of
-            # them - pays the exact same 3.18 pts. That is not calibration,
-            # it is the single highest-mean player's average pasted onto
-            # every player above him, and it is why three visibly different
-            # rushing lines collapsed to one number. band_points has no such
-            # failure mode: it floors/ceilings at a band edge, not a curve
-            # anchor, so it is the honest fallback outside the span - the
-            # curve has evidence there and none past it. Both bounds are
-            # checked on principle (the lower anchors sit near zero in
-            # practice, so only the upper one bites for the stats this
-            # league bands).
-            if curve[0][0] <= value <= curve[-1][0]:
-                calibrated_banded += expected_points(curve, value)
-            else:
-                calibrated_banded += band_points(lg.bands[stat], value)
+            # exceeds that span by construction, not by error.
+            #
+            # Below F1 stopped here: outside the span, fall back to
+            # band_points since the curve has no evidence there. That is
+            # still true, but the curve's raw anchors are ALSO not
+            # guaranteed monotone WITHIN the span, and the fallback is not
+            # guaranteed to meet the curve at the same height AT the edge of
+            # it - both are real, both invert a ranking, and neither is
+            # calibrate.py's problem to fix: it is shared with the
+            # already-merged auction pipeline via score_season_calibrated
+            # above, so the fix lives here instead. See
+            # `_calibrated_band_value`'s docstring for the three cases and
+            # the concrete numbers that proved each one.
+            calibrated_banded += _calibrated_band_value(lg, stat, curve, value)
         else:
             calibrated_banded += band_points(lg.bands[stat], value)
 

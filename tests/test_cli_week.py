@@ -110,6 +110,22 @@ def test_an_empty_roster_file_raises_rather_than_claiming_everyone(tmp_path):
               "--week", "1", "--roster", r, "--waivers"])
 
 
+def test_a_roster_that_resolves_to_zero_names_raises_rather_than_claiming_everyone(tmp_path):
+    """I2: cli.py's guard at the top of _cmd_week only checks that the
+    roster FILE is non-empty. A roster with names in it, none of which
+    resolve to a projection, sails past that guard and reaches the same
+    destination the spec explicitly raises for: an empty `roster` list,
+    `best_lineup` optimising to 0.00, and every free agent ranked as a
+    claim - at exit 0. Realistic trigger: get_page_text emitting a
+    non-breaking space, so 'Woody\\xa0Marks' normalizes to 'woodymarks'
+    (normalize_name's [^a-z0-9 ] strip deletes \\xa0 rather than treating it
+    as a separator) and matches nothing on the saved page."""
+    r = roster_file(tmp_path, ["Nonexistent Player One", "Nonexistent Player Two"])
+    with pytest.raises(SystemExit, match="0 of 2"):
+        main(["week", "--projections", PROJ, "--group", "RB-WR-TE",
+              "--week", "1", "--roster", r, "--waivers"])
+
+
 def test_a_zero_row_parse_raises_rather_than_exiting_0(tmp_path):
     """F5: the spec's failure table requires a raise for an empty roster,
     which IS implemented (see the test above) - a zero-row PROJECTIONS parse
@@ -341,3 +357,81 @@ def test_a_zero_delta_claim_is_never_labelled_with_a_real_slot(tmp_path, capsys)
     assert name == "Player Alpha"
     assert pts == 0.0
     assert slot == "bench"
+
+
+def test_calibrated_waivers_rank_the_higher_yardage_back_first(tmp_path, capsys):
+    """C1 end-to-end regression. Two free-agent RBs differing ONLY in
+    projected rushing yards (25.7 vs 21.0) must never have the LOWER one
+    outrank the higher one. Before the monotone-envelope fix,
+    calibrate.expected_points' raw, unsmoothed anchors scored 21.0 yds at
+    0.525 and 25.7 yds at only 0.119 - so `sffl week --waivers --curves`
+    recommended claiming the strictly worse back. Names are chosen so the
+    intended winner also wins the name tiebreak, since a flat stretch of the
+    enveloped curve can legitimately tie the two exactly - the fix is that
+    the worse one can no longer win outright, not that every tie must break
+    a particular way by coincidence."""
+    lines = open(PROJ).read().splitlines()
+    lines.append("FA Higher Yards Back RB • SF @LAR 22 11 86 63 8 "
+                 "5.0 25.7 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0")
+    lines.append("FA Lower Yards Back RB • SF @LAR 22 11 86 63 8 "
+                 "5.0 21.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0")
+    proj = tmp_path / "with_backs.txt"
+    proj.write_text("\n".join(lines) + "\n")
+
+    # No RB at all on the roster - the RB slot sits open, so both
+    # free-agent backs rank by what they add directly (same trick as
+    # test_waivers_ranks_free_agents_by_what_they_add_to_the_lineup).
+    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
+                               "Sam LaPorta", "Kyle Pitts", "Elic Ayomanor"])
+    rc = main(["week", "--projections", str(proj), "--group", "RB-WR-TE",
+               "--week", "1", "--roster", r, "--curves",
+               "calibration/2025.yaml", "--waivers"])
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    rows = waiver_rows(out)
+    by_points = dict((name, pts) for pts, _slot, name, _pos in rows)
+    assert "Higher Yards Back" in by_points and "Lower Yards Back" in by_points
+    assert by_points["Higher Yards Back"] >= by_points["Lower Yards Back"], (
+        "25.7 projected rushing yards must score at least as much as 21.0: %r"
+        % (by_points,))
+
+    names = [name for _pts, _slot, name, _pos in rows]
+    assert names.index("Higher Yards Back") < names.index("Lower Yards Back"), (
+        "the higher-yardage back must rank first, not the lower one: %r"
+        % (names,))
+
+
+def test_curves_flag_changes_a_named_number_in_the_output(tmp_path, capsys):
+    """I5: --curves had no test at all before this - mutating _cmd_week to
+    hardcode curves = None (silently disabling calibration) passed all 398
+    tests with no signal. Run the identical command with and without
+    --curves and check two specific, named things actually change: the
+    best-legal-lineup total, and which player fills FLEX3. (Both owned
+    rostered players are scored through score_week, so calibration reaches
+    them even with zero free agents in play.)"""
+    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
+                               "Elic Ayomanor", "Braelon Allen",
+                               "Tyrone Tracy Jr.", "Sam LaPorta",
+                               "Kyle Pitts", "Woody Marks"])
+
+    main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
+          "--roster", r, "--waivers"])
+    out_naive = capsys.readouterr().out
+
+    main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
+          "--roster", r, "--curves", "calibration/2025.yaml", "--waivers"])
+    out_curved = capsys.readouterr().out
+
+    def flex3(out):
+        for line in out.splitlines():
+            if line.strip().startswith("FLEX3"):
+                return line.split(None, 1)[1].strip()
+        raise AssertionError("no FLEX3 line in output:\n%s" % out)
+
+    assert lineup_total(out_naive) != lineup_total(out_curved), (
+        "--curves must change the best-legal-lineup total: naive %.2f, "
+        "curved %.2f" % (lineup_total(out_naive), lineup_total(out_curved)))
+    assert flex3(out_naive) != flex3(out_curved), (
+        "--curves must change who fills FLEX3: naive picked %r, curved "
+        "picked %r" % (flex3(out_naive), flex3(out_curved)))
