@@ -64,3 +64,54 @@ def test_flat_priced_pools_rejects_a_non_dollar_price():
     raw["flat_priced_pools"] = {"K": 3, "DST": 3}
     with pytest.raises(ValueError, match="only a flat price of exactly 1"):
         LeagueProfile(raw)
+
+
+def test_the_lineup_slots_are_explicit_and_ordered():
+    lg = load_league(PROFILE)
+    assert lg.lineup == [
+        ("TQB", ("TQB",)),
+        ("RB", ("RB",)),
+        ("WR/TE", ("WR", "TE")),
+        ("FLEX1", ("RB", "WR", "TE")),
+        ("FLEX2", ("RB", "WR", "TE")),
+        ("FLEX3", ("RB", "WR", "TE")),
+        ("K", ("K",)),
+        ("DST", ("DST",)),
+    ]
+
+
+def test_the_slot_list_must_agree_with_the_starter_and_flex_counts():
+    """starters and flex_slots existed first and are used by the auction path.
+    Two sources of truth for the same fact drift; this makes them fail loudly."""
+    lg = load_league(PROFILE)
+    assert len(lg.lineup) == lg.starters
+    flex = [s for s, elig in lg.lineup if set(elig) & {"RB", "WR", "TE"}]
+    assert len(flex) == lg.flex_slots
+
+
+def test_a_lineup_that_disagrees_with_the_starter_count_is_rejected():
+    """The guard, not the fixture. The checked-in YAML is self-consistent, so a
+    test that only reads it would pass with this validation deleted."""
+    raw = yaml.safe_load(open(PROFILE))
+    raw["lineup"] = raw["lineup"][:-1]          # 7 slots against starters: 8
+    with pytest.raises(ValueError, match="starters is 8"):
+        LeagueProfile(raw)
+
+
+def test_a_lineup_that_disagrees_with_the_flex_count_is_rejected():
+    raw = yaml.safe_load(open(PROFILE))
+    for entry in raw["lineup"]:
+        if entry["slot"] == "FLEX3":
+            entry["eligible"] = ["TQB"]         # 4 flex-eligible against flex_slots: 5
+    with pytest.raises(ValueError, match="flex_slots is 5"):
+        LeagueProfile(raw)
+
+
+def test_a_lineup_slot_naming_an_unknown_position_is_rejected():
+    """Built from the parsed dict, not by string-replacing the YAML: the file
+    is column-aligned, and a test that depends on its incidental whitespace
+    breaks the next time someone reformats it."""
+    raw = yaml.safe_load(open(PROFILE))
+    raw["lineup"] = [{"slot": "K", "eligible": ["PUNTER"]}]
+    with pytest.raises(ValueError, match="PUNTER"):
+        LeagueProfile(raw)

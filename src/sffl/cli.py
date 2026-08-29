@@ -442,6 +442,212 @@ def cmd_plan(args):
     return 0
 
 
+def _cmd_week(args):
+    from sffl.cbs_weekly import classify_avail
+    from sffl.cbs_weekly import parse as parse_weekly
+    from sffl.identity import normalize_name
+    from sffl.lineup import Candidate, best_lineup, delta
+    from sffl.pool import score_week
+
+    lg = load_league(args.league)
+    curves = load_curves(args.curves) if args.curves else None
+    projections = parse_weekly(args.projections, group=args.group,
+                               week=args.week, season=lg.season)
+
+    # F5. The spec's failure table requires a raise for an empty roster
+    # (below) on the reasoning that an empty roster optimises to an empty
+    # lineup and would recommend claiming everyone; a zero-row PROJECTIONS
+    # parse is the same class of mistake. A saved page that parses no rows
+    # at all is almost certainly a login page or a truncated save, not a
+    # real empty week, and printing "0 rows parsed ... best legal lineup:
+    # 0.00" while returning success hides exactly the failure this repo's
+    # raise-rather-than-guess convention exists to surface.
+    if not projections:
+        raise SystemExit(
+            "0 rows parsed from %s; a page that parses no rows is almost "
+            "certainly the wrong page or a failed save, not a real empty "
+            "result" % args.projections)
+
+    owned_raw = [l.strip() for l in open(args.roster) if l.strip()]
+    if not owned_raw:
+        raise SystemExit("roster is empty (%s); an empty roster optimises to "
+                         "an empty lineup and would recommend claiming "
+                         "everyone" % args.roster)
+    owned = set(normalize_name(n) for n in owned_raw)
+
+    # last-write-wins: normalize_name strips generational suffixes, so e.g.
+    # "Braelon Allen" and "Braelon Allen Jr." collide on the same key and
+    # one silently vanishes. Not raised - a real page can legitimately carry
+    # two similarly-named players - but it must not be silent, so name both
+    # raw spellings when it happens.
+    by_key = {}
+    for p in projections:
+        key = normalize_name(p.name)
+        if key in by_key and by_key[key].name != p.name:
+            print("  WARNING: %r and %r both normalize to the same key - "
+                  "only %r is kept (last one wins); the other's projection "
+                  "is silently dropped from the pool"
+                  % (by_key[key].name, p.name, p.name))
+        by_key[key] = p
+
+    missing = [n for n in owned_raw if normalize_name(n) not in by_key]
+    for name in missing:
+        print("  no projection for %s - excluded from the lineup, NOT scored "
+              "as zero" % name)
+
+    # I2. The guard above only catches an empty roster FILE. A roster whose
+    # every name fails to resolve is the same failure by a different route:
+    # `roster` below ends up empty either way, `best_lineup` optimises an
+    # empty lineup to 0.00, and every free agent then ranks as a claim, at
+    # exit 0 - the exact "would recommend claiming everyone" outcome the
+    # empty-file guard exists to prevent. Realistic cause: get_page_text can
+    # emit a non-breaking space where CBS renders a normal one, and
+    # normalize_name's `[^a-z0-9 ]` strip DELETES \xa0 rather than treating
+    # it as a word separator, so "Woody\xa0Marks" collapses to "woodymarks",
+    # which matches nothing. Raise here, naming the count and the likely
+    # cause, instead of silently proceeding.
+    resolved = len(owned_raw) - len(missing)
+    if resolved == 0:
+        raise SystemExit(
+            "0 of %d roster name(s) in %s resolved to a projection; every "
+            "one would be excluded, the lineup would optimise to empty, and "
+            "every free agent would rank as a claim - the same failure an "
+            "empty roster file raises for. A likely cause is a non-breaking "
+            "space or other invisible character from the saved page "
+            "(normalize_name strips it rather than splitting on it); check "
+            "%s against the names in %s." % (len(owned_raw), args.roster,
+                                              args.roster, args.projections))
+
+    def cand(p):
+        return Candidate(name=p.name, pos=p.pos,
+                         points=score_week(lg, p, curves))
+
+    roster = [cand(by_key[k]) for k in owned if k in by_key]
+
+    # F3: `avail` on CBS's ALL PLAYERS view names a genuine free agent
+    # ("FA"), a waiver-claimable player ("W (9/16)"), or another manager's
+    # team - a player who is not on Jeff's --roster file but is not
+    # unclaimed either. Treating every non-roster row as claimable, as this
+    # used to, is how the ALL PLAYERS view - which the spec itself
+    # advertises as the source to save - turns into a board recommending a
+    # claim on another team's starter. Classify every non-roster row before
+    # it is even scored: only a row confidently identified as available is
+    # ranked; a row confidently identified as owned is excluded and counted;
+    # a row whose avail shape has never been seen before is refused rather
+    # than guessed at, exactly like every other "raise rather than guess"
+    # gate in this project. See cbs_weekly.classify_avail.
+    free_rows = [p for k, p in by_key.items() if k not in owned]
+    available_rows = []
+    excluded_owned = 0
+    unclassified_avail = set()
+    for p in free_rows:
+        status = classify_avail(p.avail)
+        if status == "available":
+            available_rows.append(p)
+        elif status == "owned":
+            excluded_owned += 1
+        else:
+            unclassified_avail.add(p.avail)
+
+    if unclassified_avail:
+        print("  WARNING: %d distinct avail value(s) not recognized as "
+              "free-agent, waiver, or owned - ranking nothing from them "
+              "since availability cannot be verified: %s"
+              % (len(unclassified_avail), ", ".join(sorted(unclassified_avail))))
+
+    free = [cand(p) for p in available_rows]
+
+    # Denominators, not just results - this repo's convention (see
+    # fit.PriceMap.total_rows, _board_rows' dropped-count print) is to say
+    # "n matched of N loaded" rather than a bare count with nothing to
+    # compare it against. `resolved` was already computed above, where the
+    # I2 guard needs it first.
+    print("  %d rows parsed from %s" % (len(projections), args.projections))
+    print("  %d of %d roster names resolved to a projection"
+          % (resolved, len(owned_raw)))
+    print("  %d free agents ranked (%d excluded - rostered by another team)"
+          % (len(free), excluded_owned))
+
+    base = best_lineup(lg, roster)
+    print("\n  best legal lineup: %.2f pts" % base.total)
+    for slot, pick in base.slots:
+        print("    %-6s %s" % (slot, pick.name if pick else "(unfilled)"))
+
+    if args.waivers or not (args.waivers or args.start_sit):
+        # F8. Points, not just name, is the tiebreak. `delta` ties at 0.00
+        # often - every free agent too weak to crack the lineup ties there,
+        # not just two who happen to be close - and among players who add
+        # nothing THIS week, the better player is the better stash for next
+        # week. Sorting those ties by name alone put a 1.10-point bench
+        # option (Tyrone Tracy Jr.) above a 1.60-point one (Woody Marks) for
+        # no reason but the alphabet. `-c.points` breaks the delta tie by
+        # who is the better player; name remains the final tiebreak for a
+        # genuine points tie too (see
+        # test_waiver_ranking_ties_break_by_name_not_page_order), and
+        # `sorted` being stable is still what makes that deterministic.
+        ranked = sorted(free, key=lambda c: (-delta(lg, roster, c), -c.points, c.name))
+        shown = ranked[:args.top]
+        print("\n  WAIVER TARGETS (top %d of %d)   %-8s %-6s %s"
+              % (len(shown), len(ranked), "+PTS", "SLOT", "PLAYER"))
+        for c in shown:
+            d = delta(lg, roster, c)
+            # F8. A slot label is a claim that the addition CRACKS the
+            # lineup. `best_lineup` breaks a pure points tie by name, so a
+            # free agent who ties the worst starter exactly - delta 0.00,
+            # by definition no better - can still be the one chosen into a
+            # named slot (e.g. FLEX3) purely on alphabetical luck. Printing
+            # that slot would read as "this claim improves your lineup" when
+            # it provably does not, so any zero-gain row shows as bench
+            # regardless of which slot the tie happened to resolve into.
+            where = "bench"
+            if d > 0:
+                after = best_lineup(lg, roster + [c])
+                slot = next((s for s, p in after.slots if p and p.name == c.name),
+                            None)
+                where = slot if slot else "bench"
+            print("    %-8.2f %-6s %s (%s)" % (d, where, c.name, c.pos))
+
+    if args.start_sit:
+        optimal_by_key = dict((normalize_name(p.name), p.name)
+                              for _s, p in base.slots if p)
+        if not args.current:
+            print("\n  no current lineup supplied - printing the optimum only")
+        else:
+            current_by_key = {}
+            for line in open(args.current):
+                name = line.strip()
+                if name:
+                    current_by_key[normalize_name(name)] = name
+
+            # --current is documented as the whole eight-player lineup set
+            # on CBS, but sources/cbs-weekly.yaml only defines the RB-WR-TE
+            # group - a TQB, K or DST name has no projection and was never
+            # in by_key at all. Excluded from SIT here, same as `missing`
+            # excludes it from the roster above; named so the exclusion is
+            # visible rather than reading as "bench your kicker."
+            not_evaluated = sorted(current_by_key[k] for k in current_by_key
+                                   if k not in by_key)
+            for name in not_evaluated:
+                print("  no projection for %s - not evaluated for "
+                      "start/sit, NOT a recommendation to sit him" % name)
+            current_by_key = dict((k, v) for k, v in current_by_key.items()
+                                  if k in by_key)
+
+            start = sorted(optimal_by_key[k] for k in optimal_by_key
+                           if k not in current_by_key)
+            sit = sorted(current_by_key[k] for k in current_by_key
+                         if k not in optimal_by_key)
+            if not start and not sit:
+                print("\n  lineup is already optimal - no changes")
+            else:
+                print("\n  START           SIT")
+                for i in range(max(len(start), len(sit))):
+                    a = start[i] if i < len(start) else ""
+                    b = sit[i] if i < len(sit) else ""
+                    print("    %-15s %s" % (a, b))
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sffl")
     sub = ap.add_subparsers(dest="cmd")
@@ -521,6 +727,25 @@ def main(argv=None):
     pln.add_argument("--bids", default=DEFAULT_BIDS,
                       help="silent-auction bid history CSV (default: %s)" % DEFAULT_BIDS)
     pln.set_defaults(func=cmd_plan)
+
+    wk = sub.add_parser("week", help="weekly waiver and start/sit decisions")
+    wk.add_argument("--projections", required=True,
+                    help="saved CBS weekly projections page text")
+    wk.add_argument("--group", default="RB-WR-TE")
+    wk.add_argument("--week", type=int, required=True)
+    wk.add_argument("--roster", required=True,
+                    help="one owned player name per line")
+    wk.add_argument("--league", default=DEFAULT_LEAGUE)
+    wk.add_argument("--curves", default=None,
+                    help="calibration curves YAML; without it the naive band "
+                         "is used and the main edge over CBS is lost")
+    wk.add_argument("--waivers", action="store_true")
+    wk.add_argument("--start-sit", action="store_true")
+    wk.add_argument("--current", default=None,
+                    help="the lineup currently set on CBS, one name per line; "
+                         "without it the optimum is printed with no diff")
+    wk.add_argument("--top", type=int, default=10)
+    wk.set_defaults(func=_cmd_week)
 
     args = ap.parse_args(argv)
     if not getattr(args, "func", None):
