@@ -26,6 +26,20 @@ from sffl.value import _pool_of, assign_dollars, assign_vorp, replacement_levels
 
 DEFAULT_LEAGUE = "leagues/sffl/2026.yaml"
 
+# `sffl alert`'s CBS URLs.
+#
+# ROSTER: bare /teams, with NO team number. CBS resolves it to whoever is
+# logged in - identity-derived, so it can never drift onto another manager's
+# team the way a hardcoded /teams/<N> could.
+#
+# PROJECTIONS: week-parameterised. Built from --week rather than accepting a
+# hardcoded URL, so a new week never requires editing a URL by hand (and can
+# never silently run against last week's page because someone forgot to).
+CBS_LEAGUE_BASE = "https://stripesfantasyfootballleague.football.cbssports.com"
+DEFAULT_TEAM_URL = CBS_LEAGUE_BASE + "/teams"
+PROJECTIONS_URL_TEMPLATE = (
+    CBS_LEAGUE_BASE + "/stats/stats-main/all:RB:WR:TE/%d:p/standard/projections")
+
 
 def _value_pool(lg, args):
     """Build a pool and run it through the full valuation path: vendor
@@ -683,6 +697,116 @@ def _cmd_week(args):
     return 0
 
 
+def _cmd_alert(args):
+    """Capture, score, and push one digest. The launchd entry point.
+
+    ORDER MATTERS. Capture first and let a failure short-circuit everything:
+    a stale or unverified page must never reach the composer, because an
+    expired CBS session parses to an empty roster that looks exactly like a
+    real one with nobody on it.
+    """
+    import datetime
+    import os
+
+    from sffl.alert import compose
+    from sffl.calibrate import load_curves
+    from sffl.capture import CaptureError, capture
+    from sffl.cbs_roster import parse_lineup
+    from sffl.cbs_weekly import is_out
+    from sffl.cbs_weekly import parse as parse_weekly
+    from sffl.identity import normalize_name
+    from sffl.injuries import for_roster, load as load_injuries
+    from sffl.league import load_league
+    from sffl.lineup import Candidate, best_lineup
+    from sffl.notify import send, topic_from_keychain
+    from sffl.pool import score_week
+
+    lg = load_league(args.league)
+    projections_url = args.projections_url or (PROJECTIONS_URL_TEMPLATE % args.week)
+    urls = {
+        "roster": args.team_url,
+        "projections": projections_url,
+    }
+
+    capture_error = None
+    roster_names = []
+    starters = []
+    reports = []
+    sidelined = []
+    result = None
+    age_days = 0
+
+    try:
+        written = capture(urls, args.out_dir, args.profile_dir)
+        roster_path = written[urls["roster"]]
+        proj_path = written[urls["projections"]]
+        # parse_lineup, not parse_roster: the page also carries Jeff's
+        # CURRENT starting lineup, which is the actual start/sit value - see
+        # the start/sit diff printed below. `starters` and `reserves`
+        # together are the same player set `parse_roster` would return.
+        starters, reserves = parse_lineup(roster_path)
+        roster_names = starters + [n for n in reserves if n not in starters]
+        age_days = int(
+            (datetime.datetime.now()
+             - datetime.datetime.fromtimestamp(os.path.getmtime(roster_path)))
+            .total_seconds() // 86400)
+
+        projections = parse_weekly(proj_path, group=args.group,
+                                   week=args.week, season=lg.season)
+        curves = load_curves(args.curves) if args.curves else None
+        by_key = dict((normalize_name(p.name), p) for p in projections)
+        owned = [normalize_name(n) for n in roster_names]
+
+        sidelined = sorted((by_key[k].name, by_key[k].status)
+                           for k in owned
+                           if k in by_key and is_out(by_key[k].status))
+        result = best_lineup(lg, [
+            Candidate(name=by_key[k].name, pos=by_key[k].pos,
+                      points=score_week(lg, by_key[k], curves))
+            for k in owned if k in by_key and not is_out(by_key[k].status)])
+    except (CaptureError, ValueError) as exc:
+        capture_error = str(exc)
+
+    if args.injuries and os.path.exists(args.injuries):
+        reports = for_roster(load_injuries(args.injuries), roster_names)
+
+    body = compose(args.kind, age_days, reports, result, sidelined,
+                   capture_error=capture_error)
+    print(body)
+
+    # NOT part of `body`: alert.compose owns every word the phone sees and
+    # its signature has no parameter for the current-vs-optimal lineup yet
+    # (see the task-7 report for that gap), so this print is
+    # terminal/log-only - it does not reach the push. Only shown when
+    # capture succeeded, since `result` and `starters` are otherwise
+    # meaningless.
+    if result is not None:
+        current_by_key = dict((normalize_name(n), n) for n in starters)
+        optimal_by_key = dict((normalize_name(p.name), p.name)
+                              for _slot, p in result.slots if p)
+        start = sorted(optimal_by_key[k] for k in optimal_by_key
+                       if k not in current_by_key)
+        sit = sorted(current_by_key[k] for k in current_by_key
+                     if k not in optimal_by_key)
+        if start or sit:
+            print("\n  START/SIT vs your current CBS lineup:")
+            print("  START           SIT")
+            for i in range(max(len(start), len(sit))):
+                a = start[i] if i < len(start) else ""
+                b = sit[i] if i < len(sit) else ""
+                print("    %-15s %s" % (a, b))
+        else:
+            print("\n  your current CBS lineup already matches the optimum.")
+
+    topic = topic_from_keychain()
+    sent = send(topic, "SFFL %s" % args.kind.title(), body,
+                dry_run=args.dry_run)
+    print("\n[%s]" % ("sent" if sent else "dry run - nothing sent"))
+    # A capture failure is still DELIVERED (Jeff must learn the job broke),
+    # but the exit code is non-zero so launchd's log records it as a failure.
+    return 1 if capture_error else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sffl")
     sub = ap.add_subparsers(dest="cmd")
@@ -781,6 +905,27 @@ def main(argv=None):
                          "without it the optimum is printed with no diff")
     wk.add_argument("--top", type=int, default=10)
     wk.set_defaults(func=_cmd_week)
+
+    alr = sub.add_parser("alert", help="capture, score, and push the weekly digest")
+    alr.add_argument("--kind", choices=["friday", "sunday"], required=True)
+    alr.add_argument("--league", default=DEFAULT_LEAGUE)
+    alr.add_argument("--week", type=int, required=True)
+    alr.add_argument("--group", default="RB-WR-TE")
+    alr.add_argument("--curves")
+    alr.add_argument("--injuries", help="JSON written by ops/fetch_injuries.sh")
+    alr.add_argument("--team-url", default=DEFAULT_TEAM_URL,
+                     help="CBS roster page (default: bare /teams, which CBS "
+                          "resolves to whoever is logged in - do not point "
+                          "this at a numbered /teams/<N>, that is a "
+                          "DIFFERENT manager's team)")
+    alr.add_argument("--projections-url",
+                     help="override the weekly projections URL; by default "
+                          "built from --week against CBS's stats-main page, "
+                          "so a new week never needs a hand-edited URL")
+    alr.add_argument("--out-dir", default="data/captures")
+    alr.add_argument("--profile-dir", default="data/browser-profile")
+    alr.add_argument("--dry-run", action="store_true")
+    alr.set_defaults(func=_cmd_alert)
 
     args = ap.parse_args(argv)
     if not getattr(args, "func", None):
