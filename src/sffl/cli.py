@@ -757,10 +757,11 @@ def _cmd_alert(args):
     import datetime
     import os
 
-    from sffl.alert import compose
+    from sffl.alert import (POSITION_NOT_CAPTURED, PROJECTION_MISSING,
+                            compose)
     from sffl.calibrate import load_curves
     from sffl.capture import CaptureError, capture
-    from sffl.cbs_roster import parse_lineup
+    from sffl.cbs_roster import parse_lineup, parse_positions
     from sffl.cbs_weekly import is_out
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import normalize_name
@@ -785,6 +786,9 @@ def _cmd_alert(args):
     # renders those two states differently (see its docstring), so this
     # must not default to `[]`.
     current_starters = None
+    # Current starters that were never scored. `None` for the same reason
+    # `current_starters` is: until the projections parse, nobody knows.
+    unevaluated_starters = None
     reports = []
     sidelined = []
     result = None
@@ -813,6 +817,30 @@ def _cmd_alert(args):
         by_key = dict((normalize_name(p.name), p) for p in projections)
         owned = [normalize_name(n) for n in roster_names]
 
+        # C1. Which of CBS's eight starters could not be scored at all, and
+        # WHY. `--group` is RB-WR-TE, so the TQB, the kicker and the defense
+        # have no projection and are not in `by_key`; the START/SIT diff in
+        # `compose` is a set difference, so before this they landed in the
+        # SIT column every single week, dressed as merit-based bench advice.
+        #
+        # The covered positions are read off the parsed page itself rather
+        # than from the `--group` string: the group name is a label in
+        # sources/cbs-weekly.yaml, while what the page actually contains is
+        # the fact that decides whether a missing projection is expected.
+        # A starter whose position IS on the page and who still has no row
+        # is a different animal - a data problem, not a scope limit - and
+        # the two must not be reported as one thing.
+        covered_positions = set(p.pos for p in projections)
+        starter_positions = parse_positions(roster_path)
+        unevaluated_starters = []
+        for name in starters:
+            if normalize_name(name) in by_key:
+                continue
+            pos = starter_positions.get(name, "")
+            why = (PROJECTION_MISSING if pos and pos in covered_positions
+                   else POSITION_NOT_CAPTURED)
+            unevaluated_starters.append((name, pos, why))
+
         sidelined = sorted((by_key[k].name, by_key[k].status)
                            for k in owned
                            if k in by_key and is_out(by_key[k].status))
@@ -833,7 +861,8 @@ def _cmd_alert(args):
     # drift from compose's own rendering. One implementation now: compose's.
     body = compose(args.kind, age_days, reports, result, sidelined,
                    capture_error=capture_error,
-                   current_starters=current_starters)
+                   current_starters=current_starters,
+                   unevaluated_starters=unevaluated_starters)
     print(body)
 
     # ORDERING: the topic is fetched HERE, after the digest above is already

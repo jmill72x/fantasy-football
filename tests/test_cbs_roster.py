@@ -1,6 +1,7 @@
 import pytest
 
-from sffl.cbs_roster import _ROW, parse_lineup, parse_roster
+from sffl.cbs_roster import (_ROW, parse_lineup, parse_positions,
+                             parse_roster)
 
 FIXTURE = "tests/fixtures/cbs_team_page.txt"
 
@@ -106,3 +107,28 @@ def test_parse_lineup_on_an_empty_page_raises(tmp_path):
     with pytest.raises(ValueError) as exc:
         parse_lineup(str(p))
     assert "RESERVES" in str(exc.value)
+
+
+def test_parse_positions_gives_every_player_his_page_position():
+    """The alert needs the position to tell a known scope limit (the
+    projections page covers RB/WR/TE, so a TQB/K/DST is never scored) apart
+    from a data problem (a covered position with no projection anyway).
+    Without it both render identically, and the first reads as bench
+    advice."""
+    positions = parse_positions(FIXTURE)
+    assert positions["Chargers"] == "TQB"
+    assert positions["Evan McPherson"] == "K"
+    assert positions["Patriots"] == "DST"
+    assert positions["Ja'Marr Chase"] == "WR"
+    assert positions["Cam Skattebo"] == "RB"
+    # Every name the roster parser returns has one - a starter with no
+    # position would be classified by the fallback rather than by fact.
+    for name in parse_roster(FIXTURE):
+        assert positions[name]
+
+
+def test_parse_positions_covers_reserves_as_well_as_starters():
+    positions = parse_positions(FIXTURE)
+    starters, reserves = parse_lineup(FIXTURE)
+    for name in starters + reserves:
+        assert name in positions

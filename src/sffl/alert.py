@@ -76,6 +76,20 @@ roster-age line, ahead of every news block, because it is the one thing
 here that tells Jeff to actually DO something before kickoff; buried under
 the injury news it would be the least-read line in the message instead of
 the most.
+
+A PLAYER WHO WAS NEVER EVALUATED IS NEVER A SIT (`unevaluated_starters`).
+The optimizer can only fill RB/WR/TE, because that is the only position
+group the projections capture covers. CBS sets eight starters. So the TQB,
+the kicker and the defense are in the current lineup and can never be in the
+optimal one - and this block, being a plain set difference, rendered all
+three as SIT every single week, in the block placed FIRST as the most-read
+content. The same mechanism swept up any rostered RB/WR/TE simply missing
+from the projections page. Those players are now excluded from the diff and
+named in their own section, which distinguishes "we do not capture this
+position" (a known limit of the tool, and no reflection on the player) from
+"his position IS captured and he had no projection anyway" (a data problem
+worth chasing). `_cmd_week` has handled it this way since it grew a
+--current flag; the language here mirrors its.
 """
 
 from sffl.identity import normalize_name
@@ -196,7 +210,27 @@ def _is_changed(r):
     return bool(r.previous_status) and r.previous_status != r.status
 
 
-def _start_sit_diff(lineup_result, current_starters, sidelined):
+# Why a starter was never scored. These are NOT interchangeable: the first
+# is a known limitation of what this pipeline captures and says nothing at
+# all about the player; the second means a player who SHOULD have had a
+# projection did not, which is a data problem worth chasing. Rendering them
+# as one bucket - or worse, as a SIT recommendation - throws that signal away.
+POSITION_NOT_CAPTURED = "position-not-captured"
+PROJECTION_MISSING = "projection-missing"
+
+_UNEVALUATED_REASONS = {
+    POSITION_NOT_CAPTURED: (
+        "Their position is not in the projections page this job captures, so "
+        "they were never scored. This says NOTHING about whether to start "
+        "them - it is a limit of the tool, not a judgement on the player:"),
+    PROJECTION_MISSING: (
+        "Their position IS captured and they still had no projection - so "
+        "this is a DATA PROBLEM, not advice. Check the projections capture "
+        "for these names:"),
+}
+
+
+def _start_sit_diff(lineup_result, current_starters, sidelined, unevaluated):
     """(start, sit) display names: optimal lineup vs the CBS current one.
 
     Compared on `normalize_name`, never on raw strings - the roster page and
@@ -208,8 +242,23 @@ def _start_sit_diff(lineup_result, current_starters, sidelined):
     reported as a "start" - regardless of how he got into `lineup_result`
     (the optimizer's own candidate pool already omits Out players, but this
     is the one place that guarantees it rather than assuming it).
+
+    `unevaluated` names are dropped from the CURRENT side before the diff,
+    for the same class of reason and with more urgency: a starter who was
+    never scored is "in current, not in optimal" by construction, which this
+    diff would otherwise render as a merit-based SIT. That is how the block
+    came to recommend benching the TQB, the kicker and the defense EVERY
+    SINGLE WEEK - the optimizer can only fill RB/WR/TE, so the other five
+    starters could never be in the optimal lineup no matter how well they
+    were playing. Excluded here, named separately by `compose`. `_cmd_week`
+    has done exactly this since it grew a --current flag; its comment says a
+    player who quietly vanishes reads as "no longer on your roster" rather
+    than "ruled out", and the same applies to one who quietly appears under
+    SIT.
     """
     sidelined_keys = set(normalize_name(name) for name, _status in sidelined)
+    unevaluated_keys = set(normalize_name(name) for name, _pos, _why
+                           in unevaluated)
 
     optimal_by_key = {}
     for _slot, pick in lineup_result.slots:
@@ -220,7 +269,8 @@ def _start_sit_diff(lineup_result, current_starters, sidelined):
             continue
         optimal_by_key[key] = pick.name
 
-    current_by_key = dict((normalize_name(n), n) for n in current_starters)
+    current_by_key = dict((normalize_name(n), n) for n in current_starters
+                          if normalize_name(n) not in unevaluated_keys)
 
     start = sorted(optimal_by_key[k] for k in optimal_by_key
                    if k not in current_by_key)
@@ -230,7 +280,8 @@ def _start_sit_diff(lineup_result, current_starters, sidelined):
 
 
 def compose(kind, roster_age_days, reports, lineup_result, sidelined,
-            capture_error=None, current_starters=None):
+            capture_error=None, current_starters=None,
+            unevaluated_starters=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -238,6 +289,13 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     list of names CBS currently has starting, if known - `None` means
     unknown (no diff is rendered); `[]` means known-and-empty (a real state,
     which CAN render a diff recommending every optimal starter).
+
+    `unevaluated_starters` is a list of (name, position, reason) for current
+    starters that were never scored, `reason` being POSITION_NOT_CAPTURED or
+    PROJECTION_MISSING. They are excluded from the SIT column and named in
+    their own section instead - see `_start_sit_diff`. It defaults to `None`
+    (treated as empty) so a caller that does not know is not forced to lie
+    about it; `_cmd_alert` always passes it.
     """
     if kind not in _KINDS:
         raise ValueError(
@@ -266,8 +324,18 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     # failed before it could be read) and must not render a diff - that
     # would falsely claim everything should be benched. `[]` is a known,
     # real, renderable state: nothing is currently started.
+    unevaluated = list(unevaluated_starters or [])
+    for _name, _pos, why in unevaluated:
+        if why not in _UNEVALUATED_REASONS:
+            raise ValueError(
+                "unknown un-evaluated reason %r - expected one of %s. This "
+                "controls whether a starter is described as a known scope "
+                "limit or as a data problem; guessing would tell the reader "
+                "the wrong one." % (why, sorted(_UNEVALUATED_REASONS)))
+
     if current_starters is not None:
-        start, sit = _start_sit_diff(lineup_result, current_starters, sidelined)
+        start, sit = _start_sit_diff(lineup_result, current_starters,
+                                     sidelined, unevaluated)
         lines.append("START / SIT vs your current CBS lineup:")
         if start or sit:
             lines.append("  START           SIT")
@@ -275,9 +343,31 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
                 a = start[i] if i < len(start) else ""
                 b = sit[i] if i < len(sit) else ""
                 lines.append("    %-15s %s" % (a, b))
+        elif unevaluated:
+            # "already optimal" would be a confident overstatement while
+            # some starters were never scored at all - it claims a
+            # comparison that did not happen for part of the lineup.
+            lines.append("  no changes to make among the players that could "
+                         "be evaluated (see below).")
         else:
             lines.append("  lineup is already optimal - no changes to make.")
         lines.append("")
+
+        if unevaluated:
+            # Immediately under START/SIT, because this is the scope of the
+            # block above and reading that block without it is how a kicker
+            # ends up looking benched. NOT phrased as advice: every line
+            # here says what was NOT done, never what to do.
+            lines.append("NOT EVALUATED for start/sit - these are NOT "
+                         "recommendations to bench anyone:")
+            for why in (POSITION_NOT_CAPTURED, PROJECTION_MISSING):
+                rows = sorted(r for r in unevaluated if r[2] == why)
+                if not rows:
+                    continue
+                lines.append("  %s" % _UNEVALUATED_REASONS[why])
+                for name, pos, _why in rows:
+                    lines.append("    - %s (%s)" % (name, pos or "?"))
+            lines.append("")
 
     if kind == "sunday":
         # Sunday leads with what CHANGED - the feed's own previous_status /
