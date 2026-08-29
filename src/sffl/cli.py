@@ -443,6 +443,7 @@ def cmd_plan(args):
 
 
 def _cmd_week(args):
+    from sffl.cbs_weekly import classify_avail
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import normalize_name
     from sffl.lineup import Candidate, best_lineup, delta
@@ -452,6 +453,20 @@ def _cmd_week(args):
     curves = load_curves(args.curves) if args.curves else None
     projections = parse_weekly(args.projections, group=args.group,
                                week=args.week, season=lg.season)
+
+    # F5. The spec's failure table requires a raise for an empty roster
+    # (below) on the reasoning that an empty roster optimises to an empty
+    # lineup and would recommend claiming everyone; a zero-row PROJECTIONS
+    # parse is the same class of mistake. A saved page that parses no rows
+    # at all is almost certainly a login page or a truncated save, not a
+    # real empty week, and printing "0 rows parsed ... best legal lineup:
+    # 0.00" while returning success hides exactly the failure this repo's
+    # raise-rather-than-guess convention exists to surface.
+    if not projections:
+        raise SystemExit(
+            "0 rows parsed from %s; a page that parses no rows is almost "
+            "certainly the wrong page or a failed save, not a real empty "
+            "result" % args.projections)
 
     owned_raw = [l.strip() for l in open(args.roster) if l.strip()]
     if not owned_raw:
@@ -485,7 +500,39 @@ def _cmd_week(args):
                          points=score_week(lg, p, curves))
 
     roster = [cand(by_key[k]) for k in owned if k in by_key]
-    free = [cand(p) for k, p in by_key.items() if k not in owned]
+
+    # F3: `avail` on CBS's ALL PLAYERS view names a genuine free agent
+    # ("FA"), a waiver-claimable player ("W (9/16)"), or another manager's
+    # team - a player who is not on Jeff's --roster file but is not
+    # unclaimed either. Treating every non-roster row as claimable, as this
+    # used to, is how the ALL PLAYERS view - which the spec itself
+    # advertises as the source to save - turns into a board recommending a
+    # claim on another team's starter. Classify every non-roster row before
+    # it is even scored: only a row confidently identified as available is
+    # ranked; a row confidently identified as owned is excluded and counted;
+    # a row whose avail shape has never been seen before is refused rather
+    # than guessed at, exactly like every other "raise rather than guess"
+    # gate in this project. See cbs_weekly.classify_avail.
+    free_rows = [p for k, p in by_key.items() if k not in owned]
+    available_rows = []
+    excluded_owned = 0
+    unclassified_avail = set()
+    for p in free_rows:
+        status = classify_avail(p.avail)
+        if status == "available":
+            available_rows.append(p)
+        elif status == "owned":
+            excluded_owned += 1
+        else:
+            unclassified_avail.add(p.avail)
+
+    if unclassified_avail:
+        print("  WARNING: %d distinct avail value(s) not recognized as "
+              "free-agent, waiver, or owned - ranking nothing from them "
+              "since availability cannot be verified: %s"
+              % (len(unclassified_avail), ", ".join(sorted(unclassified_avail))))
+
+    free = [cand(p) for p in available_rows]
 
     # Denominators, not just results - this repo's convention (see
     # fit.PriceMap.total_rows, _board_rows' dropped-count print) is to say
@@ -495,7 +542,8 @@ def _cmd_week(args):
     print("  %d rows parsed from %s" % (len(projections), args.projections))
     print("  %d of %d roster names resolved to a projection"
           % (resolved, len(owned_raw)))
-    print("  %d free agents ranked" % len(free))
+    print("  %d free agents ranked (%d excluded - rostered by another team)"
+          % (len(free), excluded_owned))
 
     base = best_lineup(lg, roster)
     print("\n  best legal lineup: %.2f pts" % base.total)
@@ -503,21 +551,37 @@ def _cmd_week(args):
         print("    %-6s %s" % (slot, pick.name if pick else "(unfilled)"))
 
     if args.waivers or not (args.waivers or args.start_sit):
-        # Name is the explicit tiebreak, not insertion (page) order. Two
-        # decimal points of delta tie often, and `sorted` is stable, so
-        # without this the rank at the --top cutoff would depend on how the
-        # page happened to be saved - the same determinism
-        # `lineup._sorted` exists to guarantee one layer down.
-        ranked = sorted(free, key=lambda c: (-delta(lg, roster, c), c.name))
+        # F8. Points, not just name, is the tiebreak. `delta` ties at 0.00
+        # often - every free agent too weak to crack the lineup ties there,
+        # not just two who happen to be close - and among players who add
+        # nothing THIS week, the better player is the better stash for next
+        # week. Sorting those ties by name alone put a 1.10-point bench
+        # option (Tyrone Tracy Jr.) above a 1.60-point one (Woody Marks) for
+        # no reason but the alphabet. `-c.points` breaks the delta tie by
+        # who is the better player; name remains the final tiebreak for a
+        # genuine points tie too (see
+        # test_waiver_ranking_ties_break_by_name_not_page_order), and
+        # `sorted` being stable is still what makes that deterministic.
+        ranked = sorted(free, key=lambda c: (-delta(lg, roster, c), -c.points, c.name))
         shown = ranked[:args.top]
         print("\n  WAIVER TARGETS (top %d of %d)   %-8s %-6s %s"
               % (len(shown), len(ranked), "+PTS", "SLOT", "PLAYER"))
         for c in shown:
             d = delta(lg, roster, c)
-            after = best_lineup(lg, roster + [c])
-            slot = next((s for s, p in after.slots if p and p.name == c.name),
-                        None)
-            where = slot if slot else "bench"
+            # F8. A slot label is a claim that the addition CRACKS the
+            # lineup. `best_lineup` breaks a pure points tie by name, so a
+            # free agent who ties the worst starter exactly - delta 0.00,
+            # by definition no better - can still be the one chosen into a
+            # named slot (e.g. FLEX3) purely on alphabetical luck. Printing
+            # that slot would read as "this claim improves your lineup" when
+            # it provably does not, so any zero-gain row shows as bench
+            # regardless of which slot the tie happened to resolve into.
+            where = "bench"
+            if d > 0:
+                after = best_lineup(lg, roster + [c])
+                slot = next((s for s, p in after.slots if p and p.name == c.name),
+                            None)
+                where = slot if slot else "bench"
             print("    %-8.2f %-6s %s (%s)" % (d, where, c.name, c.pos))
 
     if args.start_sit:
