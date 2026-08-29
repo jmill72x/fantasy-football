@@ -1,7 +1,8 @@
 import pytest
 
 from sffl.alert import (POSITION_NOT_CAPTURED, PROJECTION_MISSING,
-                        STALE_ROSTER_DAYS, compose)
+                        STALE_INJURIES_MINUTES, STALE_ROSTER_DAYS,
+                        compose)
 from sffl.injuries import Report
 from sffl.lineup import Candidate, LineupResult
 
@@ -470,3 +471,66 @@ def test_an_unknown_unevaluated_reason_raises_rather_than_guessing():
     with pytest.raises(ValueError):
         compose("friday", 2, [], LINEUP, [], current_starters=[],
                 unevaluated_starters=[("Evan McPherson", "K", "who-knows")])
+
+
+# --- C2: a failed injury fetch is not a clean bill of health ---------------
+
+def test_a_failed_fetch_never_renders_as_no_designations():
+    # The whole defect: with StatsDeck down there is no file, `reports` is
+    # [], and the digest printed "no designations on your roster." and
+    # "nothing new." - byte-identical to a genuinely quiet week.
+    msg = compose("friday", 2, [], LINEUP, [],
+                  injury_error="injuries.json does not exist")
+    assert "no designations on your roster" not in msg
+    assert "nothing new." not in msg
+    assert "INJURY DATA UNAVAILABLE" in msg
+    assert "injuries.json does not exist" in msg
+    assert "NOT FETCHED" in msg
+
+
+def test_a_failed_fetch_on_sunday_does_not_claim_nothing_changed():
+    msg = compose("sunday", 2, [], LINEUP, [],
+                  injury_error="claude -p returned no file")
+    assert "no status changes since the previous report" not in msg
+    assert "NOT FETCHED" in msg
+
+
+def test_a_quiet_week_and_a_failed_fetch_do_not_render_the_same():
+    quiet = compose("friday", 2, [], LINEUP, [], injuries_age_minutes=0)
+    broken = compose("friday", 2, [], LINEUP, [], injury_error="down")
+    assert quiet != broken
+    assert "no designations on your roster" in quiet
+    assert "no designations on your roster" not in broken
+
+
+def test_the_warning_precedes_the_blocks_it_explains():
+    msg = compose("sunday", 2, [], LINEUP, [], injury_error="down")
+    assert msg.index("INJURY DATA UNAVAILABLE") < msg.index("WHAT CHANGED")
+
+
+def test_a_failed_fetch_does_not_claim_the_feed_carried_no_practice_data():
+    # That line is a statement about what a feed we actually read contained.
+    msg = compose("friday", 2, [], LINEUP, [], injury_error="down")
+    assert "feed carried no practice data" not in msg
+
+
+def test_fresh_injury_data_states_its_age():
+    msg = compose("friday", 2, [CHUBB_OUT], LINEUP, [], injuries_age_minutes=3)
+    assert "Injury data fetched 3 minutes ago." in msg
+    assert "STALE INJURY DATA" not in msg
+
+
+def test_injury_data_not_from_this_run_says_so_loudly():
+    # The roster file is written milliseconds before it is read and can
+    # never be stale; the injuries file is the input that genuinely can be.
+    msg = compose("friday", 2, [CHUBB_OUT], LINEUP, [],
+                  injuries_age_minutes=STALE_INJURIES_MINUTES + 1)
+    assert "STALE INJURY DATA" in msg
+    assert "EARLIER run" in msg
+    # The rows are still shown - they are real, just old.
+    assert "Nick Chubb" in msg
+
+
+def test_the_injury_parameters_default_so_existing_callers_are_unaffected():
+    args = ("sunday", 2, [CHUBB_OUT], LINEUP, [("Nick Chubb", "O")])
+    assert compose(*args) == _PRE_CURRENT_STARTERS_PINNED_OUTPUT
