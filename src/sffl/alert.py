@@ -77,6 +77,18 @@ here that tells Jeff to actually DO something before kickoff; buried under
 the injury news it would be the least-read line in the message instead of
 the most.
 
+A FAILED INJURY FETCH IS NOT A CLEAN BILL OF HEALTH (`injury_error`). When
+StatsDeck is down or `claude -p` fails, no injuries file is written, and the
+caller used to hand this function `reports=[]` - which rendered "no
+designations on your roster." and "nothing new.", byte-identical to a
+genuinely quiet week, at exit 0, with the only warning on stderr where a
+phone never sees it. "Fetched, nothing to report" and "could not fetch" are
+now separate inputs and read completely differently. The same reasoning
+gives the injuries file the staleness check that used to sit only on the
+roster (see STALE_ROSTER_DAYS): the roster is written milliseconds before it
+is read, while the injuries file is the one input that can genuinely be a
+week old.
+
 A PLAYER WHO WAS NEVER EVALUATED IS NEVER A SIT (`unevaluated_starters`).
 The optimizer can only fill RB/WR/TE, because that is the only position
 group the projections capture covers. CBS sets eight starters. So the TQB,
@@ -96,7 +108,27 @@ from sffl.identity import normalize_name
 
 # Past this many days, the roster file's age is called out as a problem rather
 # than merely stated. Visible staleness beats invisible staleness.
+#
+# KEPT DELIBERATELY, THOUGH IT CANNOT FIRE FOR `_cmd_alert`: that caller
+# captures the roster page and reads its mtime milliseconds later, so the
+# age is always 0 and the loud branch is unreachable from there. The final
+# review was right that the staleness budget had been spent on the one input
+# that can never be stale - but the fix for that is the injuries check below,
+# which is where the staleness actually lives, not the deletion of a true
+# statement. `compose` is a pure function with no privileged caller; anything
+# composing from a roster captured earlier (a replay, a manual re-run against
+# a saved page) gets the guard, and "Roster captured N days ago" is a fact
+# about the input either way, printed on every run precisely so a reader
+# never has to wonder whether it was checked.
 STALE_ROSTER_DAYS = 10
+
+# Past this many minutes, the injuries file was NOT written by this run.
+# `ops/run_alert.sh` fetches immediately before invoking the alert, so a
+# fresh file is seconds old and even a slow `claude -p` fetch is minutes;
+# an hour means the fetch step did not run, and the news being rendered is
+# a previous run's. Unlike the roster, this input genuinely CAN be stale:
+# nothing in this pipeline rewrites it when the fetch fails.
+STALE_INJURIES_MINUTES = 60
 
 _KINDS = {
     "friday": ("Friday practice report",
@@ -111,6 +143,16 @@ def _roster_age_line(days):
         return ("!! STALE ROSTER: captured %d days ago (over %d). "
                 "The lineup below may be wrong." % (days, STALE_ROSTER_DAYS))
     return "Roster captured %d day%s ago." % (days, "" if days == 1 else "s")
+
+
+def _injuries_age_line(minutes):
+    if minutes > STALE_INJURIES_MINUTES:
+        return ("!! STALE INJURY DATA: the injuries file is %d minutes old "
+                "(over %d), so this run's fetch did not write it. The news "
+                "below is from an EARLIER run - check each row's date."
+                % (minutes, STALE_INJURIES_MINUTES))
+    return "Injury data fetched %d minute%s ago." % (
+        minutes, "" if minutes == 1 else "s")
 
 
 _UNKNOWN_STATUS = "STATUS UNKNOWN (feed carried no status for this row)"
@@ -281,7 +323,8 @@ def _start_sit_diff(lineup_result, current_starters, sidelined, unevaluated):
 
 def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             capture_error=None, current_starters=None,
-            unevaluated_starters=None):
+            unevaluated_starters=None, injury_error=None,
+            injuries_age_minutes=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -296,6 +339,13 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     their own section instead - see `_start_sit_diff`. It defaults to `None`
     (treated as empty) so a caller that does not know is not forced to lie
     about it; `_cmd_alert` always passes it.
+
+    `injury_error` is why the injury feed could not be read, if it could
+    not. It is NOT the same state as `reports=[]`, which means the feed was
+    read and had nothing on this roster - and the whole point of carrying it
+    is that the two used to render identically. `injuries_age_minutes` is
+    how old the injuries file was when it was read, or `None` if there was
+    no file to age.
     """
     if kind not in _KINDS:
         raise ValueError(
@@ -369,17 +419,37 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
                     lines.append("    - %s (%s)" % (name, pos or "?"))
             lines.append("")
 
+    # THE NEWS BELOW IS ONLY AS GOOD AS THE FETCH THAT PRODUCED IT, so say
+    # so BEFORE any of it, not on stderr where the phone will never see it.
+    # A failed StatsDeck fetch used to leave `reports` empty, which rendered
+    # byte-identically to a genuinely quiet week - "no designations on your
+    # roster.", "nothing new." - at exit 0. The three "nothing to report"
+    # lines below are replaced with an explicit not-fetched line for the
+    # same reason: an absent measurement must never print as a fact.
+    if injury_error:
+        lines.append("!! INJURY DATA UNAVAILABLE: %s" % injury_error)
+        lines.append("   The status blocks below are empty because NOTHING "
+                     "WAS FETCHED, not because your roster is clean.")
+        lines.append("")
+    elif injuries_age_minutes is not None:
+        lines.append(_injuries_age_line(injuries_age_minutes))
+        lines.append("")
+
+    no_news = ("  NOT FETCHED - see the injury-data warning above. This is "
+               "not a clean bill of health." if injury_error else None)
+
     if kind == "sunday":
         # Sunday leads with what CHANGED - the feed's own previous_status /
         # status_since - not a cosmetic reheading of Friday's static status
-        # block. A row that changed is shown here, not duplicated below.
+        # block.
         changed = [r for r in reports if _is_changed(r)]
 
         lines.append("WHAT CHANGED since the last report:")
         if changed:
             lines.extend(_change_line(r) for r in changed)
         else:
-            lines.append("  no status changes since the previous report.")
+            lines.append(no_news or
+                         "  no status changes since the previous report.")
         lines.append("")
 
     # EVERY row, INCLUDING the ones the Sunday change block just led with. A
@@ -402,7 +472,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         # never inferred from prose. A blank field printed as "no practice
         # data" is a stated absence; printed silently it would read as "this
         # player practiced fully," a fact nobody measured.
-        if not any(r.practice for r in reports):
+        if not injury_error and not any(r.practice for r in reports):
             lines.append("  (feed carried no practice data for your roster "
                          "today - status only below.)")
     else:
@@ -410,7 +480,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     if official:
         lines.extend(_report_line(r) for r in official)
     else:
-        lines.append("  no designations on your roster.")
+        lines.append(no_news or "  no designations on your roster.")
     lines.append("")
 
     # Shown SEPARATELY and never merged into the official block: the official
@@ -420,7 +490,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     if intel:
         lines.extend(_report_line(r) for r in intel)
     else:
-        lines.append("  nothing new.")
+        lines.append(no_news or "  nothing new.")
     lines.append("")
 
     if sidelined:

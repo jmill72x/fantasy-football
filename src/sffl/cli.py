@@ -758,7 +758,7 @@ def _cmd_alert(args):
     import os
 
     from sffl.alert import (POSITION_NOT_CAPTURED, PROJECTION_MISSING,
-                            compose)
+                            STALE_INJURIES_MINUTES, compose)
     from sffl.calibrate import load_curves
     from sffl.capture import CaptureError, capture
     from sffl.cbs_roster import parse_lineup, parse_positions
@@ -851,8 +851,52 @@ def _cmd_alert(args):
     except (CaptureError, ValueError) as exc:
         capture_error = str(exc)
 
-    if args.injuries and os.path.exists(args.injuries):
-        reports = for_roster(load_injuries(args.injuries), roster_names)
+    # C2. A failed injury fetch is NOT a quiet week. This used to be a bare
+    # `if args.injuries and os.path.exists(...)`: with StatsDeck down or
+    # `claude -p` failing there is no file, `reports` stayed [], and the
+    # digest printed "no designations on your roster." and "nothing new." -
+    # byte-identical to a genuinely quiet week - and exited 0. The only
+    # warning went to stderr, which never reaches the phone. Every branch
+    # below now produces either real rows or a reason the reader can see.
+    injury_error = None
+    injuries_age_minutes = None
+    injury_fetch_failed = False
+    if not args.injuries:
+        # Not a failure - nobody asked for injury data on this invocation -
+        # but the message must still not claim a clean roster it never
+        # looked at. Rendered, not counted against the exit code.
+        injury_error = ("no --injuries file was given to this run, so no "
+                        "injury feed was read at all")
+    elif not os.path.exists(args.injuries):
+        injury_error = (
+            "%s does not exist - the StatsDeck fetch step (see "
+            "ops/fetch_injuries.sh) did not produce a file" % args.injuries)
+        injury_fetch_failed = True
+    else:
+        try:
+            reports = for_roster(load_injuries(args.injuries), roster_names)
+            injuries_age_minutes = int(
+                (datetime.datetime.now()
+                 - datetime.datetime.fromtimestamp(
+                     os.path.getmtime(args.injuries)))
+                .total_seconds() // 60)
+        except (ValueError, OSError) as exc:
+            # A file that exists but cannot be read or parsed is the same
+            # class of failure as no file at all, and must not be allowed to
+            # take the whole alert down as a traceback: the lineup half of
+            # this digest is still worth pushing. ValueError covers both
+            # json's decode error and injuries.load's own raise on a row
+            # with no player name.
+            reports = []
+            injury_error = "%s could not be read: %s" % (args.injuries, exc)
+            injury_fetch_failed = True
+
+    # Data that is real but not from this run is its own kind of wrong: it
+    # renders last week's designations as today's. The alert says so, and
+    # the run counts as degraded.
+    if (injuries_age_minutes is not None
+            and injuries_age_minutes > STALE_INJURIES_MINUTES):
+        injury_fetch_failed = True
 
     # `current_starters` carries `parse_lineup`'s starters straight through
     # so `compose` can render the START/SIT diff against the optimum
@@ -862,7 +906,9 @@ def _cmd_alert(args):
     body = compose(args.kind, age_days, reports, result, sidelined,
                    capture_error=capture_error,
                    current_starters=current_starters,
-                   unevaluated_starters=unevaluated_starters)
+                   unevaluated_starters=unevaluated_starters,
+                   injury_error=injury_error,
+                   injuries_age_minutes=injuries_age_minutes)
     print(body)
 
     # ORDERING: the topic is fetched HERE, after the digest above is already
@@ -892,12 +938,16 @@ def _cmd_alert(args):
         print("\n[DELIVERY FAILED] %s" % exc)
         delivery_error = exc
 
-    # A capture failure OR a delivery failure is still DELIVERED-OR-NOT in a
-    # way launchd's log must be able to see, so either makes the exit code
-    # non-zero - but they are DIFFERENT failures (nothing produced, vs. a
+    # A capture failure, a DEGRADED run (the injury fetch produced nothing,
+    # or produced something that is not from this run), or a delivery
+    # failure is each visible in a way launchd's log must be able to see, so
+    # each makes the exit code non-zero - but they are DIFFERENT failures
+    # (nothing produced, vs. an alert missing half its content, vs. a
     # correct alert that could not be pushed), and the printed body above,
-    # not the exit code, is what tells them apart.
-    return 1 if (capture_error or delivery_error) else 0
+    # not the exit code, is what tells them apart. A missing --injuries
+    # argument is NOT counted here: that is a deliberate invocation, not a
+    # failed step, and it is still stated in the body.
+    return 1 if (capture_error or injury_fetch_failed or delivery_error) else 0
 
 
 def main(argv=None):
