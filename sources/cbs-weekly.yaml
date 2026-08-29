@@ -18,3 +18,29 @@ groups:
     # being added or removed - the slice just returns a different 11 columns,
     # every one of them plausible. This is the check that catches that.
     expect_tokens: 17
+
+# The league's manager abbreviations, exactly as CBS prints them in the
+# leftmost column of the ALL PLAYERS view.
+#
+# ENUMERATED, NOT PATTERN-MATCHED, ON PURPOSE. A pattern loose enough to accept
+# a two-letter abbreviation ("JM") also accepts the two-initial first name of a
+# row that is MISSING its status token - "DJ Moore WR - CHI" parses as
+# avail="DJ", name="Moore", quietly filing a real player's stats under a
+# fabricated one. That is F4, and it was found in real data. A closed list
+# cannot do that: an unknown token fails to match and is reported by the
+# unmatched-line count instead.
+#
+# WHEN A MANAGER JOINS OR LEAVES, ADD OR REMOVE THEIR CODE HERE. The failure if
+# you forget is loud - the page is refused and the offending line is named.
+#
+# PLACEHOLDER - NOT YET FILLED FROM A REAL PAGE. No captured in-season page
+# exists yet (the CBS login that would produce one is a manual step the repo
+# owner has not completed), so the real twelve manager codes are unknown. Do
+# NOT guess plausible-looking abbreviations here - a fabricated code that
+# happens to collide with a real player's initials would silently recreate
+# F4. Once a real page is captured, replace this list by running:
+#   awk '{print $1}' data/captures/projections.txt | sort -u
+# and keeping the tokens that are manager abbreviations, discarding `FA` and
+# `W`.
+owner_codes:
+  - TODO_REPLACE_WITH_REAL_MANAGER_CODE

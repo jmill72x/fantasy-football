@@ -443,11 +443,13 @@ def cmd_plan(args):
 
 
 def _cmd_week(args):
-    from sffl.cbs_weekly import classify_avail
+    from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes, classify_avail
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import normalize_name
     from sffl.lineup import Candidate, best_lineup, delta
     from sffl.pool import score_week
+
+    owner_codes = _load_owner_codes(DEFAULT_PROFILE)
 
     lg = load_league(args.league)
     curves = load_curves(args.curves) if args.curves else None
@@ -541,7 +543,7 @@ def _cmd_week(args):
     excluded_owned = 0
     unclassified_avail = set()
     for p in free_rows:
-        status = classify_avail(p.avail)
+        status = classify_avail(p.avail, owner_codes)
         if status == "available":
             available_rows.append(p)
         elif status == "owned":
