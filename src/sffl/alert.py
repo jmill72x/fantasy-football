@@ -14,6 +14,26 @@ well-formed login page, which parses to an empty roster - a valid-looking
 input meaning "Jeff owns nobody". Printing a lineup derived from an
 unverified capture is how a confident, entirely wrong start/sit reaches the
 phone ninety minutes before kickoff.
+
+FRIDAY AND SUNDAY MUST ACTUALLY READ DIFFERENTLY, NOT JUST BE TITLED
+DIFFERENTLY. The original version of this module led both kinds with the
+same official-then-intel block and only changed two header words - a
+cosmetic difference the spec explicitly rules out ("a Sunday alert that
+simply repeats Friday's news trains its reader to ignore it"). The fix was
+going to be "Friday leads with practice participation," but the real
+StatsDeck feed has no practice field at all - practice information, if it
+exists, is buried as prose inside `detail`. So Friday's lead block is status
+(with practice inlined per row when the feed happens to carry it), and when
+the feed carries NO practice data for anyone on the roster, Friday says that
+explicitly rather than letting an empty `practice` field read as "nobody
+practiced" - an absent measurement must never print as a fact.
+
+Sunday's genuine differentiator is `previous_status` / `status_since` (see
+`sffl.injuries`): the feed's own record of what a status moved FROM and
+WHEN. Sunday leads with exactly those rows, rendered so the change is the
+point, and pushes rows with no recorded change down into the ordinary
+status block below. When nothing changed, Sunday says so explicitly instead
+of printing an empty "WHAT CHANGED" heading.
 """
 
 # Past this many days, the roster file's age is called out as a problem rather
@@ -49,6 +69,33 @@ def _report_line(r):
         r.source, r.reported_date or "undated")
 
 
+def _change_line(r):
+    """A Sunday change row: what moved, from what, to what, and when.
+
+    `previous_status` and `status_since` are the only change signal the feed
+    gives for free (see the `injuries` module docstring) - carried verbatim,
+    never derived here by comparing rows. `detail` and `reported_date` still
+    travel with the row so nothing the record knows is lost by leading with
+    the change instead of the static status.
+    """
+    detail = " - %s" % r.detail if r.detail else ""
+    return "  - %s (%s): %s -> %s, since %s%s [%s %s]" % (
+        r.name, r.team or "?", r.previous_status or "unknown", r.status,
+        r.status_since or "date unknown", detail,
+        r.source, r.reported_date or "undated")
+
+
+def _is_changed(r):
+    """A row the feed itself marks as having moved status.
+
+    Requires BOTH a non-empty `previous_status` and that it differ from the
+    current `status` - a row can carry `previous_status == status` when a
+    designation was merely reconfirmed, which is not a change worth leading
+    with.
+    """
+    return bool(r.previous_status) and r.previous_status != r.status
+
+
 def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             capture_error=None):
     """The full digest text for one run.
@@ -77,13 +124,37 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     lines.append(_roster_age_line(roster_age_days))
     lines.append("")
 
-    official = [r for r in reports if r.source == "official"]
-    intel = [r for r in reports if r.source != "official"]
+    if kind == "sunday":
+        # Sunday leads with what CHANGED - the feed's own previous_status /
+        # status_since - not a cosmetic reheading of Friday's static status
+        # block. A row that changed is shown here, not duplicated below.
+        changed = [r for r in reports if _is_changed(r)]
+        changed_ids = set(id(r) for r in changed)
+        rest = [r for r in reports if id(r) not in changed_ids]
 
-    # Friday leads with practice participation, Sunday with official status.
-    # A Sunday alert that just repeats Friday trains its reader to ignore it.
+        lines.append("WHAT CHANGED since the last report:")
+        if changed:
+            lines.extend(_change_line(r) for r in changed)
+        else:
+            lines.append("  no status changes since the previous report.")
+        lines.append("")
+    else:
+        # Friday has no change signal to lead with two days out - it leads
+        # with status-and-practice, the plan-around view.
+        rest = reports
+
+    official = [r for r in rest if r.source == "official"]
+    intel = [r for r in rest if r.source != "official"]
+
     if kind == "friday":
         lines.append("PRACTICE / STATUS on your roster:")
+        # The real feed currently has no `practice` field at all - it is
+        # never inferred from prose. A blank field printed as "no practice
+        # data" is a stated absence; printed silently it would read as "this
+        # player practiced fully," a fact nobody measured.
+        if not any(r.practice for r in reports):
+            lines.append("  (feed carried no practice data for your roster "
+                         "today - status only below.)")
     else:
         lines.append("OFFICIAL STATUS on your roster:")
     if official:
