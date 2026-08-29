@@ -21,9 +21,19 @@ set -uo pipefail
 
 KIND="${1:?usage: run_alert.sh friday|sunday [--dry-run]}"
 
-DRY_RUN_FLAG=()
+# A plain scalar, not an array: `/bin/bash` on macOS is 3.2.57 (Apple ships
+# no newer bash for licensing reasons - GPLv3 - and the shebang below pins
+# this script to it regardless of what's on $PATH). In bash <4.4, expanding
+# an EMPTY array as "${ARR[@]}" under `set -u` raises "unbound variable" -
+# only a non-empty array is safe. `--dry-run` has no whitespace to split on,
+# so a scalar sidesteps the whole hazard instead of requiring the
+# "${ARR[@]+"${ARR[@]}"}" bash-3.2-safe expansion idiom. Do not change this
+# back to an array without that guard - the failure only shows up on the
+# no-flag path (the one with nothing to expand), which is exactly the path
+# launchd uses every scheduled run, and dry-run rehearsal never exercises it.
+DRY_RUN_FLAG=""
 if [ "${2:-}" = "--dry-run" ] || [ "${DRY_RUN:-0}" = "1" ]; then
-    DRY_RUN_FLAG=(--dry-run)
+    DRY_RUN_FLAG="--dry-run"
 fi
 
 cd "$(dirname "$0")/.."
@@ -67,4 +77,9 @@ PYTHONPATH=src ./.venv/bin/python -m sffl.cli alert \
   --week "$WEEK" \
   --curves calibration/2025.yaml \
   --injuries "$INJ" \
-  "${DRY_RUN_FLAG[@]}"
+  $DRY_RUN_FLAG
+  # ^ deliberately unquoted: DRY_RUN_FLAG is either "" (contributes zero
+  # words - the empty-string default case) or the single word "--dry-run"
+  # (no embedded whitespace/glob chars to mis-split), so this is safe. Do
+  # not "fix" this by quoting it - quoting would pass a single empty-string
+  # argument to argparse on the no-flag path instead of omitting the flag.
