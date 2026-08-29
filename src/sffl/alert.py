@@ -30,10 +30,17 @@ practiced" - an absent measurement must never print as a fact.
 
 Sunday's genuine differentiator is `previous_status` / `status_since` (see
 `sffl.injuries`): the feed's own record of what a status moved FROM and
-WHEN. Sunday leads with exactly those rows, rendered so the change is the
-point, and pushes rows with no recorded change down into the ordinary
-status block below. When nothing changed, Sunday says so explicitly instead
-of printing an empty "WHAT CHANGED" heading.
+WHEN. Sunday LEADS with exactly those rows, rendered so the change is the
+point. When nothing changed, Sunday says so explicitly instead of printing
+an empty "WHAT CHANGED" heading.
+
+A CHANGED ROW IS STILL LISTED IN THE STATUS BLOCK BELOW. It used to be
+removed from that split - "shown here, not duplicated below" - which meant
+a row that was both official AND changed (a starter moving Questionable ->
+Out on Sunday morning: the single most important row the feed can produce)
+emptied the OFFICIAL block, and the block then printed "no designations on
+your roster" while that starter was Out. The heading must never lie about
+what is under it, so the official/intel split is built from every row.
 
 WHAT A ROW IS NOT ALLOWED TO RENDER AS. Two blank-field failures used to
 print as good news. An official row whose `status` arrived empty - the exact
@@ -277,8 +284,6 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         # status_since - not a cosmetic reheading of Friday's static status
         # block. A row that changed is shown here, not duplicated below.
         changed = [r for r in reports if _is_changed(r)]
-        changed_ids = set(id(r) for r in changed)
-        rest = [r for r in reports if id(r) not in changed_ids]
 
         lines.append("WHAT CHANGED since the last report:")
         if changed:
@@ -286,13 +291,20 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         else:
             lines.append("  no status changes since the previous report.")
         lines.append("")
-    else:
-        # Friday has no change signal to lead with two days out - it leads
-        # with status-and-practice, the plan-around view.
-        rest = reports
 
-    official = [r for r in rest if r.source == "official"]
-    intel = [r for r in rest if r.source != "official"]
+    # EVERY row, INCLUDING the ones the Sunday change block just led with. A
+    # changed row used to be REMOVED from this split, on the reasoning that
+    # showing it twice was redundant - but a row can be both official AND
+    # changed (a starter who moved Questionable -> Out on Sunday morning is
+    # precisely that row, and precisely the one that matters most). Removing
+    # it emptied the block below, which then printed "no designations on
+    # your roster" ninety minutes before kickoff with a starter ruled Out.
+    # The block is titled OFFICIAL STATUS and this module's own docstring
+    # calls the official report "the record"; a record with rows silently
+    # withheld is not a record. Two lines of duplication on a phone screen
+    # is a trivial price for the heading never lying about its contents.
+    official = [r for r in reports if r.source == "official"]
+    intel = [r for r in reports if r.source != "official"]
 
     if kind == "friday":
         lines.append("PRACTICE / STATUS on your roster:")
