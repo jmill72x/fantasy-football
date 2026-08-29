@@ -14,7 +14,10 @@ request, and `/`, `?`, `#`, or `@` would silently change which URL gets hit.
 `send()` validates the shape before it is ever used - see `_TOPIC_RE`. The
 validation error NAMES THE PROBLEM ("contains a space") and NEVER THE VALUE:
 this can land in a launchd log file, which is a place a secret must never
-reach, so the offending topic is never echoed into the exception.
+reach, so the offending topic is never echoed into the exception. The same
+rule holds for `topic_from_keychain`, which reports `security`'s own stderr
+verbatim: that stream carries diagnostics, never the stored value, which
+`security` writes only to stdout and only on success.
 """
 
 import re
@@ -30,19 +33,74 @@ KEYCHAIN_ACCOUNT = "sffl-alert-ntfy-topic"
 _TOPIC_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
+# The exact command the runbook's first-time setup section gives, `-U` and
+# all. Kept as one string so the two can be diffed by eye: a suggestion that
+# drifts from the runbook sends the reader in a direction the runbook then
+# contradicts.
+_CREATE_CMD = ("security add-generic-password -a %s -s sffl "
+               "-w <your-topic> -U")
+
+
 def topic_from_keychain(account=KEYCHAIN_ACCOUNT):
-    """The ntfy topic, read from the login Keychain."""
+    """The ntfy topic, read from the login Keychain.
+
+    WHY `security`'s OWN MESSAGE IS CAPTURED AND REPORTED. This used to
+    discard stderr (`stderr=subprocess.DEVNULL`) and report every failure as
+    "no Keychain entry", suggesting a command to CREATE one. A LOCKED
+    keychain and an SSH session with no window server both fail here too,
+    and for both of those the suggested fix is wrong twice over: creating an
+    entry is not what is needed, and the suggested command omitted `-U`,
+    which is the exact mistake this project's runbook already records
+    happening once - without it `security` refuses to overwrite an existing
+    item and reports "the specified item already exists", leaving the OLD
+    topic in place while the reader believes they just set a new one. A
+    misdiagnosis with a confident fix attached is worse than a raw error.
+
+    THE TOPIC CANNOT LEAK THROUGH THIS. `security` writes the value to
+    STDOUT and only on success; stderr carries diagnostics only, and every
+    branch below either raises before stdout is read or returns it to the
+    caller. The value is never interpolated into any message here.
+    """
     try:
-        out = subprocess.check_output(
+        proc = subprocess.Popen(
             ["security", "find-generic-password", "-a", account, "-w"],
-            stderr=subprocess.DEVNULL)
-    except (subprocess.CalledProcessError, OSError):
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        out, err = proc.communicate()
+    except OSError as exc:
         raise RuntimeError(
-            "no Keychain entry for account %r. The ntfy topic is a secret and "
-            "is never committed to this public repo. Create it once with:\n"
-            "  security add-generic-password -a %s -s sffl -w <your-topic>"
-            % (account, account))
-    return out.decode("utf-8").strip()
+            "could not run `security` to read the Keychain: %s. It ships "
+            "with macOS at /usr/bin/security; this is a PATH problem, not a "
+            "missing entry." % exc)
+
+    if proc.returncode == 0:
+        return out.decode("utf-8").strip()
+
+    detail = err.decode("utf-8", "replace").strip() or "no error output"
+    lowered = detail.lower()
+
+    if "could not be found" in lowered or "item cannot be found" in lowered:
+        raise RuntimeError(
+            "no Keychain entry for account %r. The ntfy topic is a secret "
+            "and is never committed to this public repo. Create it once, at "
+            "the machine (not over SSH), with:\n  %s\n(`security` said: %s)"
+            % (account, _CREATE_CMD % account, detail))
+
+    if "interaction is not allowed" in lowered or "user interaction" in lowered:
+        raise RuntimeError(
+            "the Keychain refused to release the entry for account %r "
+            "because it could not prompt: the login keychain is locked, or "
+            "this ran over SSH with no window server. THE ENTRY IS PROBABLY "
+            "FINE - do not re-create it. Unlock it with `security "
+            "unlock-keychain ~/Library/Keychains/login.keychain-db`, or run "
+            "at the machine.\n(`security` said: %s)" % (account, detail))
+
+    raise RuntimeError(
+        "reading the Keychain entry for account %r failed with exit %d. "
+        "This is NOT necessarily a missing entry - check the message before "
+        "creating one, and note that re-creating it needs the `-U` flag "
+        "(`%s`) or `security` will refuse and leave the old value in "
+        "place.\n(`security` said: %s)"
+        % (account, proc.returncode, _CREATE_CMD % account, detail))
 
 
 def send(topic, title, body, dry_run=False):
