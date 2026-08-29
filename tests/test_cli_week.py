@@ -454,3 +454,80 @@ def test_curves_flag_changes_a_named_number_in_the_output(tmp_path, capsys):
     assert flex3(out_naive) != flex3(out_curved), (
         "--curves must change who fills FLEX3: naive picked %r, curved "
         "picked %r" % (flex3(out_naive), flex3(out_curved)))
+
+
+def test_a_ruled_out_player_does_not_start_and_is_named_in_output(tmp_path, capsys):
+    """Finding A: the bug fix is not tested end-to-end. An owned player
+    designated O has the HIGHEST projected points at his position. Without
+    the exclusion filter, he would start. With it, he must NOT appear in the
+    lineup, but must be NAMED in the output (never silently dropped). A Q
+    player on the same roster must still start (Q is flagged, not excluded)."""
+    # Base lineup from fixture, but replace one with an O-designated player
+    # who has more points than anyone on the roster. Harold Fannin Jr. scores
+    # 4.81 normally; we replace him with "Highest Scorer Out" at 9.99 pts
+    # designated O - definitely would start without the exclusion filter.
+    lines = open(PROJ).read().splitlines()
+    lines.append(
+        "FA Highest Scorer Out O RB • DAL @LAR 22 11 86 63 8 "
+        "9.5 99.9 3.9 0.4 1.4 0.9 7.9 8.8 0.1 0.2 9.99")
+    # Also add a Q-designated player with modest but positive projection
+    lines.append(
+        "FA Questionable Player Q WR • SF @LAR 22 11 86 63 8 "
+        "0.0 0.0 0.0 0.0 5.0 2.0 30.0 15.0 0.5 0.0 2.00")
+    proj = tmp_path / "with_out.txt"
+    proj.write_text("\n".join(lines) + "\n")
+
+    # Own 5 players including our O-designated player and Q-designated player
+    # Pick four that would otherwise be optimal (high scorers), plus our two
+    # test cases.
+    r = roster_file(tmp_path, ["Highest Scorer Out", "Questionable Player",
+                               "Isaiah Likely", "Sam LaPorta", "Braelon Allen"])
+    rc = main(["week", "--projections", str(proj), "--group", "RB-WR-TE",
+               "--week", "1", "--roster", r, "--waivers"])
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    # The O player must NOT appear in the optimal lineup slots
+    slots_section = out.split("best legal lineup:", 1)[1].split("WAIVER TARGETS", 1)[0]
+    assert "Highest Scorer Out" not in slots_section, \
+        "Highest Scorer Out (designated O) must not appear in any lineup slot"
+
+    # But it MUST be named with its status in the output (visible, not silent)
+    assert "Highest Scorer Out" in out
+    assert "O" in out or "out" in out.lower()
+    assert "excluded" in out.lower(), \
+        "Output must name the O player's exclusion, not silently drop him"
+
+    # The Q player must still start (flagged but not excluded)
+    assert "Questionable Player" in slots_section, \
+        "Questionable Player (designated Q) must appear in a lineup slot"
+
+
+def test_an_out_free_agent_does_not_appear_in_waiver_ranking(tmp_path, capsys):
+    """Finding B: the same bug is live on the waiver side. An Out free agent
+    must not surface in WAIVER TARGETS. This test verifies exclusion."""
+    # Create a projection with an O-designated free agent
+    lines = open(PROJ).read().splitlines()
+    lines.append(
+        "FA Sidelined Free Agent O WR • KC @DEN 22 11 86 63 8 "
+        "0.0 0.0 0.0 0.0 9.9 5.0 75.0 15.0 0.5 0.0 5.99")
+    proj = tmp_path / "with_out_fa.txt"
+    proj.write_text("\n".join(lines) + "\n")
+
+    # Own a subset that leaves room for waivers
+    r = roster_file(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
+                               "Sam LaPorta", "Kyle Pitts", "Elic Ayomanor"])
+    rc = main(["week", "--projections", str(proj), "--group", "RB-WR-TE",
+               "--week", "1", "--roster", r, "--waivers"])
+    out = capsys.readouterr().out
+    assert rc == 0
+
+    # The O free agent must not appear in the waiver ranking
+    rows = waiver_rows(out)
+    names = [name for _pts, _slot, name, _pos in rows]
+    assert "Sidelined Free Agent" not in names, \
+        "Out free agent must not appear in WAIVER TARGETS"
+
+    # But it must be named somewhere in the output (visible exclusion)
+    assert "Sidelined Free Agent" in out, \
+        "Out free agent must be named somewhere in output (excluded message)"

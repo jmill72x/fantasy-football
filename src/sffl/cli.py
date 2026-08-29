@@ -563,15 +563,26 @@ def _cmd_week(args):
     free_rows = [p for k, p in by_key.items() if k not in owned]
     available_rows = []
     excluded_owned = 0
+    excluded_out_free = []
     unclassified_avail = set()
     for p in free_rows:
         status = classify_avail(p.avail, owner_codes)
         if status == "available":
-            available_rows.append(p)
+            if is_out(p.status):
+                excluded_out_free.append(p)
+            else:
+                available_rows.append(p)
         elif status == "owned":
             excluded_owned += 1
         else:
             unclassified_avail.add(p.avail)
+
+    # Free agents designated Out will not take the field and score zero. Exclude
+    # them from waiver ranking - and NAMED, never dropped silently, the same
+    # treatment owned and unclassified rows get.
+    for p in excluded_out_free:
+        print("  %s is %s - excluded from waivers, he will not play"
+              % (p.name, p.status))
 
     if unclassified_avail:
         print("  WARNING: %d distinct avail value(s) not recognized as "
