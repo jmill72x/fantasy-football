@@ -34,7 +34,30 @@ WHEN. Sunday leads with exactly those rows, rendered so the change is the
 point, and pushes rows with no recorded change down into the ordinary
 status block below. When nothing changed, Sunday says so explicitly instead
 of printing an empty "WHAT CHANGED" heading.
+
+THE START/SIT BLOCK (`current_starters`). Task 7's orchestrator found that
+the single most actionable fact in the whole system - the diff between
+Jeff's CURRENT CBS lineup and the optimal one this module already computes -
+never reached the phone, because `compose` had nowhere to put it and was
+printing it to stdout only. `current_starters=None` means the caller does
+not know the current lineup (e.g. capture failed before it could be read);
+that is NOT the same state as `current_starters=[]`, which means "known, and
+nothing is currently started" - a real, renderable state. Comparing on raw
+names would invent phantom moves, since the roster page and the projections
+page disagree about punctuation ("Ja'Marr Chase" vs "JaMarr Chase"), so
+names are compared via `sffl.identity.normalize_name` - the same function
+the rest of this codebase already uses for exactly this mismatch. Importing
+it is this module's first import; it is a plain, pure string function with
+no I/O, so it does not compromise the structural purity this module was
+reviewed for - noted here explicitly so the next reviewer reads it as
+deliberate, not as a regression. The block is placed right after the
+roster-age line, ahead of every news block, because it is the one thing
+here that tells Jeff to actually DO something before kickoff; buried under
+the injury news it would be the least-read line in the message instead of
+the most.
 """
+
+from sffl.identity import normalize_name
 
 # Past this many days, the roster file's age is called out as a problem rather
 # than merely stated. Visible staleness beats invisible staleness.
@@ -96,12 +119,48 @@ def _is_changed(r):
     return bool(r.previous_status) and r.previous_status != r.status
 
 
+def _start_sit_diff(lineup_result, current_starters, sidelined):
+    """(start, sit) display names: optimal lineup vs the CBS current one.
+
+    Compared on `normalize_name`, never on raw strings - the roster page and
+    the projections page disagree about punctuation, and a literal
+    comparison would invent a phantom move for the same player.
+
+    `sidelined` names are dropped from the optimal side before the diff runs
+    at all, so a player excluded because he will not play can never be
+    reported as a "start" - regardless of how he got into `lineup_result`
+    (the optimizer's own candidate pool already omits Out players, but this
+    is the one place that guarantees it rather than assuming it).
+    """
+    sidelined_keys = set(normalize_name(name) for name, _status in sidelined)
+
+    optimal_by_key = {}
+    for _slot, pick in lineup_result.slots:
+        if pick is None:
+            continue
+        key = normalize_name(pick.name)
+        if key in sidelined_keys:
+            continue
+        optimal_by_key[key] = pick.name
+
+    current_by_key = dict((normalize_name(n), n) for n in current_starters)
+
+    start = sorted(optimal_by_key[k] for k in optimal_by_key
+                   if k not in current_by_key)
+    sit = sorted(current_by_key[k] for k in current_by_key
+                if k not in optimal_by_key)
+    return start, sit
+
+
 def compose(kind, roster_age_days, reports, lineup_result, sidelined,
-            capture_error=None):
+            capture_error=None, current_starters=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
-    for roster players excluded from the lineup.
+    for roster players excluded from the lineup. `current_starters` is the
+    list of names CBS currently has starting, if known - `None` means
+    unknown (no diff is rendered); `[]` means known-and-empty (a real state,
+    which CAN render a diff recommending every optimal starter).
     """
     if kind not in _KINDS:
         raise ValueError(
@@ -123,6 +182,25 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
 
     lines.append(_roster_age_line(roster_age_days))
     lines.append("")
+
+    # Placed ahead of every news block, deliberately: this is the one thing
+    # in the whole message that tells Jeff to DO something before kickoff.
+    # `None` means the caller does not know the current lineup (e.g. capture
+    # failed before it could be read) and must not render a diff - that
+    # would falsely claim everything should be benched. `[]` is a known,
+    # real, renderable state: nothing is currently started.
+    if current_starters is not None:
+        start, sit = _start_sit_diff(lineup_result, current_starters, sidelined)
+        lines.append("START / SIT vs your current CBS lineup:")
+        if start or sit:
+            lines.append("  START           SIT")
+            for i in range(max(len(start), len(sit))):
+                a = start[i] if i < len(start) else ""
+                b = sit[i] if i < len(sit) else ""
+                lines.append("    %-15s %s" % (a, b))
+        else:
+            lines.append("  lineup is already optimal - no changes to make.")
+        lines.append("")
 
     if kind == "sunday":
         # Sunday leads with what CHANGED - the feed's own previous_status /
