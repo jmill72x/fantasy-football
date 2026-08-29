@@ -524,7 +524,29 @@ def _cmd_week(args):
         return Candidate(name=p.name, pos=p.pos,
                          points=score_week(lg, p, curves))
 
-    roster = [cand(by_key[k]) for k in owned if k in by_key]
+    # A player designated Out will not take the field and scores zero, so the
+    # optimiser would otherwise start him and report a lineup total that
+    # cannot happen. Excluded here - and NAMED, never dropped silently, the
+    # same treatment `missing` and `not_evaluated` already get, because a
+    # player who quietly vanishes from the board reads as "no longer on your
+    # roster" rather than as "ruled out."
+    from sffl.cbs_weekly import is_out
+    sidelined = sorted((by_key[k].name, by_key[k].status)
+                       for k in owned if k in by_key and is_out(by_key[k].status))
+    for name, status in sidelined:
+        print("  %s is %s - excluded from the lineup, he will not play"
+              % (name, status))
+
+    roster = [cand(by_key[k]) for k in owned
+              if k in by_key and not is_out(by_key[k].status)]
+
+    # Flagged, NOT excluded - see cbs_weekly.OUT_STATUSES.
+    questionable = sorted((by_key[k].name, by_key[k].status)
+                          for k in owned
+                          if k in by_key and by_key[k].status in ("Q", "D"))
+    for name, status in questionable:
+        print("  %s is %s - STARTED anyway; check his status before kickoff"
+              % (name, status))
 
     # F3: `avail` on CBS's ALL PLAYERS view names a genuine free agent
     # ("FA"), a waiver-claimable player ("W (9/16)"), or another manager's

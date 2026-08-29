@@ -18,6 +18,9 @@ class PlayerProjection(object):
     avail: str = ""                 # raw roster-availability token, when the
                                      # source's page carries one (FA/waiver/
                                      # owning-team) - see sffl.cbs_weekly
+    status: str = ""                # raw injury designation from the source's
+                                     # page (Q/D/O/IR/PUP/SUSP/NA), "" when the
+                                     # player carries none - see sffl.cbs_weekly
 
     def key(self):
         from sffl.identity import player_key

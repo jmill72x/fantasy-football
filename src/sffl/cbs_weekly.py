@@ -27,6 +27,21 @@ DEFAULT_PROFILE = "sources/cbs-weekly.yaml"
 # matched as "I" and "SUSP" cannot be matched as "S".
 _STATUS_TAGS = ("SUSP", "PUP", "IR", "NA", "Q", "D", "O")
 
+# The designations that mean the player will not take the field. A player who
+# does not play scores zero, so starting one is a pure loss - this is a
+# correctness gate, not a preference.
+#
+# "Q" AND "D" ARE DELIBERATELY ABSENT. A questionable player usually plays.
+# Benching him on the strength of a Q would lose more points across a season
+# than occasionally starting one who sits, and it would do it silently.
+OUT_STATUSES = frozenset({"O", "IR", "PUP", "SUSP"})
+
+
+def is_out(status):
+    """True if this designation means the player will not play."""
+    return (status or "").strip().upper() in OUT_STATUSES
+
+
 _AVAIL_WAIVER = re.compile(r"^W(\s*\(.*\))?$")
 
 
@@ -165,6 +180,7 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                     raise ValueError(
                         "%s: %r has non-numeric %s %r"
                         % (path, m.group("name"), field_name, token))
+            status = m.group("status1") or m.group("status2") or ""
             out.append(PlayerProjection(
                 name=m.group("name").strip(),
                 team=normalize_team(m.group("team")),
@@ -175,6 +191,7 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                 stats=stats,
                 raw_name=m.group("name").strip(),
                 avail=m.group("avail").strip(),
+                status=status,
             ))
 
     if unmatched:
