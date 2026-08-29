@@ -1,6 +1,6 @@
 import pytest
 
-from sffl.cbs_roster import parse_lineup, parse_roster
+from sffl.cbs_roster import _ROW, parse_lineup, parse_roster
 
 FIXTURE = "tests/fixtures/cbs_team_page.txt"
 
@@ -15,6 +15,29 @@ def test_the_real_captured_page_yields_a_full_roster():
 def test_names_are_unique_and_in_page_order():
     names = parse_roster(FIXTURE)
     assert len(names) == len(set(names))
+    # ORDER, not just uniqueness. The name of this test claimed page order
+    # and asserted nothing about it, so a parser that sorted, reversed, or
+    # emitted starters after reserves passed unchallenged - and page order
+    # is what makes `parse_lineup`'s starters/reserves split meaningful and
+    # what `injuries.for_roster` walks to order its output.
+    #
+    # Pinned against the fixture's own line order, read independently of the
+    # parser: the raw row lines in the order they appear on the page. If the
+    # two ever disagree the parser reordered something.
+    page_order = []
+    with open(FIXTURE) as fh:
+        for line in fh:
+            m = _ROW.match(line.rstrip("\n"))
+            if m:
+                name = m.group("name").strip()
+                if name not in page_order:
+                    page_order.append(name)
+    assert names == page_order
+    # Belt and braces on the two ends, so a subtle mid-list swap is not the
+    # only thing this can catch: the fixture's first row is the TQB and its
+    # last is the final reserve.
+    assert names[0] == "Chargers"
+    assert names[-1] == "Courtland Sutton"
 
 
 def test_the_fixture_has_exactly_thirteen_players():
