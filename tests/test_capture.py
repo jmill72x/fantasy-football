@@ -3,13 +3,14 @@ import pytest
 from sffl import capture
 
 
-def test_a_short_login_page_identified_by_title_alone_raises_session_expired():
+def test_a_short_login_page_identified_by_url_path_alone_raises_session_expired():
     # Real measured page: 284 characters of body text on a login redirect.
-    # Without title/URL signals, the character floor (1000 chars) would be the
-    # only guard, and would fail to catch this.
+    # The /login path in the URL is the signal; the title is unhelpful.
+    # Without the URL signal, the character floor (1000 chars) would be the
+    # only guard, and would fail to catch this case.
     text = "Log In\n\nUse the email address and password for your CBS Sports account."
     url = "https://www.cbssports.com/login?product_abbrev=mgmt&xurl=..."
-    title = capture.SESSION_EXPIRED_TITLE
+    title = "Some Other Page"  # Not SESSION_EXPIRED_TITLE; URL is the signal
     with pytest.raises(capture.SessionExpired) as exc:
         capture.check_page_text(text, url, title)
     assert "log in again" in str(exc.value).lower()
