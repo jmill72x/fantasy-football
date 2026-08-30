@@ -283,3 +283,68 @@ def test_the_2026_prices_pick_starter_over_draftable():
     starter = _report("starter", top10_mae=10.06, top10_bias=-0.25)
     draftable = _report("draftable", top10_mae=9.08, top10_bias=-9.08)
     assert min([starter, draftable], key=top10_cost)["policy"] == "starter"
+
+
+def test_prices_season_reads_the_column_when_present():
+    from sffl.fit import prices_season
+    assert prices_season("data/league/auction-rosters-2026.csv") == 2026
+
+
+def test_prices_season_is_none_when_the_file_predates_the_column(tmp_path):
+    p = tmp_path / "old.csv"
+    p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
+    from sffl.fit import prices_season
+    assert prices_season(str(p)) is None
+
+
+def test_loading_prices_from_the_wrong_season_is_refused(tmp_path):
+    # HOLE 1: this configuration used to run to completion and silently
+    # refit the artifact-era curve. The prices file now states its own
+    # season, so the lie is detectable rather than proxied by the TQB map.
+    from sffl.fit import load_prices
+    p = tmp_path / "prices.csv"
+    p.write_text("player_as_written,price,season\nJA'MARR CHASE,42,2025\n")
+    with pytest.raises(ValueError) as exc:
+        load_prices(str(p), season=2026)
+    assert "2025" in str(exc.value) and "2026" in str(exc.value)
+
+
+def test_a_tqb_map_with_no_season_key_is_refused_when_a_season_is_asserted(tmp_path):
+    # HOLE 2: a map with no season: key used to skip the guard entirely.
+    from sffl.fit import load_prices
+    m = tmp_path / "map.yaml"
+    m.write_text("starters:\n  Joe Burrow: CIN\n")
+    p = tmp_path / "prices.csv"
+    p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
+    with pytest.raises(ValueError) as exc:
+        load_prices(str(p), tqb_starters_path=str(m), season=2026)
+    assert "season" in str(exc.value).lower()
+
+
+def test_a_direct_call_gets_the_same_guard_as_the_cli(tmp_path):
+    # HOLE 3: the guard used to live only in cli._value_pool, so any other
+    # caller bypassed it. It is enforced here now, at the load itself.
+    from sffl.fit import DEFAULT_TQB_STARTERS, load_prices
+    p = tmp_path / "prices.csv"
+    p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
+    with pytest.raises(ValueError):
+        load_prices(str(p), tqb_starters_path=DEFAULT_TQB_STARTERS,
+                    season=2026)  # the default map is 2025
+
+
+def test_a_season_matched_load_still_works():
+    from sffl.fit import load_prices
+    prices = load_prices("data/league/auction-rosters-2026.csv",
+                         tqb_starters_path="identity/tqb-2026-starters.yaml",
+                         season=2026)
+    assert len(prices) > 100
+
+
+def test_omitting_the_season_keeps_the_old_permissive_behaviour(tmp_path):
+    # Callers that genuinely do not know the season (a poc script exploring
+    # a file) are not forced to assert one. The guard binds when a season IS
+    # asserted, which every production path does.
+    from sffl.fit import load_prices
+    p = tmp_path / "prices.csv"
+    p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
+    assert load_prices(str(p)) is not None

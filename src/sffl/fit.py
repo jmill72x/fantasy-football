@@ -51,6 +51,26 @@ def tqb_starters_season(path):
     return int(season) if season is not None else None
 
 
+def prices_season(path):
+    """The season a prices CSV declares, or None if it carries no column.
+
+    The TQB starter map was only ever a PROXY for the prices' season, which is
+    why mismatched prices with a matched map used to pass silently - the two
+    are independent facts and only one was checked. A prices file that states
+    its own season is direct evidence. Files written before the column exists
+    return None and are handled by the caller, loudly.
+    """
+    with open(path, newline="") as fh:
+        reader = csv.DictReader(fh)
+        if reader.fieldnames is None or "season" not in reader.fieldnames:
+            return None
+        for row in reader:
+            value = (row.get("season") or "").strip()
+            if value:
+                return int(value)
+    return None
+
+
 def _load_tqb_starters(path):
     """Map normalized quarterback name -> franchise code for one season.
 
@@ -72,7 +92,7 @@ def _load_tqb_starters(path):
 
 
 def load_prices(path, alias_path=DEFAULT_ALIASES,
-                tqb_starters_path=DEFAULT_TQB_STARTERS):
+                tqb_starters_path=DEFAULT_TQB_STARTERS, season=None):
     """Map canonical player key -> price paid.
 
     Three reconciliations, in order, because the roster sheet is hand typed:
@@ -90,10 +110,49 @@ def load_prices(path, alias_path=DEFAULT_ALIASES,
     `--tqb-starters` CLI flag. Applying the 2025 map to a later roster sheet
     would silently mis-join or silently drop every Team QB price.
 
+    `season`, when given, asserts which season this call believes it is
+    loading - see the guard below. When omitted, no season check runs at all;
+    a caller that genuinely does not know the season (a poc script exploring
+    an unknown file) is not forced to assert one.
+
     Returns a `PriceMap` (a `dict` subclass); `.total_rows` on the result is
     the number of priced rows read from `path`, independent of how many of
     them ended up matching a pool player.
     """
+    # THE GUARD, MOVED HERE FROM cli._value_pool. It lived in the CLI, so any
+    # other caller - a poc script, a notebook, a second league - got
+    # DEFAULT_TQB_STARTERS (the 2025 map) forever with no check. Pairing one
+    # season's prices with another's projections is what produced this
+    # project's largest measurement error, and it is invisible in the output:
+    # every number looks reasonable. A guard that can be bypassed by calling
+    # the function directly is not a guard.
+    #
+    # It binds only when the caller ASSERTS a season. Production paths all do.
+    if season is not None:
+        map_season = tqb_starters_season(tqb_starters_path)
+        if map_season is None:
+            raise ValueError(
+                "%s carries no 'season:' key, so it cannot be checked against "
+                "the %d prices being loaded. A map with no season used to skip "
+                "this check entirely - which is exactly how the wrong map goes "
+                "unnoticed, since it does not fail loudly, it silently "
+                "mis-joins or drops every Team QB price. Add 'season: <year>' "
+                "to the map." % (tqb_starters_path, season))
+        if map_season != season:
+            raise ValueError(
+                "refusing to load %d prices with the %d Team QB starter map "
+                "(%s). Quarterbacks change franchises between Augusts, so the "
+                "wrong map silently mis-joins or drops every Team QB price."
+                % (season, map_season, tqb_starters_path))
+        file_season = prices_season(path)
+        if file_season is not None and file_season != season:
+            raise ValueError(
+                "%s declares season %d but %d was asserted. The prices file's "
+                "own season column is direct evidence, unlike the TQB map "
+                "which is only a proxy - this is the mismatch that used to "
+                "pass silently and refit the artifact-era curve."
+                % (path, file_season, season))
+
     aliases = Resolver(alias_path).aliases
     starters = _load_tqb_starters(tqb_starters_path)
     out = PriceMap()

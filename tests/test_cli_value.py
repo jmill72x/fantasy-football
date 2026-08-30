@@ -82,8 +82,12 @@ def test_a_starter_map_from_another_season_is_refused_not_quietly_used():
               "--policy", "fit", "--prices", PRICES,
               "--tqb-starters", "identity/tqb-2025-starters.yaml"])
     msg = str(e.value)
-    assert "refusing to value 2026 projections against the 2025" in msg
-    assert "--tqb-starters" in msg
+    # The guard now lives in fit.load_prices (Task 2), not in the CLI, so the
+    # wording changed from "refusing to value... projections" to "refusing to
+    # load... prices" -- but the refusal, and the two years it names, did not.
+    assert "refusing to load 2026 prices" in msg
+    assert "2025" in msg
+    assert "identity/tqb-2025-starters.yaml" in msg
 
 
 def test_est_price_column_appears_when_prices_are_supplied(tmp_path, capsys):
