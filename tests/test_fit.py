@@ -586,3 +586,28 @@ def test_a_season_column_of_only_blanks_is_the_same_as_no_column(tmp_path):
     with pytest.warns(UnverifiedPricesSeasonWarning):
         load_prices(str(p), tqb_starters_path="identity/tqb-2026-starters.yaml",
                     season=2026)
+
+
+def test_the_prices_map_carries_its_own_account_of_its_season():
+    # The fact has to travel WITH the prices: it is what stops the workbook
+    # claiming "year-matched by construction" on a run whose stdout says the
+    # season could not be verified.
+    import warnings
+
+    from sffl.fit import load_prices
+    verified = load_prices("data/league/auction-rosters-2026.csv",
+                           tqb_starters_path="identity/tqb-2026-starters.yaml",
+                           season=2026)
+    assert verified.season_verified is True
+    assert verified.source_path == "data/league/auction-rosters-2026.csv"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        unverified = load_prices(
+            "data/league/auction-rosters-2025.csv",
+            tqb_starters_path="identity/tqb-2025-starters.yaml", season=2025)
+    assert unverified.season_verified is False
+
+    # No season asserted means nothing was claimed, so nothing was checked -
+    # which is neither True nor False.
+    assert load_prices("data/league/auction-rosters-2025.csv").season_verified is None
