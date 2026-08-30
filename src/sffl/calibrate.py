@@ -9,6 +9,7 @@ banded stat this module builds a curve from real weekly data:
 Consumers interpolate the curve instead of calling band_points on the mean.
 """
 
+import math
 from collections import defaultdict
 from typing import Dict, List, Set, Tuple
 
@@ -17,6 +18,25 @@ import yaml
 from sffl.scoring import band_points
 
 MIN_WEEKS = 4
+
+# Floor on a player's per-stat mean before his weeks contribute residuals to
+# the pool (see _pooled_residuals / build_curves_pooled below). One unit in
+# the stat's own scale (a yard, a catch, a completion, a point allowed) is
+# small next to the league's own band floors - the lowest yardage band starts
+# at 50 - so this excludes only players whose usage is so marginal that a
+# single incidental play would dominate the ratio r = value / mean and
+# distort the pooled distribution with an artifact of near-zero division,
+# not real scatter. It is NOT a usage cutoff; report the fraction it
+# excludes per stat rather than tuning it away.
+MIN_MEAN_FLOOR = 1.0
+
+# Bounds on how many points build_curves_pooled puts in a stat's grid. The
+# floor keeps a thin/narrow-range stat (e.g. 4 defenses) from collapsing to
+# 1-2 points; the ceiling keeps a wide-range stat from producing an unwieldy
+# curve file. Neither bound was hit by every stat in the 2025 data - see
+# _stat_grid for the density rule that usually decides the count first.
+GRID_MIN_POINTS = 5
+GRID_MAX_POINTS = 200
 
 # Mapping of banded stat names to the positions that can produce them.
 # This filters players to only contribute their relevant stats, avoiding
@@ -68,6 +88,129 @@ def build_curves(lg, lines, min_weeks=MIN_WEEKS):
         curves[stat] = sorted((m, sum(v) / len(v)) for m, v in merged.items())
     for stat in lg.bands:
         curves.setdefault(stat, [])
+    return curves
+
+
+def _pooled_residuals(lines, stat, min_mean=1e-6):
+    """Multiplicative residuals r = weekly_value / player_mean, pooled across players.
+
+    This is the estimator this module is built around. `band()` is known
+    exactly - it is a table in the league profile - so the only unknown is
+    how a player's week scatters around his own mean. A player averaging 20
+    yards who varies +/-50% and one averaging 200 who varies +/-50% produce
+    the SAME residuals (0.5, 1.5, ...): dividing out each player's own mean
+    is what makes it valid to pool his weeks with everyone else's into one
+    shared distribution. That is also what lets more data help here, unlike
+    build_curves: an extra player's weeks sharpen the shared residual
+    distribution instead of adding one more individual anchor to interpolate
+    through.
+
+    Players whose mean is below `min_mean` are skipped entirely (see
+    MIN_MEAN_FLOOR): near zero, r blows up on a single incidental play and
+    the ratio measures division instability, not scatter.
+    """
+    by_player = defaultdict(list)
+    for ln in lines:
+        by_player[ln.player_id].append(ln)
+
+    residuals = []
+    for weeks in by_player.values():
+        vals = [w.stats.get(stat, 0.0) for w in weeks]
+        if not vals:
+            continue
+        mean = sum(vals) / len(vals)
+        if mean < min_mean:
+            continue
+        residuals.extend(v / mean for v in vals)
+    return residuals
+
+
+def _stat_grid(bands, means, min_points=GRID_MIN_POINTS, max_points=GRID_MAX_POINTS):
+    """Choose grid points spanning `means`, dense enough not to skip a band.
+
+    The grid is derived from the data, not hardcoded: its endpoints are the
+    observed min/max player mean for this stat (expected_points clamps
+    outside them, so this is the curve's whole usable domain). Its spacing
+    is derived from the league profile: half the narrowest FINITE band width
+    for this stat (the last band is open-ended by convention - see
+    band_points - and excluded from that computation), which guarantees at
+    least two grid points fall inside the tightest band anywhere in the
+    observed range, so linear interpolation between consecutive anchors can
+    never step clean over a band. GRID_MIN_POINTS/GRID_MAX_POINTS then only
+    correct the extremes: a thin stat (few players, narrow range) from
+    collapsing to 1-2 points, and a wide stat from producing an unwieldy file.
+    """
+    lo, hi = min(means), max(means)
+    if hi <= lo:
+        return [lo]
+
+    finite_widths = [high - low + 1 for low, high, _pts in bands[:-1]]
+    if finite_widths:
+        step = min(finite_widths) / 2.0
+    else:
+        step = (hi - lo) / float(min_points - 1)
+
+    n = int(math.ceil((hi - lo) / step)) + 1
+    n = max(n, min_points)
+    n = min(n, max_points)
+    return [lo + i * (hi - lo) / (n - 1) for i in range(n)]
+
+
+def build_curves_pooled(lg, lines, min_weeks=MIN_WEEKS, grid=None):
+    """Same shape as build_curves, estimated by pooling residuals instead.
+
+    build_curves gives every qualifying player exactly one anchor point - his
+    own (mean, realized) pair - and interpolates straight lines through them,
+    so each additional player is one more individual noisy season for the
+    curve to chase. This is the opposite bet: band() is known exactly, so the
+    only thing to estimate is how a player's weeks scatter around his own
+    mean. _pooled_residuals estimates that scatter from EVERY qualifying
+    week of EVERY qualifying player at once (see its docstring for why
+    pooling is valid), and this function then evaluates
+    E[band(X) | mean=m] ~= mean over pooled residuals of band(m * r)
+    at a grid of means (see _stat_grid). More weekly rows sharpen the shared
+    residual distribution rather than adding anchors to chase.
+
+    The result is smooth and non-decreasing by construction: band() is
+    non-decreasing and every residual is > 0, so m1 < m2 implies
+    m1 * r <= m2 * r for every pooled r, hence band(m1 * r) <= band(m2 * r)
+    and the average over residuals preserves that order.
+
+    `grid`, if given, overrides the derived grid (mainly for tests); the
+    normal path derives it per stat from the data via _stat_grid.
+    """
+    for stat in lg.bands:
+        if stat not in STAT_POSITIONS:
+            raise ValueError("stat {0} in lg.bands has no position mapping".format(stat))
+
+    by_player = defaultdict(list)
+    for ln in lines:
+        by_player[ln.player_id].append(ln)
+
+    curves = {}
+    for stat, table in lg.bands.items():
+        eligible = [
+            weeks for weeks in by_player.values()
+            if len(weeks) >= min_weeks and weeks[0].pos in STAT_POSITIONS[stat]
+        ]
+        if not eligible:
+            curves[stat] = []
+            continue
+
+        means = [sum(w.stats.get(stat, 0.0) for w in weeks) / len(weeks) for weeks in eligible]
+        eligible_lines = [w for weeks in eligible for w in weeks]
+        residuals = _pooled_residuals(eligible_lines, stat, min_mean=MIN_MEAN_FLOOR)
+        if not residuals:
+            curves[stat] = []
+            continue
+
+        stat_grid = grid if grid is not None else _stat_grid(table, means)
+        n = len(residuals)
+        curves[stat] = [
+            (m, sum(band_points(table, m * r) for r in residuals) / n)
+            for m in stat_grid
+        ]
+
     return curves
 
 
