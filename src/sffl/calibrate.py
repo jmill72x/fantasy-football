@@ -133,10 +133,15 @@ def _stat_grid(bands, means, min_points=GRID_MIN_POINTS, max_points=GRID_MAX_POI
     outside them, so this is the curve's whole usable domain). Its spacing
     is derived from the league profile: half the narrowest FINITE band width
     for this stat (the last band is open-ended by convention - see
-    band_points - and excluded from that computation), which guarantees at
-    least two grid points fall inside the tightest band anywhere in the
-    observed range, so linear interpolation between consecutive anchors can
-    never step clean over a band. GRID_MIN_POINTS/GRID_MAX_POINTS then only
+    band_points - and excluded from that computation). Spacing <= half a
+    band's width means floor(width / spacing) >= 1, which guarantees at
+    least ONE grid point falls inside the tightest band anywhere in the
+    observed range - not two, and some bands get exactly one (verified
+    against real data: pass_cmp's [15,19]/[25,29], rec_yds's [100,124], and
+    rec_ct's [5,6]/[7,8] each contain exactly one). One is what the
+    consequence actually needs: linear interpolation between two consecutive
+    anchors can never step clean over a band that has at least one anchor
+    inside it. GRID_MIN_POINTS/GRID_MAX_POINTS then only
     correct the extremes: a thin stat (few players, narrow range) from
     collapsing to 1-2 points, and a wide stat from producing an unwieldy file.
     """
@@ -171,10 +176,19 @@ def build_curves_pooled(lg, lines, min_weeks=MIN_WEEKS, grid=None):
     at a grid of means (see _stat_grid). More weekly rows sharpen the shared
     residual distribution rather than adding anchors to chase.
 
-    The result is smooth and non-decreasing by construction: band() is
-    non-decreasing and every residual is > 0, so m1 < m2 implies
-    m1 * r <= m2 * r for every pooled r, hence band(m1 * r) <= band(m2 * r)
-    and the average over residuals preserves that order.
+    The result is smooth and monotone in m, in whichever direction band()
+    itself runs for that stat (see pool._band_direction, which reads that
+    direction off the table rather than assuming it): every residual is > 0,
+    so m1 < m2 implies m1 * r <= m2 * r for every pooled r, and band() being
+    monotone in the value (non-decreasing for five stats, non-increasing for
+    def_pa/def_ya - see _band_direction's docstring) then forces
+    band(m1 * r) and band(m2 * r) to compare the same way for every r, so
+    the average over residuals preserves that order too. Concretely: on the
+    2025 data the rush_yds curve rises with m, while def_pa and def_ya fall
+    with it (e.g. def_pa 0.926 -> 0.544, def_ya 2.618 -> 0.500 across their
+    grids) - correctly, since allowing more points/yards is worse. This is
+    NOT "non-decreasing" for every stat; it is monotone in band()'s own
+    direction for that stat.
 
     `grid`, if given, overrides the derived grid (mainly for tests); the
     normal path derives it per stat from the data via _stat_grid.
