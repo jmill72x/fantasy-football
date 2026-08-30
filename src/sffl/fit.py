@@ -404,9 +404,15 @@ def top10_cost(report):
     mae: it is already inside mae once, and this counts it again. Pure noise is
     charged once, pure bias twice.
 
-    THE FIGURES ABOVE ARE MEASURED, and pinned by
-    `test_a_lower_top10_mae_does_not_win_when_it_is_all_bias`, which
-    reproduces them from the real 2026 extract and prices. They used to read
+    THE FIGURES ABOVE ARE MEASURED, from the real 2026 extract and prices.
+    `test_a_lower_top10_mae_does_not_win_when_it_is_all_bias` PINS them as
+    constants and records the recipe that produced them in a comment; it
+    cannot re-derive them, because the extract is gitignored licensed data
+    and is not present in a clean checkout. What that test enforces on its
+    own is the RELATIONSHIP between them (draftable's |bias|/mae > 0.95,
+    starter's < 0.6), which is what the decision rests on and what survives
+    a projection refresh. `market/2026.yaml`'s `diagnostics` carries the
+    starter pair from a real run. They used to read
     "$10.34 against bias -$10.34" and "a bias of -$0.25" - the -$0.25 came
     from a different table's dollar band, and starter's real top-10 bias is
     +$5.10. The decision is unchanged either way (the ratio test, not the
