@@ -64,6 +64,20 @@ GROUP_SCOPES = {
     "DST": "DST",
 }
 
+# Which `PlayerProjection.pos` (and `cbs_roster` slot) values each group
+# covers, when it succeeds. `_cmd_alert` uses this to tell a TRANSIENT
+# failure (this run's page for K failed, so a K starter was not scored
+# TODAY) apart from a PERMANENT scope limit (no group covers this position
+# at all) - conflating the two, fixed 2026-08-30 after a reviewer caught it,
+# made a K page that 404s for one run read as "this tool has never captured
+# kickers," which is false and hides the actual, one-run, fixable failure.
+GROUP_POSITIONS = {
+    "RB-WR-TE": frozenset(("RB", "WR", "TE")),
+    "TQB": frozenset(("TQB",)),
+    "K": frozenset(("K",)),
+    "DST": frozenset(("DST",)),
+}
+
 
 def _projections_url(group, week):
     """The CBS weekly-projections URL for one position group's page.
@@ -809,28 +823,39 @@ def _merge_projection_groups(group_rows):
 
     `group_rows` is an ORDERED list of (group_name, [PlayerProjection, ...])
     - one entry per page already parsed with `cbs_weekly.parse(group=...)`.
-    Returns `(merged, owner)`: `merged` is the combined row list; `owner`
-    maps each row's KEY (see below) to whichever group's row is IN `merged`
-    for that key, so a caller that needs to know which page a given row
-    came from (`_cmd_week`'s avail classifier - see below) does not have to
-    re-derive it.
+    Returns `(merged, owner, duplicates)`: `merged` is the combined row
+    list; `owner` maps each row's KEY (see below) to whichever group's row
+    is IN `merged` for that key, so a caller that needs to know which page
+    a given row came from (`_cmd_week`'s avail classifier - see below) does
+    not have to re-derive it; `duplicates` is a list of `(name, pos, team,
+    kept_group, dropped_group)` for every TRUE cross-group duplicate found
+    - EMPTY in the ordinary case. This is printed as a WARNING either way
+    (below), but a caller such as `_cmd_alert` that must not let a
+    duplicate reach the reader as a silent, clean run also needs it as
+    DATA, not just as terminal noise - a warning that only ever reaches
+    stdout is invisible to the pushed digest and to the exit code, unlike
+    every other degradation `_cmd_alert` reports.
 
-    THE KEY IS (normalize_name(p.name), p.pos), NOT NAME ALONE. Found
-    against the real TQB and DST fixtures while wiring this up: CBS's
-    TQB and DST pages both use the NFL TEAM'S NICKNAME as the row's
-    "player name" - e.g. "Chargers" is a genuine row on BOTH pages, one an
-    aggregate of the team's quarterback production, the other of its
-    defense. Every one of the 32 NFL teams collides this way EVERY WEEK -
-    it is not a rare edge case. A name-only key would read all 32 as
-    cross-group duplicates, silently drop one of TQB/DST for every single
-    team, and - worse - make whichever row survived (DST, since it is
-    merged last) answer for the OTHER position's slot: a roster's TQB pick
-    would resolve to a DST-flavored row, get pos="DST", and the TQB slot
-    would render UNFILLED despite a real, correctly-projected pick. Adding
-    `pos` to the key separates "Chargers the team-QB entity" from
-    "Chargers the defense entity" as the two distinct rows they are, so
-    both survive with no warning at all - this is the ordinary, expected
-    shape of the data, not a collision.
+    THE KEY IS `p.key()` - `identity.player_key`'s (name, team, pos), NOT
+    (name, pos) and NOT name alone. Two hazards, both real, found while
+    wiring this up:
+
+    (1) CBS's TQB and DST pages both use the NFL TEAM'S NICKNAME as the
+    row's "player name" - e.g. "Chargers" is a genuine row on BOTH pages,
+    one an aggregate of the team's quarterback production, the other of
+    its defense. Every one of the 32 NFL teams collides this way EVERY
+    WEEK - not a rare edge case. `pos` alone (TQB vs DST) already tells
+    these two apart.
+
+    (2) `pos` alone is NOT enough, though: the NFL has had two
+    simultaneously active players sharing a name at the same position on
+    DIFFERENT teams (two players both named Mike Williams, both WRs, in
+    the same season is real, not hypothetical). A (name, pos) key would
+    read that as one cross-group-style duplicate even within a single
+    RB-WR-TE page and silently drop one of two real players, handing his
+    projection to the other. `team` (already on every `PlayerProjection`,
+    normalized identically to every other vendor source via `identity.
+    normalize_team`) is the field that tells THEM apart.
 
     A player is still expected to appear on exactly one group's page - RB,
     WR, TE and K rows are real individuals, and TQB/DST rows are one team
@@ -838,39 +863,52 @@ def _merge_projection_groups(group_rows):
     order given) to claim a given key wins; every LATER group's claim on
     the SAME key is reported with a WARNING naming both groups and dropped,
     rather than silently kept or silently overwritten - a TRUE duplicate
-    (same name, same position, two different pages) is exactly the kind of
-    merge surprise that must be visible, since it would otherwise either
-    double-count him or silently pick one page's numbers over the other's
-    with no signal either way.
+    (same name, same position, same TEAM, two different pages) is exactly
+    the kind of merge surprise that must be visible, since it would
+    otherwise either double-count him or silently pick one page's numbers
+    over the other's with no signal either way.
+
+    EVEN THIS THREE-FIELD KEY IS A HEURISTIC, NOT A PROVEN-UNIQUE IDENTITY
+    - see `cbs_roster`'s module docstring for the full reasoning and what
+    the durable fix (CBS's own stable player IDs) would cost. Nothing
+    stops two same-named players at the same position on the SAME team
+    from existing in the data (a churn artifact, a data error); that
+    residual case is not silently assumed away - it still lands here as a
+    "duplicate" (same key, different row) and is reported exactly like a
+    cross-group collision, because there is no fourth field left to
+    disambiguate it with.
 
     Deliberately narrower than that: a key repeated WITHIN one group's own
     row list (e.g. a normalize_name suffix collision, "Braelon Allen" vs
-    "Braelon Allen Jr.", both RB) is NOT touched here and both rows pass
-    through unchanged - that is a different, already-handled concern
-    (`_cmd_week`'s own by_key construction warns and keeps the last one),
-    not a cross-group duplicate, and treating it the same way here would
-    silently drop one of two genuinely different players before that
-    existing check ever saw the second row.
+    "Braelon Allen Jr.", both RB on the SAME team) is NOT touched here and
+    both rows pass through unchanged - that is a different, already-handled
+    concern (`_cmd_week`'s own by_key construction warns and keeps the last
+    one; `_cmd_alert`'s own by_key construction, built with the SAME
+    residual-duplicate reporting as this function, catches it too), not a
+    cross-group duplicate, and treating it the same way here would silently
+    drop one of two genuinely different players before those existing
+    checks ever saw the second row.
     """
-    from sffl.identity import normalize_name
-
     merged = []
     owner = {}
+    duplicates = []
     for group_name, rows in group_rows:
         for p in rows:
-            key = (normalize_name(p.name), p.pos)
+            key = p.key()
             if key in owner and owner[key] != group_name:
-                print("  WARNING: %r (%s) appears in both the %s and %s "
-                      "projection groups - a player at that position "
-                      "should be on exactly one group's page. Keeping the "
-                      "%s row, dropping this %s one so the pool is not "
-                      "double-counted."
-                      % (p.name, p.pos, owner[key], group_name, owner[key],
-                         group_name))
+                print("  WARNING: %r (%s, %s) appears in both the %s and "
+                      "%s projection groups - a player at that position, "
+                      "on that team, should be on exactly one group's "
+                      "page. Keeping the %s row, dropping this %s one so "
+                      "the pool is not double-counted."
+                      % (p.name, p.pos, p.team, owner[key], group_name,
+                         owner[key], group_name))
+                duplicates.append((p.name, p.pos, p.team, owner[key],
+                                  group_name))
                 continue
             owner.setdefault(key, group_name)
             merged.append(p)
-    return merged, owner
+    return merged, owner, duplicates
 
 
 def _cmd_week(args):
@@ -904,7 +942,7 @@ def _cmd_week(args):
     group_rows = [(group_name, parse_weekly(path, group=group_name,
                                             week=args.week, season=lg.season))
                  for group_name, path in group_files]
-    projections, owner_group = _merge_projection_groups(group_rows)
+    projections, owner_group, _dupes = _merge_projection_groups(group_rows)
 
     if len(group_files) > 1:
         print("  merged %d position group page(s): %s"
@@ -938,31 +976,49 @@ def _cmd_week(args):
     # raw spellings when it happens.
     #
     # This by_key is keyed by name ALONE, unlike `_merge_projection_groups`'
-    # (name, pos) key - `--roster`/`--current` are plain one-name-per-line
-    # text files with no position column, so a lookup against them can only
-    # ever have a bare name to go on, and keying by_key any other way would
-    # make every roster/current lookup below unable to find its own entries.
-    # The cost, found while wiring up TQB+DST merging: CBS's TQB and DST
+    # `p.key()` (name, team, pos) key - `--roster`/`--current` are plain
+    # one-name-per-line text files with no position OR team column, so a
+    # lookup against them can only ever have a bare name to go on, and
+    # keying by_key any other way would make every roster/current lookup
+    # below unable to find its own entries. The COMPARISON below still
+    # checks pos AND team (not just name) so a same-name collision is
+    # caught regardless of which field actually differs: CBS's TQB and DST
     # pages both use the NFL TEAM NICKNAME as the row name ("Chargers" is a
-    # real row on both), so merging both groups here can hit a SAME-NAME,
-    # DIFFERENT-POSITION collision that `--roster`'s plain-text format has
-    # no way to disambiguate - `by_key[key].pos != p.pos` below still
-    # WARNS and still keeps only the last one (silently answering for BOTH
-    # the TQB and the DST slot with a single row, one of them wrong) rather
-    # than raising, because there is no more information here to resolve it
-    # correctly; a manager who genuinely rosters the same NFL team for both
-    # TQB and DST should read this warning as a real limitation, not a bug
-    # report.
+    # real row on both, same team, different pos), and separately two
+    # different real players can share a name at the same position on
+    # different teams. Either way `--roster`'s plain-text format has no
+    # position or team column to disambiguate with, so the warning below
+    # still WARNS and still keeps only the last one (silently answering for
+    # more than one real roster slot with a single row) rather than
+    # raising, because there is no more information here to resolve it
+    # correctly; a manager who hits this should read the warning as a real
+    # limitation of this command's input format, not a bug report.
+    #
+    # THE WARNING IS RESTRICTED TO `key in owned`. A real capture lists all
+    # 32 NFL teams on both the TQB and DST pages, so this collision fires
+    # for every team merging both groups produces - most of which nobody
+    # on THIS roster has anything to do with. Printing all ~32 every run
+    # buries the one warning that might actually matter under noise at
+    # exit 0 regardless (this function has no exit-code concept); only a
+    # name Jeff actually ROSTERS can produce a wrong start/sit or waiver
+    # read, so only that case is worth interrupting the output for. An
+    # UNOWNED collision is still resolved the same way (last one wins,
+    # silently) - it can only ever cost free-agent-board accuracy for two
+    # names nobody here owns, a pre-existing, lower-severity limitation.
     by_key = {}
     for p in projections:
         key = normalize_name(p.name)
         if key in by_key and (by_key[key].name != p.name
-                              or by_key[key].pos != p.pos):
-            print("  WARNING: %r (%s) and %r (%s) both normalize to the "
-                  "same key - only %r (%s) is kept (last one wins); the "
-                  "other's projection is silently dropped from the pool"
-                  % (by_key[key].name, by_key[key].pos, p.name, p.pos,
-                     p.name, p.pos))
+                              or by_key[key].pos != p.pos
+                              or by_key[key].team != p.team):
+            if key in owned:
+                print("  WARNING: %r (%s, %s) and %r (%s, %s) both "
+                      "normalize to the same key - only %r (%s, %s) is "
+                      "kept (last one wins); the other's projection is "
+                      "silently dropped from the pool"
+                      % (by_key[key].name, by_key[key].pos,
+                         by_key[key].team, p.name, p.pos, p.team, p.name,
+                         p.pos, p.team))
         by_key[key] = p
 
     missing = [n for n in owned_raw if normalize_name(n) not in by_key]
@@ -1061,10 +1117,10 @@ def _cmd_week(args):
     excluded_out_free = []
     unclassified_avail = set()
     for k, p in free_rows:
-        # `owner_group` is keyed (name, pos) - see `_merge_projection_groups`
-        # - not by the plain `by_key`/`owned` name key `k`, so it is
-        # re-derived from the row itself rather than from `k`.
-        status = classify_by_group[owner_group[(k, p.pos)]](p.avail)
+        # `owner_group` is keyed by `p.key()` - see `_merge_projection_
+        # groups` - not by the plain `by_key`/`owned` name key `k`, so it
+        # is re-derived from the row itself rather than from `k`.
+        status = classify_by_group[owner_group[p.key()]](p.avail)
         if status == "available":
             if is_out(p.status):
                 excluded_out_free.append(p)
@@ -1182,6 +1238,22 @@ def _cmd_week(args):
     return 0
 
 
+class _AllProjectionsFailed(Exception):
+    """Every one of the four position-group pages failed this run.
+
+    A DELIBERATELY DISTINCT exception type from `CaptureError`, not a
+    string this module inspects after the fact. `_cmd_alert` needs to tell
+    "the roster capture itself failed" (still `CaptureError`/`ValueError`,
+    unchanged - the roster is a precondition for everything else) apart
+    from "the roster was read fine but every projection page failed" -
+    `compose()` renders the two completely differently (see its
+    docstring), and reusing `CaptureError` for both, caught by the same
+    `except`, was exactly the bug a reviewer caught: the roster-failure
+    prose ("Fix: cbs_login.py") was shown for a projections-only failure,
+    pointing at the wrong fix.
+    """
+
+
 def _cmd_alert(args):
     """Capture, score, and push one digest. The launchd entry point.
 
@@ -1194,13 +1266,14 @@ def _cmd_alert(args):
     import os
 
     from sffl.alert import (POSITION_NOT_CAPTURED, PROJECTION_MISSING,
-                            STALE_INJURIES_MINUTES, compose)
+                            PROJECTION_PAGE_FAILED, STALE_INJURIES_MINUTES,
+                            compose)
     from sffl.calibrate import load_curves
     from sffl.capture import CaptureError, capture
-    from sffl.cbs_roster import parse_lineup, parse_positions
+    from sffl.cbs_roster import parse_lineup_rows
     from sffl.cbs_weekly import is_out
     from sffl.cbs_weekly import parse as parse_weekly
-    from sffl.identity import normalize_name
+    from sffl.identity import player_key
     from sffl.injuries import for_roster, load as load_injuries
     from sffl.league import load_league
     from sffl.lineup import Candidate, best_lineup
@@ -1210,8 +1283,11 @@ def _cmd_alert(args):
     lg = load_league(args.league)
 
     capture_error = None
+    # Distinct from `capture_error` - see `_AllProjectionsFailed`'s
+    # docstring and `compose`'s. Set ONLY when the roster was read fine but
+    # every one of the four projection pages failed.
+    projections_capture_error = None
     roster_names = []
-    starters = []
     # None means "capture never got far enough to know" - distinct from a
     # successful parse that legitimately found nobody starting. `compose`
     # renders those two states differently (see its docstring), so this
@@ -1233,6 +1309,20 @@ def _cmd_alert(args):
     # 404ing in week 6 read as "we've never captured defenses," which is
     # false and hides the actual, fixable failure.
     group_failures = []
+    # (name, pos, kept_group, dropped_group) for every TRUE cross-group
+    # projection duplicate `_merge_projection_groups` found - EMPTY in the
+    # ordinary case. Tracked here (not just printed inside the merge) so
+    # it can also reach the pushed body and the exit code, like every
+    # other degradation this command reports.
+    cross_group_duplicates = []
+    # (name, pos, team) for every projection row that STILL collides after
+    # keying on all three fields - see the by_key construction below and
+    # `cbs_roster`'s module docstring's "THE COMPOSITE KEY IS A HEURISTIC"
+    # note. EMPTY in the ordinary case; the key is a strong disambiguator
+    # but not a PROVEN-unique one, so this is the safety net for whatever
+    # it still cannot tell apart (e.g. two same-named players at the same
+    # position on the same team).
+    residual_projection_duplicates = []
 
     try:
         # ROSTER FIRST, its own capture() call, and any failure here still
@@ -1242,14 +1332,23 @@ def _cmd_alert(args):
         roster_written = capture({"roster": args.team_url}, args.out_dir,
                                  args.profile_dir)
         roster_path = roster_written[args.team_url]
-        # parse_lineup, not parse_roster: the page also carries Jeff's
-        # CURRENT starting lineup, which is the actual start/sit value -
-        # compose() renders it against the optimum below. `starters` and
-        # `reserves` together are the same player set `parse_roster` would
-        # return.
-        starters, reserves = parse_lineup(roster_path)
-        current_starters = starters
-        roster_names = starters + [n for n in reserves if n not in starters]
+        # parse_lineup_rows, not parse_lineup/parse_roster: the page also
+        # carries Jeff's CURRENT starting lineup, which is the actual
+        # start/sit value - compose() renders it against the optimum
+        # below. Each `RosterRow(name, slot, team)` keeps its own slot AND
+        # team rather than collapsing by name alone (see cbs_roster's
+        # module docstring) - the fix for a real, reproduced bug: a
+        # roster carrying the SAME NFL team for both TQB and DST used to
+        # silently lose the second row's slot entirely, rendering that
+        # slot `-- UNFILLED` at exit 0 with no mention anywhere.
+        starter_rows, reserve_rows = parse_lineup_rows(roster_path)
+        roster_rows = starter_rows + [r for r in reserve_rows
+                                      if r not in starter_rows]
+        # `current_starters` is (name, pos, team) triples, not bare names -
+        # see `alert.compose`'s docstring for why name alone cannot tell
+        # two same-named starters apart (the same Chargers TQB/DST shape).
+        current_starters = [(r.name, r.slot, r.team) for r in starter_rows]
+        roster_names = [r.name for r in roster_rows]
         age_days = int(
             (datetime.datetime.now()
              - datetime.datetime.fromtimestamp(os.path.getmtime(roster_path)))
@@ -1289,40 +1388,75 @@ def _cmd_alert(args):
 
         if not group_rows:
             # Every single position-group page failed - the projections
-            # half of this run learned NOTHING, which is the same class of
-            # failure as the roster capture failing outright: nothing
-            # downstream can be trusted, so this is raised (not merely
-            # logged in group_failures) to fall into the same
-            # capture_error path that suppresses the whole lineup below.
-            raise CaptureError(
+            # half of this run learned NOTHING. Nothing downstream can be
+            # SCORED, but the ROSTER above was read fine, which is a
+            # meaningfully different failure from the roster capture
+            # failing outright - `_AllProjectionsFailed` (not
+            # `CaptureError`) keeps the two apart all the way to `compose`,
+            # which renders a message that says so and does NOT tell the
+            # reader to re-run cbs_login.py for a problem login had nothing
+            # to do with.
+            raise _AllProjectionsFailed(
                 "all %d position-group projection pages failed to capture "
                 "or parse: %s" % (
                     len(ALERT_GROUPS),
                     "; ".join("%s (%s)" % (g, m) for g, m in group_failures)))
 
-        projections, _owner_group = _merge_projection_groups(group_rows)
+        projections, _owner_group, cross_group_duplicates = (
+            _merge_projection_groups(group_rows))
 
-        # `starter_positions` (it covers every rostered player, reserves
-        # included - see `cbs_roster.parse_positions` - not only starters)
-        # comes first here because `by_key`/`owned` below both need it: the
-        # roster PAGE prints a position for every row it carries, unlike
-        # `sffl week`'s plain-text --roster file, which does not.
-        starter_positions = parse_positions(roster_path)
-
-        # Keyed (normalize_name(name), pos), NOT name alone - see
-        # `_merge_projection_groups`'s docstring. CBS's TQB and DST pages
-        # both use the NFL TEAM NICKNAME as a row's "player name", so
-        # "Chargers" is a real, distinct row on BOTH pages every week. A
-        # name-only key here would let whichever position happened to merge
-        # last (DST) silently answer for the OTHER slot too: a rostered TQB
-        # pick would resolve to a DST-flavored row, and the TQB slot would
-        # render UNFILLED despite a real, correctly-projected pick - found
-        # live against the real TQB/DST fixtures while wiring this up.
+        # Keyed on `p.key()` - `identity.player_key`'s (name, team, pos), the
+        # SAME identity `_merge_projection_groups` uses and every other
+        # vendor source in this project already resolves through. NOT
+        # (name, pos): the NFL has had two simultaneously active players
+        # sharing a name at the same position on DIFFERENT teams (real, not
+        # hypothetical - see `_merge_projection_groups`'s docstring), and a
+        # (name, pos) key would silently merge them, handing one player's
+        # projection to the other. THIS KEY IS STILL A HEURISTIC, NOT A
+        # PROVEN-UNIQUE IDENTITY - see `cbs_roster`'s module docstring for
+        # why and what the durable fix would cost - so a residual collision
+        # (two rows that still share this key) is DETECTED and REPORTED
+        # here, exactly like `_merge_projection_groups`'s cross-group one,
+        # never silently resolved by keeping the first and dropping the
+        # second. This also naturally catches a within-group duplicate
+        # `_merge_projection_groups` deliberately leaves untouched (see its
+        # docstring) whenever that duplicate is a TRUE one rather than a
+        # normalize_name suffix collision between two different real
+        # players (those have different keys here too, since name differs).
         by_key = {}
         for p in projections:
-            by_key[(normalize_name(p.name), p.pos)] = p
-        owned = [(normalize_name(n), starter_positions.get(n))
-                for n in roster_names]
+            key = p.key()
+            if key in by_key and by_key[key] is not p:
+                print("  WARNING: %r (%s, %s) appears more than once in "
+                      "the merged projections pool even after keying on "
+                      "name, position, AND team - keeping the first row "
+                      "seen, dropping this one so the pool is not "
+                      "double-counted."
+                      % (p.name, p.pos, p.team))
+                residual_projection_duplicates.append((p.name, p.pos, p.team))
+                continue
+            by_key[key] = p
+
+        # Each `RosterRow` already knows its OWN slot and team - no more
+        # "which position does this bare name mean" ambiguity to detect:
+        # `parse_lineup_rows` never collapsed the Chargers TQB/DST case (or
+        # any other same-name-different-row case) in the first place, so
+        # each row is looked up independently and CORRECTLY, not merely
+        # flagged as unresolvable.
+        owned = [player_key(r.name, r.team, r.slot) for r in roster_rows]
+
+        # Which positions had NO usable data this run because their OWN
+        # page failed to capture or parse - as opposed to a position no
+        # group covers at all (a permanent scope limit). Checked BEFORE
+        # `covered_positions` below in the loop, because a failed group's
+        # position is also, incidentally, absent from `covered_positions`
+        # (no rows came back from it) - without this check that transient,
+        # one-run failure would misreport as "this pipeline has never
+        # captured this position," which is false and was flagged by a
+        # reviewer against a stubbed K-page failure.
+        failed_positions = set()
+        for failed_group, _reason in group_failures:
+            failed_positions |= GROUP_POSITIONS.get(failed_group, frozenset())
 
         # C1. Which of CBS's eight starters could not be scored at all, and
         # WHY. Before this task only RB-WR-TE was ever captured, so the TQB,
@@ -1337,28 +1471,34 @@ def _cmd_alert(args):
         # contained - and after this task that is ordinarily all four
         # groups, not one. A starter whose position IS covered and who
         # still has no row is a different animal - a data problem, not a
-        # scope limit - and the two must not be reported as one thing. Note
-        # that a position whose ONLY page failed this run (see
-        # `group_failures` above) also reads as "not covered" here, which
-        # is why the DEGRADED banner appended to the body below exists: it
-        # is the thing that tells the two apart for a reader of the digest.
+        # scope limit - and the two must not be reported as one thing.
         covered_positions = set(p.pos for p in projections)
         unevaluated_starters = []
-        for name in starters:
-            pos = starter_positions.get(name, "")
-            if (normalize_name(name), pos) in by_key:
+        for row in starter_rows:
+            key = player_key(row.name, row.team, row.slot)
+            if key in by_key:
                 continue
-            why = (PROJECTION_MISSING if pos and pos in covered_positions
-                   else POSITION_NOT_CAPTURED)
-            unevaluated_starters.append((name, pos, why))
+            if row.slot in failed_positions:
+                why = PROJECTION_PAGE_FAILED
+            elif row.slot and row.slot in covered_positions:
+                why = PROJECTION_MISSING
+            else:
+                why = POSITION_NOT_CAPTURED
+            unevaluated_starters.append((row.name, row.slot, why))
 
         sidelined = sorted((by_key[k].name, by_key[k].status)
                            for k in owned
                            if k in by_key and is_out(by_key[k].status))
         result = best_lineup(lg, [
             Candidate(name=by_key[k].name, pos=by_key[k].pos,
-                      points=score_week(lg, by_key[k], curves))
+                      points=score_week(lg, by_key[k], curves),
+                      team=by_key[k].team)
             for k in owned if k in by_key and not is_out(by_key[k].status)])
+    except _AllProjectionsFailed as exc:
+        # Checked as its OWN except, ahead of (never merged into)
+        # CaptureError/ValueError below - see the class's own docstring for
+        # why conflating the two misdirects the reader to the wrong fix.
+        projections_capture_error = str(exc)
     except (CaptureError, ValueError) as exc:
         capture_error = str(exc)
 
@@ -1441,7 +1581,8 @@ def _cmd_alert(args):
                    current_starters=current_starters,
                    unevaluated_starters=unevaluated_starters,
                    injury_error=injury_error,
-                   injuries_age_minutes=injuries_age_minutes)
+                   injuries_age_minutes=injuries_age_minutes,
+                   projections_capture_error=projections_capture_error)
 
     # A PARTIAL capture failure - one to three of the four position-group
     # pages, with the roster and at least one other page still good - must
@@ -1453,10 +1594,11 @@ def _cmd_alert(args):
     # `compose` above already rendered a real (if partial) lineup from
     # whatever DID come back, per the per-page isolation in the try block -
     # so this banner supplements that lineup instead of replacing it.
-    # Skipped when `capture_error` fired: that banner already says nothing
-    # could be verified at all, and a per-group breakdown under it would
-    # bury the one fact that matters.
-    if group_failures and not capture_error:
+    # Skipped when `capture_error` OR `projections_capture_error` fired:
+    # both of those already say nothing (or nothing scoreable) could be
+    # verified at all, and a per-group breakdown under either would bury
+    # the one fact that matters.
+    if group_failures and not capture_error and not projections_capture_error:
         banner = ["!! PROJECTIONS DEGRADED: %d of %d position-group page(s) "
                   "could not be captured or parsed this run:"
                   % (len(group_failures), len(ALERT_GROUPS))]
@@ -1468,6 +1610,41 @@ def _cmd_alert(args):
             "same as a position this pipeline never covers (see NOT "
             "EVALUATED above, if present).")
         body = body + "\n\n" + "\n".join(banner)
+
+    # A TRUE cross-group projection duplicate (the same name, position, AND
+    # team claimed by two different pages - see `_merge_projection_groups`)
+    # is printed as a WARNING there, but that print reaches stdout ONLY -
+    # unlike every other degradation this command reports, it never
+    # reached the pushed body or the exit code before a reviewer flagged
+    # it. It does now, on the same terms as the group-failure banner above.
+    if (cross_group_duplicates and not capture_error
+            and not projections_capture_error):
+        dup_banner = ["!! %d cross-group projection duplicate(s) found - a "
+                      "player was claimed by more than one of the four "
+                      "pages, even after matching on name, position, AND "
+                      "team:" % len(cross_group_duplicates)]
+        for name, pos, team, kept_group, dropped_group in cross_group_duplicates:
+            dup_banner.append(
+                "  - %s (%s, %s): kept the %s row, dropped the %s one"
+                % (name, pos, team, kept_group, dropped_group))
+        body = body + "\n\n" + "\n".join(dup_banner)
+
+    # A RESIDUAL projection duplicate - two rows that still share the same
+    # (name, pos, team) key even after that composite key was applied. The
+    # key is a strong disambiguator but a HEURISTIC, not a proven-unique
+    # identity (see cbs_roster's module docstring) - this is the loud
+    # safety net for whatever it still could not tell apart, rather than
+    # silently keeping the first row and dropping the second.
+    if (residual_projection_duplicates and not capture_error
+            and not projections_capture_error):
+        residual_banner = [
+            "!! %d residual projection duplicate(s) found - a row shared "
+            "its full name/position/team identity with an earlier one and "
+            "was dropped rather than silently kept:"
+            % len(residual_projection_duplicates)]
+        for name, pos, team in residual_projection_duplicates:
+            residual_banner.append("  - %s (%s, %s)" % (name, pos, team))
+        body = body + "\n\n" + "\n".join(residual_banner)
 
     print(body)
 
@@ -1498,9 +1675,12 @@ def _cmd_alert(args):
         print("\n[DELIVERY FAILED] %s" % exc)
         delivery_error = exc
 
-    # A capture failure, a DEGRADED run (the injury fetch produced nothing,
-    # or produced something that is not from this run, or one to three of
-    # the four position-group pages failed - `group_failures`), or a
+    # A capture failure, an all-projections failure, a DEGRADED run (the
+    # injury fetch produced nothing, or produced something that is not
+    # from this run, or one to three of the four position-group pages
+    # failed - `group_failures` - or a cross-group projection duplicate was
+    # found, or a residual (name, pos, team) collision survived even the
+    # full composite key - see `residual_projection_duplicates`), or a
     # delivery failure is each visible in a way launchd's log must be able
     # to see, so each makes the exit code non-zero - but they are DIFFERENT
     # failures (nothing produced, vs. an alert missing half its content,
@@ -1508,8 +1688,10 @@ def _cmd_alert(args):
     # above, not the exit code, is what tells them apart. A missing
     # --injuries argument is NOT counted here: that is a deliberate
     # invocation, not a failed step, and it is still stated in the body.
-    return 1 if (capture_error or injury_fetch_failed or delivery_error
-                or group_failures) else 0
+    return 1 if (capture_error or projections_capture_error
+                or injury_fetch_failed or delivery_error or group_failures
+                or cross_group_duplicates
+                or residual_projection_duplicates) else 0
 
 
 def main(argv=None):

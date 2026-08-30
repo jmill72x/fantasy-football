@@ -16,7 +16,19 @@ heuristic.
 
 from collections import namedtuple
 
-Candidate = namedtuple("Candidate", "name pos points")
+# `team` is OPTIONAL (defaults to "") and unused by every function in this
+# module - `best_lineup`/`delta` only ever read `.pos`/`.points`/`.name`, and
+# it has NO EFFECT on which lineup is chosen. It exists purely so a CALLER
+# (`sffl.cli._cmd_alert`) can round-trip a candidate's team through to
+# `sffl.alert._start_sit_diff`, which needs (name, pos, team) - not name
+# alone, and not even (name, pos) - to tell two rostered picks that share a
+# display name apart (an NFL team rostered for both TQB and DST is a real,
+# reproduced case; two different NFL players sharing a name is a real,
+# documented one - see identity.player_key, which this field lets a caller
+# reconstruct for a Candidate the same way it already can for a
+# PlayerProjection). Added with a default so every existing call site that
+# never mentions `team` - this module's own tests included - is unaffected.
+Candidate = namedtuple("Candidate", "name pos points team", defaults=("",))
 LineupResult = namedtuple("LineupResult", "slots total")
 
 _FLEX = ("RB", "WR", "TE")

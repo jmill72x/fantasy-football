@@ -15,6 +15,43 @@ still UNMERGED.** It has had three pre-merge fix waves, all on 2026-08-28: a rev
 (C1/I1-I5/I8), a verification-pass wave (F1/F3/F4/F5/F8), and a second C1 wave (the
 monotone-envelope fix). See the status table below and "What works today."
 
+**A sixth, still later addition: full position coverage (TQB/K/DST) lives on branch
+`position-coverage`, UNMERGED, as of 2026-08-30.** `sffl alert`/`sffl week` now capture
+and score all eight lineup slots, not five - see `docs/superpowers/specs/
+2026-08-30-full-position-coverage.md` and the plan alongside it.
+
+**THE MERGE/LOOKUP IDENTITY KEY IS A HEURISTIC, NOT A STABLE ID - record this so it is not
+re-discovered the hard way.** Merging TQB/K/DST meant a projection row and a roster row can
+now legitimately share a display name (CBS's TQB and DST pages both use the NFL TEAM
+NICKNAME as a row's "player name" - "Chargers" is a genuine row on both), and separately,
+two different real NFL players can share a name at the same position on different teams
+(this has actually happened - two players both named Mike Williams, both WRs, in the same
+season). `sffl.identity.player_key`'s (name, team, pos) triple - already used by every
+vendor source in this project - is what `_merge_projection_groups` and `_cmd_alert`'s own
+by_key now key on for the weekly path too, and `cbs_roster.parse_lineup_rows` carries a
+roster row's own (name, slot, team) so it is never collapsed by name alone. **This triple
+is a strong disambiguator, found sufficient for every real case encountered so far, but it
+is NOT provably unique** - nothing stops two same-named players at the same position on the
+SAME team from existing in CBS's data (a churn artifact, a data error). Both
+`_merge_projection_groups` and `_cmd_alert` detect a residual collision on this key and
+report it loudly (a WARNING, the pushed alert body, and a non-zero exit) rather than
+silently keeping one row and dropping the other - but they cannot MAGICALLY resolve it,
+because there is no fourth field visible on these pages to disambiguate with.
+
+**THE DURABLE FIX WOULD BE CBS's OWN STABLE PLAYER IDs**, not a composite of visible
+fields. The roster page's player links carry one (`players/playerpage/<id>`, e.g. Ja'Marr
+Chase's); the projections pages almost certainly do too. **Not implemented, and not cheap
+to add**: `sffl.capture.capture` saves `page.inner_text("body")` - plain text - which
+discards every href on the page. Capturing IDs would mean changing the capture layer to
+read HTML or evaluate link hrefs in-page instead of `inner_text`, re-capturing and rebuilding
+every fixture this project's test suite depends on (`tests/fixtures/cbs_*`), and threading
+an ID field through `cbs_roster.py`/`cbs_weekly.py`/`PlayerProjection`/the scoring pipeline.
+That is a capture-layer change, larger than any single fix round taken on this branch so
+far - a real project, not a quick follow-up, and correctly out of scope for the
+position-coverage plan. If a residual-duplicate report is ever seen in production, THIS is
+the fix that actually closes the gap; the composite key is the interim, honestly-labelled
+heuristic standing in for it.
+
 **Jeff is not attending the auction.** A surrogate drafts for him on 08-26. **Jeff owns the
 BID; the surrogate owns the SELECTION.** The Excel + `Key & Intel` sheet is the deliverable;
 the PDF/iPad path is no longer the primary artifact and no annotation app needs buying.

@@ -4,12 +4,19 @@ TQB, K, DST) into ONE pool before `best_lineup` runs.
 WHAT THIS FILE PINS.
 
 1. `_merge_projection_groups` (the pure merge/dedup helper `_cmd_week` and
-   `_cmd_alert` both call) combines rows from several groups correctly,
-   reports a TRUE cross-group duplicate rather than silently keeping one,
-   and - the real, non-hypothetical hazard found while wiring this up -
-   does NOT mistake CBS's TQB and DST pages sharing the NFL team nickname
-   as a "player name" ("Chargers" is a genuine, distinct row on BOTH pages
-   every week) for a duplicate.
+   `_cmd_alert` both call) keys on `identity.player_key`'s (name, team,
+   pos) - not (name, pos), and not name alone - so it combines rows from
+   several groups correctly: it does NOT mistake CBS's TQB and DST pages
+   sharing the NFL team nickname as a "player name" ("Chargers" is a
+   genuine, distinct row on BOTH pages every week) for a duplicate, it
+   does NOT merge two real different players sharing a name at the same
+   position on different teams (a real NFL shape, not hypothetical), and
+   it DOES report a TRUE duplicate - same name, position, AND team - rather
+   than silently keeping one. `_cmd_alert`'s own by_key construction uses
+   the same key and the same "detect and report, never silently drop"
+   discipline for whatever survives merging (see the residual-duplicate
+   tests below) - the key is a strong disambiguator, not a proven-unique
+   identity (see `cbs_roster`'s module docstring).
 
 2. `sffl week --projections-tqb/-k/-dst` merges four saved pages into one
    pool and fills all eight lineup slots, with `--group`/`--projections`
@@ -20,7 +27,9 @@ WHAT THIS FILE PINS.
    PUSHED BODY ITSELF, not only on stdout - when one of the four position-
    group pages fails to capture or parse, while STILL producing a lineup
    from the other three. It never silently reproduces `-- UNFILLED` in a
-   slot whose page simply failed this run.
+   slot whose page simply failed this run, nor does a same-named roster
+   entry (the Chargers TQB/DST shape) - `cbs_roster.parse_lineup_rows`
+   resolves both correctly and independently instead.
 
 NO TEST HERE REACHES THE NETWORK OR LAUNCHES A BROWSER: `sffl.capture.capture`
 is monkeypatched exactly as `test_cli_alert.py` does it.
@@ -51,7 +60,7 @@ def _proj(name, pos, team="XX"):
 # --- _merge_projection_groups: the pure merge/dedup logic ------------------
 
 def test_merge_combines_rows_from_every_group():
-    merged, _owner = _merge_projection_groups([
+    merged, _owner, dupes = _merge_projection_groups([
         ("RB-WR-TE", [_proj("Ja'Marr Chase", "WR")]),
         ("TQB", [_proj("Chargers", "TQB")]),
         ("K", [_proj("Jake Bates", "K")]),
@@ -65,7 +74,7 @@ def test_a_true_cross_group_duplicate_is_reported_and_not_double_counted(
         capsys):
     # Same name AND same position, claimed by two different groups - the
     # one real "duplicate player" shape the brief warns about.
-    merged, owner = _merge_projection_groups([
+    merged, owner, dupes = _merge_projection_groups([
         ("RB-WR-TE", [_proj("Ghost Player", "RB")]),
         ("TQB", [_proj("Ghost Player", "RB")]),
     ])
@@ -74,7 +83,12 @@ def test_a_true_cross_group_duplicate_is_reported_and_not_double_counted(
     assert "WARNING" in out
     assert "Ghost Player" in out
     assert "RB-WR-TE" in out and "TQB" in out
-    assert owner[("ghost player", "RB")] == "RB-WR-TE"
+    assert owner[_proj("Ghost Player", "RB").key()] == "RB-WR-TE"
+    # The SAME fact returned as DATA, not just printed - a caller such as
+    # `_cmd_alert` needs this to reach the pushed body and the exit code,
+    # not merely stdout (a reviewer found the stdout-only print was the
+    # ONLY degradation in `sffl alert` that never reached either).
+    assert dupes == [("Ghost Player", "RB", "XX", "RB-WR-TE", "TQB")]
 
 
 def test_the_same_team_nickname_on_tqb_and_dst_pages_is_not_a_collision(
@@ -88,15 +102,16 @@ def test_the_same_team_nickname_on_tqb_and_dst_pages_is_not_a_collision(
     # whichever position merged last would silently answer for the other
     # slot too. Keying on (name, pos) keeps both with no warning at all,
     # because this is the ordinary shape of the data, not a collision.
-    merged, owner = _merge_projection_groups([
+    merged, owner, dupes = _merge_projection_groups([
         ("TQB", [_proj("Chargers", "TQB")]),
         ("DST", [_proj("Chargers", "DST")]),
     ])
     out = capsys.readouterr().out
     assert len(merged) == 2
     assert "WARNING" not in out
-    assert owner[("chargers", "TQB")] == "TQB"
-    assert owner[("chargers", "DST")] == "DST"
+    assert dupes == []
+    assert owner[_proj("Chargers", "TQB").key()] == "TQB"
+    assert owner[_proj("Chargers", "DST").key()] == "DST"
 
 
 def test_a_within_group_suffix_collision_passes_through_unmerged():
@@ -105,7 +120,7 @@ def test_a_within_group_suffix_collision_passes_through_unmerged():
     # `_cmd_week`'s own by_key loop (test_cli_week.py) already warns about
     # and resolves exactly this case; the merge step must not pre-empt it
     # by dropping one before that check ever sees it.
-    merged, _owner = _merge_projection_groups([
+    merged, _owner, dupes = _merge_projection_groups([
         ("RB-WR-TE", [_proj("Braelon Allen", "RB"),
                       _proj("Braelon Allen Jr.", "RB")]),
     ])
@@ -115,14 +130,38 @@ def test_a_within_group_suffix_collision_passes_through_unmerged():
 def test_group_order_decides_which_side_of_a_true_duplicate_survives():
     # The FIRST group given wins - documented behavior, not an accident of
     # dict ordering. Reversing the input order flips which row survives.
+    # SAME team on both, unlike the test below - that is what makes this a
+    # genuine (name, pos, team) duplicate rather than two different real
+    # players.
     a = _proj("Ghost Player", "RB", team="AAA")
-    b = _proj("Ghost Player", "RB", team="BBB")
-    merged1, _ = _merge_projection_groups(
+    b = _proj("Ghost Player", "RB", team="AAA")
+    merged1, _, dupes1 = _merge_projection_groups(
         [("RB-WR-TE", [a]), ("TQB", [b])])
-    merged2, _ = _merge_projection_groups(
+    merged2, _, dupes2 = _merge_projection_groups(
         [("TQB", [b]), ("RB-WR-TE", [a])])
-    assert merged1[0].team == "AAA"
-    assert merged2[0].team == "BBB"
+    assert len(merged1) == 1 and merged1[0] is a
+    assert len(merged2) == 1 and merged2[0] is b
+    assert dupes1 and dupes2
+
+
+def test_two_different_players_sharing_name_and_position_both_survive_the_merge():
+    # THE OWNER'S CORE POINT: (name, pos) is NOT enough. The NFL has had
+    # two simultaneously active players named Mike Williams, both WRs, on
+    # different teams - a name+pos-only key would misread this as one
+    # cross-group-style duplicate and silently drop one, handing his
+    # projection to the other. `team` is what tells them apart, and they
+    # are not even in different GROUPS here - both are plain RB-WR-TE rows,
+    # which is the realistic shape (two different WRs on one page).
+    lac_williams = _proj("Mike Williams", "WR", team="LAC")
+    nyj_williams = _proj("Mike Williams", "WR", team="NYJ")
+    merged, owner, dupes = _merge_projection_groups([
+        ("RB-WR-TE", [lac_williams, nyj_williams]),
+    ])
+    assert len(merged) == 2
+    assert dupes == []
+    assert owner[lac_williams.key()] == "RB-WR-TE"
+    assert owner[nyj_williams.key()] == "RB-WR-TE"
+    assert set(p.team for p in merged) == {"LAC", "NYJ"}
 
 
 # --- `sffl week`: merging four saved pages into one pool -------------------
@@ -134,17 +173,16 @@ def _roster(tmp_path, names):
 
 
 def test_week_merges_all_four_groups_into_one_lineup(tmp_path, capsys):
-    # "Titans" (TQB) and "Broncos" (DST) are the roster's picks, chosen
-    # because NEITHER team's nickname is the OWNED one that collides below
-    # (the TQB and DST fixtures both happen to carry "Chargers" and
-    # "Dolphins" rows - real teams on both real pages, unowned here). Those
-    # two collisions still fire their WARNING (a REAL, universal hazard on
-    # a full 32-team capture - see the dedicated collision test below) even
-    # though neither is rostered; the point of THIS test is that the
-    # merge still correctly fills every slot for the OWNED, non-colliding
-    # names despite that noise - the feature remains usable, not silently
-    # broken, in the presence of an expected, already-reported collision
-    # elsewhere in the pool.
+    # "Titans" (TQB) and "Broncos" (DST) are the roster's picks. The TQB
+    # and DST fixtures also both happen to carry "Chargers" and "Dolphins"
+    # rows - real teams on both real pages - but NEITHER is rostered here.
+    # Fix round 1's minor: the by_key collision warning is restricted to
+    # names actually IN `owned` (see the code comment above `by_key` in
+    # `_cmd_week`), precisely so an unrelated, unowned pool-wide collision
+    # like this one does NOT print at all - only a collision that could
+    # actually produce a wrong start/sit or waiver read is worth
+    # interrupting the output for. This test pins the quiet case; the
+    # dedicated collision test below pins the loud one.
     r = _roster(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
                            "Sam LaPorta", "Kyle Pitts", "Braelon Allen",
                            "Titans", "Jake Bates", "Broncos"])
@@ -156,11 +194,9 @@ def test_week_merges_all_four_groups_into_one_lineup(tmp_path, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "merged 4 position group page(s)" in out
-    # The Chargers/Dolphins collisions are EXPECTED and reported (see
-    # test_week_a_team_nickname_owned_for_both_tqb_and_dst_warns_and_
-    # loses_one_side) - neither is rostered here, so they must not affect
-    # this roster's own, unambiguous names.
-    assert "'Chargers'" in out and "'Dolphins'" in out
+    # The unowned Chargers/Dolphins collision is real but irrelevant to
+    # this roster, so it must NOT be printed at all.
+    assert "WARNING" not in out
 
     slots = out.split("best legal lineup:", 1)[1].split("WAIVER TARGETS", 1)[0]
     assert "Titans" in slots
@@ -198,7 +234,7 @@ def test_week_a_team_nickname_owned_for_both_tqb_and_dst_warns_and_loses_one_sid
     out = capsys.readouterr().out
     assert rc == 0
     assert "WARNING" in out
-    assert "'Chargers' (TQB)" in out and "'Chargers' (DST)" in out
+    assert "'Chargers' (TQB, LAC)" in out and "'Chargers' (DST, LAC)" in out
 
 
 def test_week_without_the_new_flags_is_unaffected_by_their_existence(
@@ -302,6 +338,11 @@ def alert_env(tmp_path, monkeypatch):
         def fail_group(self, name, exc):
             state["group_errors"][name] = exc
 
+        def set_path(self, name, path):
+            """Override the saved page served for "roster", "RB-WR-TE",
+            "TQB", "K", or "DST"."""
+            state["paths"][name] = str(path)
+
         def run(self, capsys, *extra):
             argv = ["alert", "--kind", "friday", "--week", "1",
                     "--out-dir", str(tmp_path / "out"),
@@ -400,4 +441,171 @@ def test_no_failures_at_all_prints_no_degraded_banner(alert_env, capsys):
     code, out = alert_env.run(capsys)
     assert code == 0
     assert "PROJECTIONS DEGRADED" not in out
+    assert "BEST LINEUP" in out
+
+
+# --- fix round 1: the same NFL team rostered for BOTH TQB and DST ---------
+
+def test_the_same_team_rostered_for_tqb_and_dst_never_silently_loses_a_slot(
+        alert_env, capsys, tmp_path):
+    """THE PROHIBITED OUTCOME, reproduced, then FULLY fixed (not merely
+    made loud). `parse_lineup`/`parse_positions` (src/sffl/cbs_roster.py)
+    dedup by raw NAME ALONE and ran before any position-aware key ever
+    applied - so a roster carrying "Chargers" for BOTH the TQB slot and the
+    DST slot (CBS lists all 32 teams on both pages, so nothing stops a
+    manager from doing this) used to have the SECOND row's slot silently
+    discarded the moment its name collided with the first's: `parse_lineup`
+    returned "Chargers" ONCE, `parse_positions` mapped it to TQB only, and
+    the DST row was never even a candidate. Output before the fix: `DST
+    -- UNFILLED`, exit 0, no mention anywhere - byte-identical to the old
+    broken behavior the whole task exists to end.
+
+    THE OWNER'S AMENDMENT superseded round 1's "detect the ambiguity and
+    refuse to score either side" fix with a more complete one:
+    `cbs_roster.parse_lineup_rows` never collapses by name alone in the
+    first place - it keeps each row's own (name, slot, team), so "Chargers"
+    TQB and "Chargers" DST are two distinct, independently-resolved
+    entries from the start. Each is looked up against the merged
+    projections pool via `identity.player_key`'s (name, team, pos), the
+    SAME identity `_merge_projection_groups` uses. Result: BOTH slots fill
+    CORRECTLY, with no ambiguity to report and no degradation - a strictly
+    better outcome than round 1's "loudly refuse to score either."
+    """
+    collided = tmp_path / "roster_collision.txt"
+    with open(ROSTER_FIXTURE) as fh:
+        text = fh.read()
+    # The fixture's real DST starter is "Patriots" on team "NE"; renaming
+    # BOTH the name and the team to "Chargers"/"LAC" reproduces a manager
+    # genuinely rostering the same real team for both TQB and DST (a
+    # rename that only changed the display name, leaving team "NE", would
+    # NOT be a genuine collision under the fuller (name, pos, team) key -
+    # the two rows would already differ by team).
+    collided.write_text(text.replace("Patriots DST • NE ", "Chargers DST • LAC "))
+    alert_env.set_path("roster", collided)
+
+    code, out = alert_env.run(capsys)
+
+    # THE CORE ASSERTION: never exit 0 with a silently-unfilled slot and no
+    # explanation - satisfied here because there is no unfilled slot at
+    # all. Both TQB and DST resolve correctly and independently.
+    assert code == 0
+    slots_section = out[out.index("BEST LINEUP"):]
+    assert "TQB    Chargers" in slots_section
+    assert "DST    Chargers" in slots_section
+    assert "UNFILLED" not in slots_section.split("K ")[0]
+    # And, since both are correctly resolved, NEITHER is reported as
+    # unevaluated or ambiguous anywhere.
+    assert "Chargers" not in out.split("BEST LINEUP")[0]
+
+
+def test_a_roster_collision_does_not_affect_an_unambiguous_teammate(
+        alert_env, capsys, tmp_path):
+    # Sanity check on the fix's precision: a DIFFERENT starter with no
+    # collision at all (Evan McPherson, K) is unaffected by the Chargers
+    # resolution elsewhere on the same roster - it still reads as a
+    # data-problem (his name simply is not on the K fixture), exactly as
+    # it would with no collision present anywhere on the page.
+    collided = tmp_path / "roster_collision.txt"
+    with open(ROSTER_FIXTURE) as fh:
+        text = fh.read()
+    collided.write_text(text.replace("Patriots DST • NE ", "Chargers DST • LAC "))
+    alert_env.set_path("roster", collided)
+
+    code, out = alert_env.run(capsys)
+    assert code == 0
+    start = out.index("NOT EVALUATED for start/sit")
+    section = out[start:out.index("\n\n", start)]
+    mcpherson_line = next(l for l in section.splitlines()
+                          if "Evan McPherson" in l)
+    assert "(K)" in mcpherson_line
+    assert "DATA PROBLEM" in section
+    # And "Chargers" is nowhere in this section - both its slots resolved
+    # cleanly, so it has nothing to be reported for.
+    assert "Chargers" not in section
+
+
+# --- fix round 2 (owner's amendment): (name, pos, team), not (name, pos) --
+
+def test_two_different_players_sharing_name_and_position_are_disambiguated_end_to_end(
+        alert_env, capsys, tmp_path):
+    """THE OWNER'S CORE EXAMPLE, end to end. The RB-WR-TE page carries TWO
+    "Mike Williams WR" rows on different real teams (LAC and NYJ) - exactly
+    the real NFL shape the owner named. The roster's own "Mike Williams" is
+    the LAC one (the roster page carries his team too, via `RosterRow`).
+    A (name, pos)-only key would not be able to tell these two rows apart
+    at the `by_key` lookup used to build the scored candidate: it would
+    resolve to WHICHEVER one happened to be inserted last, potentially
+    handing the NYJ Williams's (fabricated, much higher) projection to the
+    LAC roster pick. `identity.player_key`'s (name, team, pos) key fixes
+    this: the roster's LAC pick must score at the LAC row's real value.
+    """
+    with open("tests/fixtures/cbs_weekly_tab_rbwrte.txt") as fh:
+        proj_text = fh.read()
+    # Rename the real "Ladd McConkey WR • LAC" row to "Mike Williams" (same
+    # stat line - 6.01 pts) and append a SECOND "Mike Williams WR" row on a
+    # different real team (NYJ) with a wildly different, unmistakable
+    # projection - if the two are ever confused, the total will show it.
+    proj_text = proj_text.replace("Ladd McConkey WR • LAC ",
+                                  "Mike Williams WR • LAC ")
+    proj_text += ("\tFA\tMike Williams WR • NYJ\tBUF\t22\t11\t86\t63\t8\t"
+                 "0.0\t0.0\t0.0\t0.0\t99.9\t99.9\t999.9\t99.9\t0.9\t0.0\t99.99\n")
+    proj = tmp_path / "rbwrte_two_williams.txt"
+    proj.write_text(proj_text)
+    alert_env.set_path("RB-WR-TE", proj)
+
+    with open(ROSTER_FIXTURE) as fh:
+        roster_text = fh.read()
+    # The roster's own pick is the LAC Williams - same substitution
+    # approach as the Chargers TQB/DST tests above.
+    roster_text = roster_text.replace("Ladd McConkey WR • LAC ",
+                                      "Mike Williams WR • LAC ")
+    roster = tmp_path / "roster_two_williams.txt"
+    roster.write_text(roster_text)
+    alert_env.set_path("roster", roster)
+
+    code, out = alert_env.run(capsys)
+    assert code == 0
+    # No residual-duplicate or cross-group-duplicate warning - the two
+    # rows are correctly told apart by team, not treated as a collision.
+    assert "WARNING" not in out
+    assert "residual projection duplicate" not in out
+    slots_section = out[out.index("BEST LINEUP"):]
+    assert "Mike Williams" in slots_section
+    # The absurd NYJ projection (999.9 total) must NEVER reach the lineup
+    # total - if it did, this would be nowhere close to double digits.
+    total_line = next(l for l in out.splitlines() if "BEST LINEUP" in l)
+    total = float(total_line.split("(")[1].split(" pts")[0])
+    assert total < 100, (
+        "the fabricated NYJ Mike Williams projection (999.9) leaked into "
+        "the scored total (%s) - the LAC roster pick was matched to the "
+        "wrong row" % total)
+
+
+def test_a_residual_projection_duplicate_is_loud_and_degrades_the_run(
+        alert_env, capsys, tmp_path):
+    """Even (name, pos, team) is not PROVABLY unique - the owner's second
+    point. Two rows identical on all three fields (same real entity's row
+    appearing twice within one group's own page, a data anomaly rather
+    than the ordinary TQB/DST or two-teams-one-name shapes) must never be
+    silently resolved by keeping the first and dropping the second: it
+    must be reported and the run marked degraded."""
+    with open("tests/fixtures/cbs_weekly_tab_rbwrte.txt") as fh:
+        proj_text = fh.read()
+    # Duplicate the Ladd McConkey row verbatim - same name, same pos, same
+    # team - within the SAME group's own page (not a cross-group case,
+    # which `_merge_projection_groups` already reports; this exercises
+    # `_cmd_alert`'s OWN by_key residual-duplicate detection instead).
+    mcconkey_line = next(l for l in proj_text.splitlines()
+                         if "Ladd McConkey" in l)
+    proj_text = proj_text.rstrip("\n") + "\n" + mcconkey_line + "\n"
+    proj = tmp_path / "rbwrte_duplicate_row.txt"
+    proj.write_text(proj_text)
+    alert_env.set_path("RB-WR-TE", proj)
+
+    code, out = alert_env.run(capsys)
+    assert code == 1
+    assert "residual projection duplicate" in out
+    assert "Ladd McConkey" in out
+    # And the digest still produced a real, usable lineup - a residual
+    # duplicate degrades the run, it does not blank it out.
     assert "BEST LINEUP" in out

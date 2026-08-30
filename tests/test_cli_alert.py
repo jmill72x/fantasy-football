@@ -321,9 +321,20 @@ def test_a_covered_positions_player_with_no_row_is_a_data_problem_not_a_scope_li
         assert name in out  # named, never silently dropped
 
     section = out[out.index("NOT EVALUATED for start/sit"):]
-    assert "DATA PROBLEM" in section
-    assert "Evan McPherson (K)" in section
-    assert "Patriots (DST)" in section
+    # TIE EACH NAME TO ITS OWN HEADING, not just "somewhere in the
+    # section" - a reviewer noted the substring-only version would still
+    # pass if these two were mislabelled under a DIFFERENT heading while
+    # "DATA PROBLEM" happened to appear for an unrelated reason. Slice the
+    # section AT the DATA PROBLEM heading and confirm both names sit AFTER
+    # it (there is no other heading in this section for this fixture, so
+    # "after the heading, before the section ends" is the precise claim).
+    data_problem_at = section.index("DATA PROBLEM")
+    data_problem_block = section[data_problem_at:]
+    assert "Evan McPherson (K)" in data_problem_block
+    assert "Patriots (DST)" in data_problem_block
+    # And neither name appears BEFORE that heading, under some other one.
+    assert "Evan McPherson" not in section[:data_problem_at]
+    assert "Patriots" not in section[:data_problem_at]
     assert "NOT recommendations to bench anyone" in out
 
 
