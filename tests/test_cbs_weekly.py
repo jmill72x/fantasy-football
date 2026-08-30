@@ -124,6 +124,49 @@ def test_a_column_removed_from_the_stat_block_raises(tmp_path):
         parse(str(bad), group="RB-WR-TE", week=1)
 
 
+def test_a_repeated_stat_name_sums_its_columns(tmp_path):
+    # fg_under_30 is CBS's 1-19 plus its 20-29 column.
+    prof = tmp_path / "p.yaml"
+    prof.write_text(
+        "owner_codes: [ZZ]\n"
+        "groups:\n"
+        "  T:\n"
+        "    stats: [a, a, b]\n"
+        "    expect_tokens: 4\n")
+    page = tmp_path / "page.txt"
+    # Tab-delimited row shape: leading tab, then owner cell, then namecell -
+    # see _TAB_LINE's docstring and the real TAB_FIXTURE rows, which all
+    # start with an (empty) leading cell the same way.
+    page.write_text("\tFA\tNick Chubb RB • CLE\tOPP\t1.5\t2.5\t9.0\n")
+    from sffl.cbs_weekly import parse
+    row = parse(str(page), group="T", week=1, profile_path=str(prof))[0]
+    assert row.stats["a"] == 4.0      # 1.5 + 2.5
+    assert row.stats["b"] == 9.0
+
+
+def test_a_single_occurrence_name_is_unaffected(tmp_path):
+    prof = tmp_path / "p.yaml"
+    prof.write_text("owner_codes: [ZZ]\ngroups:\n  T:\n    stats: [a, b]\n    expect_tokens: 3\n")
+    page = tmp_path / "page.txt"
+    page.write_text("\tFA\tNick Chubb RB • CLE\tOPP\t1.5\t9.0\n")
+    from sffl.cbs_weekly import parse
+    row = parse(str(page), group="T", week=1, profile_path=str(prof))[0]
+    assert row.stats["a"] == 1.5 and row.stats["b"] == 9.0
+
+
+def test_repeated_underscore_columns_are_still_all_discarded(tmp_path):
+    # `_` marks a column the engine does not use; repeating it must not
+    # create a summed stat literally named "_".
+    prof = tmp_path / "p.yaml"
+    prof.write_text("owner_codes: [ZZ]\ngroups:\n  T:\n    stats: [_, _, a]\n    expect_tokens: 4\n")
+    page = tmp_path / "page.txt"
+    page.write_text("\tFA\tNick Chubb RB • CLE\tOPP\t1.0\t2.0\t3.0\n")
+    from sffl.cbs_weekly import parse
+    row = parse(str(page), group="T", week=1, profile_path=str(prof))[0]
+    assert "_" not in row.stats
+    assert row.stats["a"] == 3.0
+
+
 def test_a_line_without_a_leading_status_token_raises_naming_the_count(tmp_path):
     """F4, the real observed bug: 'DJ Moore WR • CHI ...' has no leading
     avail token. Before the fix this silently mis-parsed as name='Moore',

@@ -8,6 +8,13 @@
 #
 # `stats` lists the trailing fields in order. A name of `_` is a column the
 # scoring engine does not use (averages, the site's own FPTS).
+#
+# A NAME MAY APPEAR MORE THAN ONCE IN A GROUP'S `stats:` LIST - those columns
+# are SUMMED into that one key. This is how a stat CBS splits across multiple
+# columns (e.g. a kicker group's `fg_under_30`, which CBS prints as separate
+# `1-19` and `20-29` columns) gets combined into the single number the
+# scoring engine expects. `_` is exempt from this: repeating `_` still
+# discards every one of those columns and never creates a stat named `_`.
 groups:
   RB-WR-TE:
     stats: [rush_att, rush_yds, _, rush_td, tgt, rec_ct, rec_yds, _, rec_td,
