@@ -218,6 +218,17 @@ Update this block at the end of every session so the next one can resume blind.
       **BLOCKER when it is picked up: Draft Sharks — the production source — does not publish
       offensive fumbles at all** (only defensive `Fum Rec`/`Forced Fumble`). Footballguys has
       `fum-lost`. So adding the term needs an FBG join, not just a YAML line.
+- [x] **Isotonic calibration curves ADOPTED for 5 stats — DONE 2026-08-30.** The
+      fitted/regularised-curve follow-up TODO B called for actually ran and cleared its
+      gate. `pass_cmp`, `pass_yds`, `rec_ct`, `rec_yds`, `rush_yds` now ship from
+      `build_curves_isotonic` on the full dataset (build set + held-back, 132/2424).
+      `top10_cost` 15.1681 → 12.5436, `mae` 4.3392 → 4.4758, `top10_bias` +5.1042 →
+      +3.7312. `def_pa`/`def_ya` deliberately NOT adopted (DST is flat-priced, structurally
+      inert on the board; weekly path ungated). `market/2026.yaml` refit accordingly.
+      **Open items:** whether `def_pa`/`def_ya` should move to isotonic for the weekly
+      (`sffl week`) path is unmeasured; pooled residual estimation is eliminated, do not
+      revisit. See the full section further down and
+      `.superpowers/sdd/2026-08-30-regularised-calibration-curves/`.
 
 Work top to bottom. Each unchecked box is the next thing to do.
 
@@ -658,6 +669,86 @@ The 84 extra players' rows are kept at `data/weekly/2025/_held_back/` (gitignore
 README repeating this reasoning. They are real and expensive to re-collect. **The right way
 to use them is a fitted/regularised curve rather than raw interpolation — a genuine
 follow-up, and a good one, but not an auction-week change.**
+
+## THE FOLLOW-UP RAN — isotonic curves ADOPTED for 5 stats (2026-08-30)
+
+**DONE.** The follow-up TODO B predicted ("a fitted/regularised curve rather than raw
+interpolation") was built, measured through three pre-registered gates, and adopted. Full
+history: `docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md` (the gate
+that cleared) and `.superpowers/sdd/2026-08-30-regularised-calibration-curves/` (all five
+task reports). Do not re-run this experiment; read the record instead.
+
+**What changed.** `calibrate.build_curves_isotonic` (monotone/PAVA fit, already in
+`src/sffl/calibrate.py` and untouched by this adoption) replaces `build_curves`
+(interpolation) for exactly five stats, built on the FULL dataset — the original 48-player
+build set plus this held-back data folded in (132 distinct players, 2,424 player-weeks):
+
+    pass_cmp, pass_yds, rec_ct, rec_yds, rush_yds
+
+**`def_pa` and `def_ya` are explicitly NOT adopted** and remain `build_curves` on the
+build-set-only 48/811. Two independent, binding reasons — do not revisit this "for
+consistency" without a new gate:
+1. DST sits in `flat_priced_pools`, so its curve never reaches `_dollars` — structurally
+   inert on the auction board.
+2. The weekly (in-season, `sffl week`) path where a DST curve DOES matter was never covered
+   by any pre-registered gate in this experiment. **Open item:** whether `def_pa`/`def_ya`
+   should also move to isotonic for the weekly path is unmeasured and undecided.
+
+**Pooled residual estimation (`build_curves_pooled`) was tried and eliminated** — it failed
+the bundle gate outright (`top10_cost` change of -0.05, i.e. no improvement) and does not
+return as a candidate.
+
+**Measured effect on the real 2026 board**, policy held at `starter` throughout:
+
+| | shipped (interpolated) | isotonic bundle (adopted) | Δ |
+|---|---:|---:|---:|
+| `top10_cost` | 15.1681 | 12.5436 | **-2.6244 (-17%)** |
+| `mae` | 4.3392 | 4.4758 | +0.1366 (within the ≤0.25 guard) |
+| `top10_bias` | +5.1042 | +3.7312 | shrinks toward zero, same sign — no flip |
+
+Leave-one-out over the top-10 priced players, corrected framing (an earlier draft of this
+result claimed "10 of 10 replicates improve" — that overstated it): three of the ten
+replicates (dropping Jonathan Taylor, dropping BUF, or the resulting promotion of Saquon
+Barkley into the top ten) reproduce a `top10_cost` figure IDENTICAL to the no-drop case for
+BOTH curve sets — a real identity of the metric (both players and their replacement sit on
+the same side of the pricing bias), not evidence of ten independent perturbations. **The
+honest count is 7 of 7 genuine perturbations improved, by +2.04 to +2.50, against a full
+effect of +2.62** — the gain does not concentrate in one or two players.
+
+**Files changed to adopt this:**
+- `poc/build_calibration.py` — now the single source of truth, per-stat: `build_curves_isotonic`
+  on build-set + held-back for the five stats above, `build_curves` on the build set only for
+  `def_pa`/`def_ya`. Re-running it reproduces the committed files byte-for-byte.
+- `calibration/2025.yaml` — regenerated. `def_pa`/`def_ya` are byte-identical to the prior
+  shipped file (verified); the other five changed as measured above.
+- `calibration/2025.provenance.yaml` — NEW, sibling file. `calibrate.load_curves` crashes on
+  any key whose value is not a list of (mean, expected) pairs, so provenance cannot live
+  inside `calibration/2025.yaml` itself. Records per-stat method, dataset, player count,
+  anchor count. `tests/test_calibrate.py::test_every_curve_stat_has_provenance_and_vice_versa`
+  keeps the two files from drifting apart.
+- `market/2026.yaml` — refit with `sffl fit-market --force` against the same evidence
+  (same extract, same prices, same league profile) recorded in its own `evidence` block,
+  since the curves it depends on changed. New curve: `a=2.0482551357513357,
+  b=0.6459690793595126` (was `a=2.0115481304265863, b=0.6620227660597623`). New
+  `diagnostics`: `mae=4.4758, top10_mae=8.8124, top10_bias=3.7312` (was `mae=4.3392,
+  top10_mae=10.0638, top10_bias=5.1042`).
+- `tests/test_market_model.py::test_the_committed_2026_artifact_is_pinned` — updated to the
+  new coefficients (a deliberate refit, not drift — see the test's own comment).
+- `tests/test_calibrate_eval.py::test_the_harness_reproduces_the_shipped_curves` — updated:
+  it used to assume one dataset/one method for every stat, which the shipped file no longer
+  follows: it now rebuilds each stat with whichever method/dataset actually produced it.
+- `src/sffl/render/intel.py` — the "Curves" disclosure item on the printed `Key & Intel`
+  sheet said "widening it further was tried and measured WORSE" for every stat, which is now
+  false for five of seven. Rewritten to describe the two-regime split; constants renamed
+  `CALIBRATION_PLAYERS_ISOTONIC`/`_INTERPOLATED` (was one pair, `CALIBRATION_PLAYERS`/
+  `CALIBRATION_PLAYER_WEEKS`). `tests/test_render_intel.py`'s provenance-drift test updated
+  to match (two regimes, two regex matches, not one).
+- `data/weekly/2025/_held_back/README.md` — amended (not rewritten): the original finding is
+  marked TRUE FOR INTERPOLATION and superseded for these five stats by the isotonic result
+  above, with a pointer back to the full experiment record.
+
+**Full test suite: 654 passed** (was 653 — one added, `test_every_curve_stat_has_
+provenance_and_vice_versa`).
 
 ### Also found while checking the new data — a real scoring gap
 
