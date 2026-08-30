@@ -53,19 +53,83 @@ def test_realized_is_the_mean_of_the_banded_weeks_not_the_band_of_the_mean():
 def test_cross_validate_never_scores_a_player_against_a_curve_built_from_him():
     # The leak this harness exists to prevent. A builder that memorises its
     # input would score perfectly if the split were by row.
+    #
+    # A raw player-count assertion (`len(fit_players) < 20`) is a PROXY, not
+    # the property: an implementation that leaks every holdout player except
+    # one still shrinks the fit set and passes such an assertion. Recording
+    # only the LAST builder call also misses leaks in every earlier fold. The
+    # actual property is per-fold set disjointness, checked for every fold.
     lg = load_league("leagues/sffl/2026.yaml")
-    seen = {}
+    seen = []
 
     def spy_builder(lg_, lines_):
-        seen["fit_players"] = {l.player_id for l in lines_}
+        seen.append({l.player_id for l in lines_})
         from sffl.calibrate import build_curves
         return build_curves(lg_, lines_)
 
     lines = [_line("p%d" % i, "RB", w, rush_yds=5.0 * i)
              for i in range(20) for w in range(1, 6)]
+    folds = player_folds(lines, k=5)
     cross_validate(lg, lines, spy_builder, k=5)
-    # The last fold's fit set must exclude that fold's holdout players.
-    assert len(seen["fit_players"]) < 20
+
+    assert len(seen) == len(folds), "builder must be called once per fold"
+    for fit_players, fold in zip(seen, folds):
+        assert fit_players & fold == set(), (
+            "a holdout player's own weeks were present in the fit set "
+            "used to build the curve he was scored against - that is the leak")
+
+
+def test_every_stat_in_the_league_is_present_even_with_zero_predictions():
+    # Two builders must be judged over the same population, or the harness
+    # must say loudly that it could not be. A stat silently dropped from the
+    # result dict (the old `if e` filter) lets that go unnoticed: builder A
+    # could report def_pa and builder B could not, and a naive comparison
+    # would never know the populations differed.
+    lg = load_league("leagues/sffl/2026.yaml")
+
+    def empty_builder(lg_, lines_):
+        return {}
+
+    # Lines carry no stats for any banded field, so every held-out player
+    # who clears min_weeks still contributes zero real predictions once you
+    # exclude the missing-curve case - but the important thing here is that
+    # empty_builder returns {} for every stat, so no fold ever has a curve.
+    lines = [_line("p%d" % i, "RB", w) for i in range(20) for w in range(1, 6)]
+    result = cross_validate(lg, lines, empty_builder, k=5)
+
+    assert set(result.keys()) == set(lg.bands.keys())
+    for stat, row in result.items():
+        assert row["n"] == 0
+        assert row["mae"] is None
+        # Every one of the k folds had no curve at all for this stat.
+        assert row["empty_curve_folds"] == 5
+
+
+def test_empty_curve_folds_is_surfaced_when_only_some_folds_have_no_curve():
+    # A builder that can only fit a curve when it sees enough players (a
+    # realistic stand-in for def_pa's four real defenses) will have some
+    # folds with a usable curve and some without. That partial coverage must
+    # be visible in the result, not averaged away.
+    lg = load_league("leagues/sffl/2026.yaml")
+
+    def sparse_builder(lg_, lines_):
+        from sffl.calibrate import build_curves
+        curves = build_curves(lg_, lines_, min_weeks=4)
+        # Simulate a builder that refuses to trust a rush_yds curve fit
+        # from very few players by dropping it below a player-count floor.
+        fit_players = {l.player_id for l in lines_}
+        if len(fit_players) < 20:
+            curves["rush_yds"] = []
+        return curves
+
+    lines = [_line("p%d" % i, "RB", w, rush_yds=5.0 * i)
+             for i in range(20) for w in range(1, 6)]
+    result = cross_validate(lg, lines, sparse_builder, k=5)
+    # 20 players split 5 ways leaves 16 fit players per fold - always below
+    # 20 - so every fold's rush_yds curve was suppressed.
+    assert result["rush_yds"]["empty_curve_folds"] == 5
+    assert result["rush_yds"]["n"] == 0
+    assert result["rush_yds"]["mae"] is None
 
 
 def test_the_harness_reproduces_the_shipped_curves():

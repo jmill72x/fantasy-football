@@ -19,10 +19,10 @@ between a measurement and an anecdote.
 
 from collections import defaultdict
 
+from sffl.calibrate import MIN_WEEKS, STAT_POSITIONS, expected_points
 from sffl.scoring import band_points
 
 DEFAULT_K = 5
-MIN_WEEKS = 4
 
 
 def player_folds(lines, k=DEFAULT_K):
@@ -53,20 +53,45 @@ def cross_validate(lg, lines, builder, k=DEFAULT_K, min_weeks=MIN_WEEKS):
     """Per-stat MAE of `builder`'s curves, cross-validated by player.
 
     `builder(lg, lines)` returns {stat: [(mean, expected), ...]}.
-    Returns {stat: {"mae": float, "n": int}} - n is how many held-out player
-    predictions the MAE is over, which is as important as the MAE itself when
-    a stat has four players.
+    Returns {stat: {"mae": float or None, "n": int, "empty_curve_folds": int}}:
+      - "n" is how many held-out player predictions the MAE is over, which is
+        as important as the MAE itself when a stat has four players.
+      - "mae" is None when n == 0 - there is nothing to average, and a 0.0
+        would silently read as a perfect score.
+      - "empty_curve_folds" counts folds (out of k) where `builder` returned
+        no curve at all for this stat, so that fold's holdout players for
+        this stat could not be scored and are absent from "n" with no other
+        signal. This matters most for stats with few players (e.g. def_pa),
+        where an empty fold is a realistic outcome, not a bug.
+
+    EVERY stat in `lg.bands` is present in the result, even with n=0. Two
+    builders must be compared over populations the caller can see are the
+    same size - a stat silently missing from one builder's output and not
+    the other's would let a comparison go unnoticed rather than flagged.
+
+    `min_weeks` filters which HELD-OUT players are scored; it is
+    deliberately not forwarded to `builder`, whose own min-weeks filtering
+    (if any) governs which players its curves are fit from. The two are
+    independent knobs by design - a candidate builder may legitimately fit
+    on a different minimum than the one this harness scores against.
     """
-    from sffl.calibrate import STAT_POSITIONS, expected_points
+    for stat in lg.bands:
+        if stat not in STAT_POSITIONS:
+            raise ValueError(
+                "stat {0} in lg.bands has no position mapping".format(stat))
 
     by_player = defaultdict(list)
     for ln in lines:
         by_player[ln.player_id].append(ln)
 
     errs = defaultdict(list)
+    empty_curve_folds = defaultdict(int)
     for fold in player_folds(lines, k):
         fit_lines = [ln for ln in lines if ln.player_id not in fold]
         curves = builder(lg, fit_lines)
+        for stat in lg.bands:
+            if not curves.get(stat):
+                empty_curve_folds[stat] += 1
         for pid in fold:
             weeks = by_player[pid]
             if len(weeks) < min_weeks:
@@ -83,5 +108,12 @@ def cross_validate(lg, lines, builder, k=DEFAULT_K, min_weeks=MIN_WEEKS):
                 errs[stat].append(
                     abs(expected_points(curve, mean) - realized(lg, weeks, stat)))
 
-    return dict((s, {"mae": sum(e) / len(e), "n": len(e)})
-                for s, e in errs.items() if e)
+    result = {}
+    for stat in lg.bands:
+        e = errs.get(stat, [])
+        result[stat] = {
+            "mae": (sum(e) / len(e)) if e else None,
+            "n": len(e),
+            "empty_curve_folds": empty_curve_folds.get(stat, 0),
+        }
+    return result
