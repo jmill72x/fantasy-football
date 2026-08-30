@@ -86,3 +86,45 @@ def test_describe_names_the_season_and_the_coefficients():
     assert "2026" in line
     assert "0.662" in line
     assert "130" in line
+
+
+# Pins the COMMITTED artifact itself, not merely the fit/apply roundtrip. The
+# roundtrip test (tests/test_market_roundtrip.py) proves a curve fitted
+# within one run survives being persisted and re-loaded; it says nothing
+# about what actually sits in the repo. A hand-edit to market/2026.yaml, or a
+# stray `fit-market --force` re-run against different evidence, would move
+# every dollar on the 2026 board and no other test would fail - which is
+# exactly the 2027 scenario this test exists to catch: a human opens the
+# artifact, changes something, and the board silently shifts.
+#
+# If the model was DELIBERATELY refit (a corrected extract, a widened prices
+# file, a genuine re-fit after the 2026 auction), these expected values must
+# be updated deliberately too - by re-running the same `fit-market` command
+# recorded in the file's own `evidence`, confirming the new numbers, and then
+# editing this test to match. An unexplained failure here means the artifact
+# changed and nobody meant it to: treat it as the board having moved, not as
+# a stale test.
+COMMITTED_MARKET_PATH = "market/2026.yaml"
+
+_PIN_FAILURE_HINT = (
+    "\n\nmarket/2026.yaml no longer matches the coefficients pinned here. "
+    "If this model was deliberately refit, update THIS TEST's expected "
+    "values to match on purpose - re-run the `fit-market` command recorded "
+    "in the file's own `evidence` block, confirm the new numbers are "
+    "intended, and only then edit this test. If nobody meant to refit it, "
+    "something moved the board: a hand-edit to the YAML or a stray "
+    "`fit-market --force` are the two ways that happens with no other test "
+    "catching it.")
+
+
+def test_the_committed_2026_artifact_is_pinned():
+    model = load(COMMITTED_MARKET_PATH)
+
+    assert model.season == 2026, _PIN_FAILURE_HINT
+    assert model.policy == "starter", _PIN_FAILURE_HINT
+    assert model.evidence.get("observations") == 130, _PIN_FAILURE_HINT
+    # Exact float equality, not approx: the whole point of persisting rather
+    # than re-fitting is that these exact bits reach every render unchanged,
+    # so a pinned test that tolerated drift would defeat its own purpose.
+    assert model.curve[0] == 2.0115481304265863, _PIN_FAILURE_HINT
+    assert model.curve[1] == 0.6620227660597623, _PIN_FAILURE_HINT

@@ -32,7 +32,14 @@ def _pool_dollars(argv):
 
 COMMON = ["--source", "sources/draftsharks.yaml",
           "--file", "tests/fixtures/draftsharks_market_fit_sample.csv",
-          "--year", "2026"]
+          "--year", "2026",
+          # Without --curves, fit-market and value both fall back to raw
+          # (uncalibrated) season points, which is NOT the code path the
+          # real generation command uses (see NEXT.md's production command
+          # and cmd_fit_market/_value_pool, both of which are run with
+          # --curves in practice). Omitting it here exercised a different
+          # path from the one this test exists to guard.
+          "--curves", "calibration/2025.yaml"]
 
 
 def test_persisting_the_fit_does_not_move_the_board(tmp_path):
@@ -48,6 +55,13 @@ def test_persisting_the_fit_does_not_move_the_board(tmp_path):
         "--tqb-starters", "identity/tqb-2026-starters.yaml",
         "--policy", "fit"])
     applied = _pool_dollars(["value"] + COMMON + ["--market", out])
+
+    # Without this, two runs that both failed to capture anything (e.g. the
+    # spy never fired because the curve was never fit) would compare two
+    # empty dicts equal and pass vacuously - proving nothing about whether
+    # persisting a fit actually preserves it.
+    assert direct["rows"], "captured no rows from the direct fit - the spy did not fire"
+    assert applied["rows"], "captured no rows from the applied model - the spy did not fire"
 
     assert applied["curve"] == direct["curve"], "the persisted curve differs"
     assert applied["rows"] == direct["rows"], "the board moved"
