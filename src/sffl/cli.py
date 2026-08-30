@@ -446,6 +446,87 @@ def cmd_plan(args):
     return 0
 
 
+def cmd_fit_market(args):
+    """Fit this room's price curve and policy from year-matched evidence, and persist them.
+
+    THE ONLY COMMAND THAT FITS. Everything else applies a model this wrote.
+    That separation is the point: fitting is season-bound and can only happen
+    after an auction, while applying needs nothing but a curve and this year's
+    projections. Fusing them is what made a pre-auction run choose between
+    refusing outright and silently fitting across seasons.
+    """
+    import datetime
+
+    from sffl.market_model import MarketModel, save
+
+    lg = load_league(args.league)
+    pool = build_pool(lg, args.source, args.file, args.year, args.set)
+
+    if args.curves:
+        curves = load_curves(args.curves)
+        for p in pool:
+            p.stats["_season_points"] = score_season_calibrated(lg, p, curves)
+        pool.sort(key=lambda p: -p.stats["_season_points"])
+
+    # season=args.year is what makes this refuse every cross-season
+    # combination it can detect - the TQB map's season and the prices file's
+    # own season column must both agree with the projections' year.
+    try:
+        prices = load_prices(args.prices, tqb_starters_path=args.tqb_starters,
+                             season=args.year)
+    except ValueError as exc:
+        raise SystemExit(str(exc))
+
+    policy, reports = choose_policy(lg, pool, prices)
+    chosen = [r for r in reports if r["policy"] == policy][0]
+
+    # choose_policy leaves the pool carrying the LAST policy's numbers, not
+    # the winner's - see its docstring. Re-run the valuation with the chosen
+    # policy before fitting, or the curve is fit against the wrong dollars.
+    levels = replacement_levels(lg, pool, policy)
+    assign_vorp(lg, pool, levels)
+    assign_dollars(lg, pool)
+
+    pairs = []
+    for p in pool:
+        if lg.flat_priced_pools.get(_pool_of(p.pos)) is not None:
+            continue
+        key = normalize_name(p.name)
+        if key in prices:
+            pairs.append((p.stats["_dollars"], prices[key]))
+
+    curve = fit_price_curve(pairs)
+
+    model = MarketModel(
+        season=args.year,
+        fitted_on=datetime.date.today().isoformat(),
+        curve=curve,
+        policy=policy,
+        evidence={
+            "prices_file": args.prices,
+            "prices_rows": prices.total_rows,
+            "observations": len(pairs),
+            "projections_source": args.source,
+            "projections_year": args.year,
+            "tqb_starters": args.tqb_starters,
+        },
+        diagnostics={
+            "mae": round(chosen["mae"], 4),
+            "top10_mae": round(chosen["top10_mae"], 4),
+            "top10_bias": round(chosen["top10_bias"], 4),
+        },
+    )
+    try:
+        save(args.out, model, overwrite=args.force)
+    except OSError as exc:
+        raise SystemExit(str(exc))
+    print("wrote %s" % args.out)
+    print("  policy chosen from these prices: %s" % policy)
+    print("  curve: a=%.4f b=%.4f from %d observations"
+          % (curve[0], curve[1], len(pairs)))
+    return 0
+
+
 def _avail_classifier(path, owner_codes):
     """Pick cbs_weekly's tab-path or space-path `classify_avail*` for `path`.
 
@@ -1041,6 +1122,25 @@ def main(argv=None):
     pln.add_argument("--bids", default=DEFAULT_BIDS,
                       help="silent-auction bid history CSV (default: %s)" % DEFAULT_BIDS)
     pln.set_defaults(func=cmd_plan)
+
+    fm = sub.add_parser("fit-market",
+                        help="fit this room's price curve from year-matched "
+                             "prices and persist it for future seasons")
+    fm.add_argument("--source", required=True)
+    fm.add_argument("--file", required=True)
+    fm.add_argument("--year", type=int, required=True)
+    fm.add_argument("--set", default=None)
+    fm.add_argument("--league", default=DEFAULT_LEAGUE)
+    fm.add_argument("--curves", default=None)
+    fm.add_argument("--prices", required=True,
+                    help="observed auction prices FROM THE SAME SEASON as --year")
+    fm.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
+                    help="Team QB starter map for --year")
+    fm.add_argument("--out", required=True,
+                    help="where to write the model, e.g. market/2026.yaml")
+    fm.add_argument("--force", action="store_true",
+                    help="overwrite an existing model")
+    fm.set_defaults(func=cmd_fit_market)
 
     wk = sub.add_parser("week", help="weekly waiver and start/sit decisions")
     wk.add_argument("--projections", required=True,
