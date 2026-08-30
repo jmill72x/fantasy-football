@@ -95,3 +95,56 @@ def test_a_fit_is_refused_when_the_prices_file_cannot_state_its_season(tmp_path)
         main(argv)
     assert "season" in str(exc.value)
     assert not os.path.exists(out), "a refused fit must write nothing"
+
+
+# --------------------------------------------------------------------------
+# The evidence block must not be able to assert a self-contradicting
+# falsehood. It was: nothing compared the projections extract against --year,
+# and `projections_year` was written FROM --year rather than read from
+# anything, so `projections_year: 2025` beside `projections_file:
+# data/extracts/Draft Sharks/2026/rankings-2026-08-23.csv` was reproducible.
+# An evidence block that can lie is worse than none, because it is believed.
+# --------------------------------------------------------------------------
+
+def _extract_under_year(tmp_path, year):
+    """The projections fixture, copied to a path that names `year`."""
+    import shutil
+    d = tmp_path / "extracts" / str(year)
+    d.mkdir(parents=True)
+    dest = str(d / "rankings.csv")
+    shutil.copy("tests/fixtures/draftsharks_market_fit_sample.csv", dest)
+    return dest
+
+
+def test_projections_from_another_seasons_directory_are_refused(tmp_path):
+    out = str(tmp_path / "never.yaml")
+    argv, _ = _args(tmp_path, file=_extract_under_year(tmp_path, 2025),
+                    year=2026, out=out)
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+    assert "2025" in str(exc.value) and "2026" in str(exc.value)
+    assert not os.path.exists(out)
+
+
+def test_projections_year_is_read_from_the_file_not_copied_from_the_flag(tmp_path):
+    from sffl.market_model import load
+    argv, out = _args(tmp_path, file=_extract_under_year(tmp_path, 2026),
+                      year=2026)
+    assert main(argv) == 0
+    ev = load(out).evidence
+    assert ev["projections_year"] == 2026
+    assert ev["projections_year_source"] == "projections file path"
+
+
+def test_an_unparseable_extract_path_is_announced_not_assumed(tmp_path, capsys):
+    # The fixture lives at tests/fixtures/, which names no season. That is
+    # not an error - a fit from a one-off path is legitimate - but the
+    # artifact must not present an unverified year in the same shape as a
+    # verified one, and the run must say which it is.
+    from sffl.market_model import load
+    argv, out = _args(tmp_path)
+    assert main(argv) == 0
+    assert "PROJECTIONS SEASON NOT VERIFIED" in capsys.readouterr().out
+    ev = load(out).evidence
+    assert ev["projections_year"] == 2026
+    assert "unverified" in ev["projections_year_source"]
