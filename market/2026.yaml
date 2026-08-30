@@ -6,11 +6,16 @@ diagnostics:
   top10_bias: 5.1042
   top10_mae: 10.0638
 evidence:
+  curves_file: calibration/2025.yaml
+  league_profile: leagues/sffl/2026.yaml
   observations: 130
   prices_file: data/league/auction-rosters-2026.csv
   prices_rows: 156
+  projections_file: data/extracts/Draft Sharks/2026/rankings-2026-08-23.csv
+  projections_file_sha256: f1f820f13a0afa42b5d7f872f6ef0a53eb4d505093c7c78f9e1e794b71daf6a2
   projections_source: sources/draftsharks.yaml
   projections_year: 2026
+  set: null
   tqb_starters: identity/tqb-2026-starters.yaml
 fitted_on: '2026-08-29'
 policy: starter
