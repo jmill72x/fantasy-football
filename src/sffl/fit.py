@@ -11,6 +11,7 @@ ever compare already-canonical names and need no resolver of their own.
 """
 
 import csv
+import warnings
 from typing import Dict
 
 import yaml
@@ -24,17 +25,77 @@ DEFAULT_ALIASES = "identity/aliases.yaml"
 DEFAULT_TQB_STARTERS = "identity/tqb-2025-starters.yaml"
 
 
+class SeasonMismatchError(ValueError):
+    """Raised only by load_prices's own season guard - see its docstring.
+
+    A `ValueError` subclass rather than a plain `ValueError` so a caller (the
+    CLI) can convert exactly the guard's own failures into a clean
+    single-line message without also swallowing an unrelated `ValueError` -
+    an alias chain, a bad franchise code, a malformed price cell - raised
+    from elsewhere in the same function, which deserves its traceback rather
+    than being flattened to a single line that cannot locate the offending
+    row.
+    """
+
+
+class UnverifiedPricesSeasonWarning(UserWarning):
+    """The prices file carries no `season` column, so its season is UNVERIFIED.
+
+    Not an error: the two prices files that predate the column
+    (`data/league/auction-rosters-2025.csv`) must keep working. But the
+    verification half of Decision 2 shipped without its announcement half,
+    and a guard that cannot fire and says nothing is indistinguishable from
+    a guard that passed. This is the "says so" - see `load_prices`.
+    """
+
+
+def unverified_season_message(path, season, tqb_starters_path):
+    """The one wording for "this file's season could not be verified".
+
+    Kept here, beside the guard that raises it, so the library warning and
+    the CLI's printed NOTE cannot drift into saying two different things
+    about the same run.
+    """
+    return (
+        "%s carries no 'season' column, so THIS RUN CANNOT VERIFY that these "
+        "prices are from %d. The season is being taken on trust from the Team "
+        "QB starter map (%s), which is only a PROXY for it - the two are "
+        "independent facts and only one of them was checkable here. Pairing "
+        "one season's prices with another season's projections is exactly the "
+        "error that fitted price = 2.443 * value^0.531 against a year-matched "
+        "truth of 0.662, degraded Team QB joins from 21 to 15, and "
+        "manufactured a phantom top-end bias, with every number looking "
+        "plausible. Add a 'season' column to %s to make this verifiable."
+        % (path, season, tqb_starters_path, path))
+
+
 class PriceMap(dict):
     """dict[canonical name -> price] that also remembers how many rows the
     source CSV held, so a caller can report "n matched of N loaded" instead
     of a bare match count with no denominator. Behaves exactly like a plain
     dict everywhere else (iteration, `in`, `.get`, `len`, equality with a
-    plain dict) - only `.total_rows` is new.
+    plain dict) - only the three attributes below are new.
+
+    `.season_verified` is how the prices' own account of themselves reaches
+    whatever consumes them. It is None when no season was asserted (nothing
+    was claimed, so nothing was checked), True when the file's own `season`
+    column confirmed the asserted season, and False when a season was
+    asserted against a file that could not state one. The distinction has to
+    travel WITH the prices: the workbook's intel page was calling an
+    in-process fit "year-matched by construction" on the strength of this
+    guard, while the same run's stdout was printing a banner saying the
+    season could not be verified. A fact that only exists in the CLI's
+    stdout is a fact the artifact cannot use.
+
+    `.source_path` is the file it all came from, so a consumer can name it
+    without being handed the path separately.
     """
 
     def __init__(self, *args, **kwargs):
         super(PriceMap, self).__init__(*args, **kwargs)
         self.total_rows = 0
+        self.season_verified = None
+        self.source_path = None
 
 
 def tqb_starters_season(path):
@@ -49,6 +110,49 @@ def tqb_starters_season(path):
         raw = yaml.safe_load(fh) or {}
     season = raw.get("season")
     return int(season) if season is not None else None
+
+
+def prices_seasons(path):
+    """EVERY DISTINCT season a prices CSV declares, in the order first seen.
+
+    PLURAL, and that is the whole contract. This used to be `prices_season`,
+    which returned the FIRST non-empty `season` cell and never looked at the
+    rest - so it reported a whole file's season from one row. A CSV whose
+    first row said 2026 and whose remaining 155 rows said 2025 verified
+    clean, and `fit-market --year 2026` wrote an artifact stamped
+    `season: 2026` carrying a=2.4432 b=0.5308 from 123 observations: the
+    artifact-era curve, blessed once and believed by every season after.
+
+    That shape is not exotic. A single rosters file accumulating several
+    seasons is exactly what adding a `season` column invites someone to do,
+    so the column has to be read as evidence about the WHOLE file or it is
+    not evidence at all.
+
+    Returns a tuple:
+      ()          the file carries no `season` column at all
+      (2026,)     every priced row declares the same season
+      (None,)     the column exists but every priced row leaves it blank
+      (2026, 2025) / (2026, None)   NON-UNIFORM - the caller must refuse
+
+    A blank cell is reported as `None` rather than skipped: a file that
+    labels some rows and not others is making a partial claim, and a partial
+    claim about which season a fit is pairing with must not be rounded up to
+    a whole one. Rows with no `player_as_written` are ignored, matching
+    `load_prices`, so a trailing blank line is not a second "season".
+    """
+    seen = []
+    with open(path, newline="") as fh:
+        reader = csv.DictReader(fh)
+        if reader.fieldnames is None or "season" not in reader.fieldnames:
+            return ()
+        for row in reader:
+            if not normalize_name(row.get("player_as_written") or ""):
+                continue
+            raw = (row.get("season") or "").strip()
+            value = int(raw) if raw else None
+            if value not in seen:
+                seen.append(value)
+    return tuple(seen)
 
 
 def _load_tqb_starters(path):
@@ -72,7 +176,8 @@ def _load_tqb_starters(path):
 
 
 def load_prices(path, alias_path=DEFAULT_ALIASES,
-                tqb_starters_path=DEFAULT_TQB_STARTERS):
+                tqb_starters_path=DEFAULT_TQB_STARTERS, season=None,
+                require_file_season=False):
     """Map canonical player key -> price paid.
 
     Three reconciliations, in order, because the roster sheet is hand typed:
@@ -90,13 +195,128 @@ def load_prices(path, alias_path=DEFAULT_ALIASES,
     `--tqb-starters` CLI flag. Applying the 2025 map to a later roster sheet
     would silently mis-join or silently drop every Team QB price.
 
+    `season`, when given, asserts which season this call believes it is
+    loading - see the guard below. When omitted, no season check runs at all;
+    a caller that genuinely does not know the season (a poc script exploring
+    an unknown file) is not forced to assert one.
+
+    `require_file_season` turns "this file cannot state its own season" from a
+    warning into a refusal. `sffl fit-market` sets it, and nothing else does -
+    see the guard below for why the two callers differ.
+
     Returns a `PriceMap` (a `dict` subclass); `.total_rows` on the result is
     the number of priced rows read from `path`, independent of how many of
     them ended up matching a pool player.
     """
+    # THE GUARD, MOVED HERE FROM cli._value_pool. It lived in the CLI, so any
+    # other caller - a poc script, a notebook, a second league - got
+    # DEFAULT_TQB_STARTERS (the 2025 map) forever with no check. Pairing one
+    # season's prices with another's projections is what produced this
+    # project's largest measurement error, and it is invisible in the output:
+    # every number looks reasonable. A guard that can be bypassed by calling
+    # the function directly is not a guard.
+    #
+    # It binds only when the caller ASSERTS a season. Production paths all do.
+    if season is not None:
+        map_season = tqb_starters_season(tqb_starters_path)
+        if map_season is None:
+            raise SeasonMismatchError(
+                "%s carries no 'season:' key, so it cannot be checked against "
+                "the %d prices being loaded. A map with no season used to skip "
+                "this check entirely - which is exactly how the wrong map goes "
+                "unnoticed, since it does not fail loudly, it silently "
+                "mis-joins or drops every Team QB price. Add 'season: <year>' "
+                "to the map." % (tqb_starters_path, season))
+        if map_season != season:
+            raise SeasonMismatchError(
+                "refusing to load %d prices with the %d Team QB starter map "
+                "(%s). Quarterbacks change franchises between Augusts, so the "
+                "wrong map silently mis-joins or drops every Team QB price."
+                % (season, map_season, tqb_starters_path))
+        declared = prices_seasons(path)
+
+        # NON-UNIFORM FIRST, because it is the failure the `season` column
+        # itself created. `prices_seasons` used to be `prices_season` and
+        # returned the first non-empty cell, so a file whose first row said
+        # 2026 and whose other 155 rows said 2025 VERIFIED CLEAN - and
+        # `fit-market --year 2026` then persisted a=2.4432 b=0.5308 from 123
+        # observations, the artifact-era curve, into the one file every
+        # later season is meant to trust without re-deriving it. Worse than
+        # the bug it replaced, which at least had to be re-committed yearly.
+        #
+        # REFUSED, never filtered down to the matching rows. A tool that
+        # quietly uses a subset of the file the operator pointed at is its
+        # own kind of silence, and this one would fit on a sample nobody
+        # chose: the operator asked for 156 prices and would be shown a
+        # curve from 33, with the count reported as if it were the whole
+        # room. Which rows belong to which season is a data-organisation
+        # decision a human should make deliberately - by splitting the file
+        # - not one a loader should make on their behalf.
+        if len(declared) > 1:
+            raise SeasonMismatchError(
+                "%s declares more than one season: %s. A prices file must "
+                "state ONE season for the whole file, because the season is "
+                "a fact about the auction the file records, not about "
+                "individual rows. Reading only the first row's value is how "
+                "a mixed file passed verification and persisted the "
+                "artifact-era curve (a=2.4432, b=0.5308) as if it were "
+                "year-matched. Split it into one file per season rather "
+                "than asserting %d over rows that disagree."
+                % (path, ", ".join("(blank)" if v is None else str(v)
+                                   for v in declared), season))
+
+        # (None,) - the column is there and every row leaves it blank - is
+        # the same epistemic state as no column at all: the file declares
+        # nothing. Handled identically rather than as its own case, so an
+        # empty column cannot become a third, quieter way of skipping the
+        # check.
+        file_season = declared[0] if declared else None
+        if file_season is None:
+            # THE ANNOUNCEMENT HALF OF DECISION 2. Verification shipped
+            # without it, so a column-less file simply skipped the check in
+            # silence - and the whole point of the decision was that "the
+            # silence is visible rather than assumed". A guard that cannot
+            # fire must say that it could not fire, or the operator reads
+            # its absence as a pass.
+            #
+            # REFUSED for a FIT, warned about everywhere else. A fit bakes
+            # the pairing into a persisted artifact that later seasons trust
+            # and never re-derive, and the only files `fit-market` can
+            # legitimately be pointed at are ours, which can carry the
+            # column. A `value`/`render` run reprices one board, in front of
+            # an operator who is reading this warning, and must keep working
+            # against the pre-column 2025 file.
+            if require_file_season:
+                raise SeasonMismatchError(
+                    "refusing to FIT from %s: it carries no 'season' column, "
+                    "so nothing here can verify that these prices are from "
+                    "%d - the Team QB starter map (%s) is only a proxy for "
+                    "it. A fit is persisted and trusted by later seasons "
+                    "that will never re-derive it, so an unverifiable "
+                    "pairing must not be baked into one. Add a 'season' "
+                    "column to %s (the 2026 file has one), or fit from a "
+                    "file that has it."
+                    % (path, season, tqb_starters_path, path))
+            warnings.warn(
+                unverified_season_message(path, season, tqb_starters_path),
+                UnverifiedPricesSeasonWarning, stacklevel=2)
+        elif file_season != season:
+            raise SeasonMismatchError(
+                "%s declares season %d but %d was asserted. The prices file's "
+                "own season column is direct evidence, unlike the TQB map "
+                "which is only a proxy - this is the mismatch that used to "
+                "pass silently and refit the artifact-era curve."
+                % (path, file_season, season))
+
     aliases = Resolver(alias_path).aliases
     starters = _load_tqb_starters(tqb_starters_path)
     out = PriceMap()
+    out.source_path = path
+    # Only the guard above can answer this, and only it ever should: every
+    # consumer downstream now reads the verdict off the map rather than
+    # re-deriving it (or, as the intel page did, assuming it).
+    if season is not None:
+        out.season_verified = bool(declared) and declared[0] is not None
     with open(path, newline="") as fh:
         for row in csv.DictReader(fh):
             name = normalize_name(row["player_as_written"])
@@ -173,16 +393,31 @@ def top10_cost(report):
     WHY NOT top10_mae ALONE. It was, until the 2026 prices arrived and showed
     what it cannot see. Measured year-matched against them, `draftable` beat
     `starter` on top10_mae ($9.08 against $10.06) while being far worse in the
-    only way that matters: its top-10 error was ENTIRELY systematic - mae
-    $10.34 against bias -$10.34, meaning all sixteen round-one players were
-    under-priced by about $10 apiece. `starter` had a larger spread around a
-    bias of -$0.25.
+    only way that matters: its top-10 error is ENTIRELY systematic - mae $9.08
+    against bias -$9.08, so every one of its ten most expensive matched
+    players is under-priced, by about $9 apiece. `starter`'s error is roughly
+    half noise and half bias: mae $10.06 against bias +$5.10.
 
     Those are not equally bad. Noise averages out across thirteen roster spots;
-    a policy that under-prices every expensive player by $10 loses every one of
+    a policy that under-prices every expensive player by $9 loses every one of
     them, and no amount of drafting skill recovers that. So bias is added to
     mae: it is already inside mae once, and this counts it again. Pure noise is
     charged once, pure bias twice.
+
+    THE FIGURES ABOVE ARE MEASURED, from the real 2026 extract and prices.
+    `test_a_lower_top10_mae_does_not_win_when_it_is_all_bias` PINS them as
+    constants and records the recipe that produced them in a comment; it
+    cannot re-derive them, because the extract is gitignored licensed data
+    and is not present in a clean checkout. What that test enforces on its
+    own is the RELATIONSHIP between them (draftable's |bias|/mae > 0.95,
+    starter's < 0.6), which is what the decision rests on and what survives
+    a projection refresh. `market/2026.yaml`'s `diagnostics` carries the
+    starter pair from a real run. They used to read
+    "$10.34 against bias -$10.34" and "a bias of -$0.25" - the -$0.25 came
+    from a different table's dollar band, and starter's real top-10 bias is
+    +$5.10. The decision is unchanged either way (the ratio test, not the
+    decimals, is what it rests on), but a docstring quoting a number no run
+    produces is the failure this whole area exists to prevent.
     """
     return report["top10_mae"] + abs(report["top10_bias"])
 

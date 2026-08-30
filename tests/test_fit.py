@@ -242,11 +242,40 @@ def test_top10_cost_charges_systematic_error_twice_and_noise_once():
 
 
 def test_a_lower_top10_mae_does_not_win_when_it_is_all_bias():
-    # The real 2026 numbers. draftable wins on top10_mae and must still lose:
-    # its entire top-10 error is a one-directional $10.34 under-price.
-    starter = _report("starter", top10_mae=10.06, top10_bias=-0.25)
-    draftable = _report("draftable", top10_mae=9.08, top10_bias=-9.08)
+    # MEASURED, not quoted. The previous value here (top10_bias=-0.25 for
+    # starter) was lifted from the $26+ band of a different table and
+    # asserted that starter's top-10 is essentially unbiased. It over-prices
+    # by about $5/player across the ten most expensive priced players. The
+    # policy decision these numbers pin is correct either way - starter wins
+    # for any bias weight above 0.25 - but a green test asserting a bias
+    # that is not there is this codebase's signature failure in miniature.
+    #
+    # Reproduced with (PYTHONPATH=src):
+    #   pool = build_pool(lg, "sources/draftsharks.yaml",
+    #       "data/extracts/Draft Sharks/2026/rankings-2026-08-23.csv", 2026, None)
+    #   curves = load_curves("calibration/2025.yaml")  # score_season_calibrated
+    #   prices = load_prices("data/league/auction-rosters-2026.csv",
+    #       tqb_starters_path="identity/tqb-2026-starters.yaml", season=2026)
+    #   score_fit(lg, pool, prices, policy)
+    # This is exactly what `sffl fit-market` runs, and the starter figures
+    # below reproduce market/2026.yaml's persisted `diagnostics` exactly.
+    #
+    # draftable wins on top10_mae ($9.08 vs $10.06) and must still lose: its
+    # top-10 error is almost entirely systematic (|top10_bias| is ~100% of
+    # top10_mae - every one of its ten most expensive matched players is
+    # under-priced in the same direction). starter's error is roughly half
+    # noise, half bias (|top10_bias| is ~half of top10_mae) - a materially
+    # different, and much more recoverable, kind of wrong. That relationship,
+    # not the exact decimals, is what the decision rests on and what will
+    # still hold the next time projections are refreshed and these numbers
+    # drift.
+    starter = _report("starter", top10_mae=10.0638, top10_bias=5.1042)
+    draftable = _report("draftable", top10_mae=9.0782, top10_bias=-9.0782)
     assert draftable["top10_mae"] < starter["top10_mae"]
+    # draftable's top-10 error is almost entirely systematic bias ...
+    assert abs(draftable["top10_bias"]) / draftable["top10_mae"] > 0.95
+    # ... starter's is not - noise and bias are roughly comparable in size
+    assert abs(starter["top10_bias"]) / starter["top10_mae"] < 0.6
     assert top10_cost(starter) < top10_cost(draftable)
 
 
@@ -276,10 +305,309 @@ def test_score_fit_reports_signed_top10_bias():
 def test_the_2026_prices_pick_starter_over_draftable():
     """The regression this rule exists for.
 
-    Measured year-matched on the real 2026 prices, draftable wins top10_mae
-    ($9.08 vs $10.06) while under-pricing all sixteen round-one players by
-    about $10. Before top10_cost, choose_policy shipped that board.
+    Measured year-matched on the real 2026 prices (see the reproduction
+    recipe in test_a_lower_top10_mae_does_not_win_when_it_is_all_bias),
+    draftable wins top10_mae ($9.08 vs $10.06) while under-pricing its ten
+    most expensive matched players almost entirely one-directionally, by
+    about $9 apiece. Before top10_cost, choose_policy shipped that board.
+
+    starter's top10_bias is +5.10, not the -0.25 an earlier version of this
+    test asserted (that number was lifted from the $26+ band of a different
+    table). The measured bias here is still small enough, relative to
+    draftable's near-total systematic error, that the decision is unaffected -
+    which is what this test actually pins.
     """
-    starter = _report("starter", top10_mae=10.06, top10_bias=-0.25)
-    draftable = _report("draftable", top10_mae=9.08, top10_bias=-9.08)
+    starter = _report("starter", top10_mae=10.0638, top10_bias=5.1042)
+    draftable = _report("draftable", top10_mae=9.0782, top10_bias=-9.0782)
     assert min([starter, draftable], key=top10_cost)["policy"] == "starter"
+
+
+def test_prices_seasons_reads_the_column_for_THE_WHOLE_FILE():
+    # PLURAL on purpose. The predecessor returned the FIRST non-empty cell
+    # and never read the rest, which reported a whole file's season from one
+    # row. This asserts the real file declares exactly one season across all
+    # 156 of its priced rows - a strictly stronger claim than the old
+    # `prices_season(...) == 2026`, which one correct first row satisfied.
+    from sffl.fit import prices_seasons
+    assert prices_seasons("data/league/auction-rosters-2026.csv") == (2026,)
+
+
+def test_prices_seasons_is_empty_when_the_file_predates_the_column(tmp_path):
+    p = tmp_path / "old.csv"
+    p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
+    from sffl.fit import prices_seasons
+    assert prices_seasons(str(p)) == ()
+
+
+def test_loading_prices_from_the_wrong_season_is_refused(tmp_path):
+    # HOLE 1: this configuration used to run to completion and silently
+    # refit the artifact-era curve. The prices file now states its own
+    # season, so the lie is detectable rather than proxied by the TQB map.
+    #
+    # The TQB map here is deliberately MATCHED (2026) so the map-season check
+    # passes cleanly and execution actually reaches the file-season check -
+    # only the prices file lies. That is the exact configuration that used
+    # to run to completion: mismatched prices with a matched map. Asserting
+    # on the distinctive "declares season" wording (rather than a bare year
+    # substring any of the three guards could produce) is what pins this
+    # test to the file-season check specifically.
+    from sffl.fit import load_prices
+    p = tmp_path / "prices.csv"
+    p.write_text("player_as_written,price,season\nJA'MARR CHASE,42,2025\n")
+    with pytest.raises(ValueError) as exc:
+        load_prices(str(p), tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)
+    assert "declares season 2025" in str(exc.value)
+    assert "2026" in str(exc.value)
+
+
+def test_a_tqb_map_with_no_season_key_is_refused_when_a_season_is_asserted(tmp_path):
+    # HOLE 2: a map with no season: key used to skip the guard entirely.
+    from sffl.fit import load_prices
+    m = tmp_path / "map.yaml"
+    m.write_text("starters:\n  Joe Burrow: CIN\n")
+    p = tmp_path / "prices.csv"
+    p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
+    with pytest.raises(ValueError) as exc:
+        load_prices(str(p), tqb_starters_path=str(m), season=2026)
+    assert "season" in str(exc.value).lower()
+
+
+def test_a_direct_call_gets_the_same_guard_as_the_cli(tmp_path):
+    # HOLE 3: the guard used to live only in cli._value_pool, so any other
+    # caller bypassed it. It is enforced here now, at the load itself.
+    from sffl.fit import DEFAULT_TQB_STARTERS, load_prices
+    p = tmp_path / "prices.csv"
+    p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
+    with pytest.raises(ValueError):
+        load_prices(str(p), tqb_starters_path=DEFAULT_TQB_STARTERS,
+                    season=2026)  # the default map is 2025
+
+
+def test_a_season_matched_load_still_works():
+    from sffl.fit import load_prices
+    prices = load_prices("data/league/auction-rosters-2026.csv",
+                         tqb_starters_path="identity/tqb-2026-starters.yaml",
+                         season=2026)
+    assert len(prices) > 100
+
+
+def test_omitting_the_season_keeps_the_old_permissive_behaviour(tmp_path):
+    # Callers that genuinely do not know the season (a poc script exploring
+    # a file) are not forced to assert one. The guard binds when a season IS
+    # asserted, which every production path does.
+    from sffl.fit import load_prices
+    p = tmp_path / "prices.csv"
+    p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
+    assert load_prices(str(p)) is not None
+
+
+# --------------------------------------------------------------------------
+# THE ANNOUNCEMENT HALF OF DECISION 2.
+#
+# Verification shipped; the announcement did not. `prices_season` returns None
+# for a file with no `season` column and the guard simply did not fire - no
+# warning, no note, nothing - so the byte-for-byte configuration that
+# manufactured the phantom top-end bias (2025 prices, 2026 map, 2026
+# projections) fitted price = 2.443 * value^0.531 at exit 0 in silence. A
+# check that cannot run must SAY it could not run; its silence is otherwise
+# indistinguishable from a pass.
+# --------------------------------------------------------------------------
+
+COLUMNLESS_PRICES = "data/league/auction-rosters-2025.csv"
+
+
+def test_a_prices_file_with_no_season_column_says_so(tmp_path):
+    from sffl.fit import UnverifiedPricesSeasonWarning, load_prices
+    with pytest.warns(UnverifiedPricesSeasonWarning) as caught:
+        prices = load_prices(COLUMNLESS_PRICES,
+                             tqb_starters_path="identity/tqb-2025-starters.yaml",
+                             season=2025)
+    # It still LOADS - the pre-column files must keep working. What changes
+    # is that the run is no longer silent about what it could not check.
+    assert len(prices) > 100
+    message = str(caught[0].message)
+    assert COLUMNLESS_PRICES in message, "the warning must name the file"
+    assert "2025" in message, "the warning must name the season taken on trust"
+    assert "proxy" in message.lower(), (
+        "the warning must say WHY the TQB map is not evidence of the season")
+
+
+def test_a_prices_file_that_states_its_season_warns_about_nothing():
+    # The complement: a warning that fires on every run is a warning nobody
+    # reads. The 2026 file carries the column, so it is verified, not trusted.
+    import warnings
+
+    from sffl.fit import UnverifiedPricesSeasonWarning, load_prices
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        load_prices("data/league/auction-rosters-2026.csv",
+                    tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)
+    assert not [w for w in caught
+                if issubclass(w.category, UnverifiedPricesSeasonWarning)]
+
+
+def test_no_season_asserted_means_nothing_to_verify_and_nothing_to_warn_about():
+    # The warning is about an ASSERTION that could not be checked. A caller
+    # that asserts nothing (a poc script exploring an unknown file) has made
+    # no claim for this to qualify.
+    import warnings
+
+    from sffl.fit import UnverifiedPricesSeasonWarning, load_prices
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        load_prices(COLUMNLESS_PRICES)
+    assert not [w for w in caught
+                if issubclass(w.category, UnverifiedPricesSeasonWarning)]
+
+
+def test_a_fit_refuses_a_prices_file_that_cannot_state_its_season(tmp_path):
+    # A FIT is the one operation that bakes the pairing into a persisted
+    # artifact later seasons trust without re-deriving it, so for a fit the
+    # warning is not enough. Everything else keeps working (above).
+    from sffl.fit import SeasonMismatchError, load_prices
+    with pytest.raises(SeasonMismatchError) as exc:
+        load_prices(COLUMNLESS_PRICES,
+                    tqb_starters_path="identity/tqb-2025-starters.yaml",
+                    season=2025, require_file_season=True)
+    assert COLUMNLESS_PRICES in str(exc.value)
+    assert "season" in str(exc.value)
+
+
+def test_a_fit_accepts_a_prices_file_that_does_state_its_season():
+    from sffl.fit import load_prices
+    prices = load_prices("data/league/auction-rosters-2026.csv",
+                         tqb_starters_path="identity/tqb-2026-starters.yaml",
+                         season=2026, require_file_season=True)
+    assert len(prices) > 100
+
+
+# --------------------------------------------------------------------------
+# THE `season` COLUMN'S OWN FAILURE MODE.
+#
+# Adding the column created an affordance: one rosters file accumulating
+# several seasons. `prices_season` read the FIRST non-empty cell and never
+# looked at the rest, so a file whose first row said 2026 and whose remaining
+# 155 rows said 2025 VERIFIED CLEAN - and fit-market --year 2026 persisted
+# a=2.4432 b=0.5308 from 123 observations, the artifact-era curve, into the
+# one file every later season is meant to trust without re-deriving it.
+# --------------------------------------------------------------------------
+
+def _mixed_prices(tmp_path, name="mixed.csv"):
+    """The real 2026 file with every row but the first restamped 2025."""
+    import csv
+    with open("data/league/auction-rosters-2026.csv", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+        fields = list(rows[0].keys())
+    for i, r in enumerate(rows):
+        r["season"] = "2026" if i == 0 else "2025"
+    p = tmp_path / name
+    with open(str(p), "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+    return str(p)
+
+
+def test_prices_seasons_reports_every_season_not_just_the_first_rows(tmp_path):
+    from sffl.fit import prices_seasons
+    assert prices_seasons(_mixed_prices(tmp_path)) == (2026, 2025)
+
+
+def test_prices_seasons_reports_a_partly_filled_column_as_partly_filled(tmp_path):
+    # A file that labels some rows and not others is making a PARTIAL claim,
+    # and a partial claim about which season a fit pairs with must not be
+    # rounded up to a whole one.
+    from sffl.fit import prices_seasons
+    p = tmp_path / "partial.csv"
+    p.write_text("player_as_written,price,season\n"
+                 "JA'MARR CHASE,42,2026\n"
+                 "BROCK BOWERS,14,\n")
+    assert prices_seasons(str(p)) == (2026, None)
+
+
+def test_prices_seasons_ignores_a_trailing_blank_line(tmp_path):
+    # A blank final row must not read as a second, unstated "season" - that
+    # would refuse every file whose author left a newline at the end.
+    from sffl.fit import prices_seasons
+    p = tmp_path / "trailing.csv"
+    p.write_text("player_as_written,price,season\nJA'MARR CHASE,42,2026\n,,\n")
+    assert prices_seasons(str(p)) == (2026,)
+
+
+def test_a_non_uniform_season_column_is_refused_not_verified(tmp_path):
+    # The whole point: this used to pass verification in silence.
+    from sffl.fit import SeasonMismatchError, load_prices
+    mixed = _mixed_prices(tmp_path)
+    with pytest.raises(SeasonMismatchError) as exc:
+        load_prices(mixed, tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)
+    message = str(exc.value)
+    assert "more than one season" in message
+    assert "2026" in message and "2025" in message
+
+
+def test_a_non_uniform_column_is_refused_even_though_the_first_row_matches(tmp_path):
+    # Explicitly the shape the old code accepted: row 1 says exactly what was
+    # asserted. A guard that reads one row cannot tell this from a clean file.
+    import warnings
+
+    from sffl.fit import SeasonMismatchError, load_prices, prices_seasons
+    mixed = _mixed_prices(tmp_path)
+    assert prices_seasons(mixed)[0] == 2026, "row 1 agrees with the assertion"
+    with warnings.catch_warnings():
+        # Nothing here may downgrade to a warning - it is a refusal.
+        warnings.simplefilter("error")
+        with pytest.raises(SeasonMismatchError):
+            load_prices(mixed,
+                        tqb_starters_path="identity/tqb-2026-starters.yaml",
+                        season=2026)
+
+
+def test_a_partly_filled_season_column_is_refused_too(tmp_path):
+    from sffl.fit import SeasonMismatchError, load_prices
+    p = tmp_path / "partial.csv"
+    p.write_text("player_as_written,price,season\n"
+                 "JA'MARR CHASE,42,2026\n"
+                 "BROCK BOWERS,14,\n")
+    with pytest.raises(SeasonMismatchError) as exc:
+        load_prices(str(p), tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)
+    assert "(blank)" in str(exc.value)
+
+
+def test_a_season_column_of_only_blanks_is_the_same_as_no_column(tmp_path):
+    # Not a third, quieter way of skipping the check: it declares nothing,
+    # so it warns exactly as a column-less file does.
+    from sffl.fit import UnverifiedPricesSeasonWarning, load_prices
+    p = tmp_path / "blank.csv"
+    p.write_text("player_as_written,price,season\nJA'MARR CHASE,42,\n")
+    with pytest.warns(UnverifiedPricesSeasonWarning):
+        load_prices(str(p), tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)
+
+
+def test_the_prices_map_carries_its_own_account_of_its_season():
+    # The fact has to travel WITH the prices: it is what stops the workbook
+    # claiming "year-matched by construction" on a run whose stdout says the
+    # season could not be verified.
+    import warnings
+
+    from sffl.fit import load_prices
+    verified = load_prices("data/league/auction-rosters-2026.csv",
+                           tqb_starters_path="identity/tqb-2026-starters.yaml",
+                           season=2026)
+    assert verified.season_verified is True
+    assert verified.source_path == "data/league/auction-rosters-2026.csv"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        unverified = load_prices(
+            "data/league/auction-rosters-2025.csv",
+            tqb_starters_path="identity/tqb-2025-starters.yaml", season=2025)
+    assert unverified.season_verified is False
+
+    # No season asserted means nothing was claimed, so nothing was checked -
+    # which is neither True nor False.
+    assert load_prices("data/league/auction-rosters-2025.csv").season_verified is None

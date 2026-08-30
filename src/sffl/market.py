@@ -15,7 +15,9 @@ overpay the $30+ band by $13.2. It was fitted with b=0.551, strongly concave,
 to bend that away.
 
 The 2026 prices arrived on 2026-08-27 and allow the honest year-matched test.
-The $30+ overpayment IS NOT REAL: MY$ bias in that band is -$0.25, and refit
+The $30+ overpayment as originally measured (+$13.2) IS NOT REAL: year-matched,
+MY$ bias in that band is +$3.45 - real, but a quarter of the claimed size, not
+the near-zero this note previously (and wrongly) claimed - and refit
 year-matched the curve is b=0.662, far closer to linear. What survives is a
 milder compression in the middle of the board, which is where this curve earns
 its keep - out of sample EST$ beat raw MY$ at $10-25 ($5.50 mae against $8.23).
@@ -64,8 +66,9 @@ shipped unweighted OLS - a Pareto improvement, not a trade-off, so the
 compression is a property of unweighted OLS on floor-heavy data, not of the
 power-law form itself. DO NOT ADOPT IT. The out-of-sample evidence it was
 waiting for arrived with the 2026 prices, and it removes a top-end bias that
-year-matched measurement says does not exist (-$0.25, not +$13.2). It was
-tuned against the artifact. A
+year-matched measurement shows is a quarter of what was claimed (+$3.45, not
++$13.2) - real, but nowhere near large enough to justify bending the curve
+this hard. It was tuned against the artifact. A
 bidder budgeting for a single specific top target should treat EST$ as a
 floor on that player's price, not a point estimate.
 

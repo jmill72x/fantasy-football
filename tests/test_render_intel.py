@@ -11,6 +11,7 @@ import re
 import pytest
 
 from sffl.league import load_league
+from sffl.market_model import MarketModel
 from sffl.render import intel
 from sffl.render.rows import BoardRow
 from sffl.schema import PlayerProjection
@@ -322,3 +323,228 @@ def test_the_team_qb_paragraph_degrades_instead_of_inventing_a_shape():
     text = dict(intel._model_weakness(f)[1])["Team QB"]
     assert "too few Team QB units" in text
     assert "WIDER" not in text
+
+
+# --------------------------------------------------------------------------
+# Which market model priced EST$, and from which season (Task 6, Part 2).
+#
+# A fit-in-process curve and an applied persisted model produce the exact
+# same (a, b) tuple - `gather` cannot tell them apart from the curve alone.
+# It distinguishes them from whether `prices` is None (see `_value_pool`'s
+# own docstring: --market leaves `prices` None, --prices does not) and, for
+# an applied model's own season/observations/fit date, from the `market`
+# argument - the loaded `MarketModel` itself. Absent that argument, those
+# three facts are honestly None rather than assumed "this season".
+# --------------------------------------------------------------------------
+
+MODEL_SEASON = 2025
+CROSS_MODEL = MarketModel(season=MODEL_SEASON, fitted_on="2025-08-15",
+                          curve=(2.2, 0.6), policy="starter",
+                          evidence={"observations": 130}, diagnostics={})
+SAME_SEASON_MODEL = MarketModel(season=LG.season, fitted_on="2026-08-29",
+                                curve=(2.0, 0.66), policy="starter",
+                                evidence={"observations": 156}, diagnostics={})
+
+
+def _model_text(f):
+    return dict(intel._dollar_columns(f)[1])["Model"]
+
+
+def test_a_curve_fit_in_process_names_this_seasons_own_observation_count():
+    pool = [player("Alpha", "TQB", 30.0), player("Bravo", "RB", 12.0)]
+    prices = {"alpha": 20.0, "bravo": 10.0}
+    f = intel.gather(LG, rows(), pool=pool, prices=prices, curve=(2.0, 0.66))
+    assert f.market_applied is False
+    assert f.market_season == LG.season
+    assert f.market_cross_season is False
+    assert f.market_n_obs == f.n_curve_obs == 2
+
+    text = _model_text(f)
+    assert "fit fresh this run" in text
+    assert "%d" % LG.season in text
+    assert "2" in text  # the observation count
+    assert "CROSS-SEASON" not in text
+
+    est = dict(intel._dollar_columns(f)[1])["EST$"]
+    assert "fitted no price curve" not in est
+
+
+def test_an_applied_curve_with_no_model_object_names_nothing_it_cannot_know():
+    # curve is set (assign_expected_prices ran) but `gather` was handed
+    # neither `prices` (so this is not an in-process fit) nor `market` (so
+    # there is no MarketModel to read a season off) - exactly a --market run
+    # whose loaded model was never threaded through to `gather`.
+    f = intel.gather(LG, rows(), curve=(2.0, 0.66))
+    assert f.market_applied is True
+    assert f.market_season is None
+    assert f.market_n_obs is None
+    assert f.market_cross_season is None
+
+    text = _model_text(f)
+    assert "did not record" in text
+    assert "2025" not in text and "2026" not in text
+
+    # The bug this replaces: EST$ IS populated on an applied run (curve is
+    # not None), so the page must never say it fitted none.
+    est = dict(intel._dollar_columns(f)[1])["EST$"]
+    assert "fitted no price curve" not in est
+    assert "APPLIED" not in est.upper() or "persisted" in est.lower()
+
+
+def test_a_cross_season_applied_model_is_named_and_flagged(tmp_path):
+    f = intel.gather(LG, rows(), curve=CROSS_MODEL.curve, market=CROSS_MODEL)
+    assert f.market_applied is True
+    assert f.market_season == MODEL_SEASON
+    assert f.market_n_obs == 130
+    assert f.market_fitted_on == "2025-08-15"
+    assert f.market_cross_season is True
+
+    text = _model_text(f)
+    assert "2025" in text and "130" in text and "2025-08-15" in text
+    assert "CROSS-SEASON" in text
+    assert "%d" % LG.season in text  # names the board's own season too
+
+
+def test_a_year_matched_applied_model_is_named_without_the_cross_season_flag():
+    f = intel.gather(LG, rows(), curve=SAME_SEASON_MODEL.curve,
+                     market=SAME_SEASON_MODEL)
+    assert f.market_cross_season is False
+
+    text = _model_text(f)
+    assert "%d" % LG.season in text and "156" in text
+    assert "CROSS-SEASON" not in text
+    assert "year-matched" in text
+
+
+def test_no_curve_means_no_market_model_to_name():
+    f = intel.gather(LG, rows())
+    assert f.market_applied is None
+    text = _model_text(f)
+    assert "no model priced this board" in text
+
+
+# --------------------------------------------------------------------------
+# THE BOARD'S SEASON IS `--year`, NOT THE LEAGUE PROFILE'S.
+#
+# `_market_provenance` compared the model against `lg.season` while the CLI's
+# stdout NOTE compared it against `args.year`. Those are independent, and on a
+# real `--year 2027 --market market/2026.yaml` run they disagreed: stdout
+# announced CROSS-SEASON while the workbook said "year-matched to this board".
+# The workbook is what goes to the draft table.
+#
+# The tests that existed passed because they built the mismatch against
+# `lg.season` (CROSS_MODEL is season 2025 and LG is 2026), which is exactly
+# the case the broken comparison still got right. These build it the way the
+# 2027 workflow does: a model whose season MATCHES the league profile but not
+# the year being priced. There is no leagues/sffl/2027.yaml - one profile
+# serves several seasons - so this is the normal shape of a pre-auction run,
+# not a contrived one.
+# --------------------------------------------------------------------------
+
+def test_the_board_being_priced_is_the_run_year_not_the_profile_season():
+    f = intel.gather(LG, rows(), year=2027)
+    assert LG.season == 2026, "fixture assumption"
+    assert f.season == 2027
+
+
+def test_a_model_matching_the_profile_but_not_the_run_year_is_cross_season():
+    # SAME_SEASON_MODEL.season == LG.season == 2026, so a comparison against
+    # the profile calls this year-matched. It is not: the board is 2027.
+    f = intel.gather(LG, rows(), curve=SAME_SEASON_MODEL.curve,
+                     market=SAME_SEASON_MODEL, year=2027)
+    assert f.market_season == 2026
+    assert f.season == 2027
+    assert f.market_cross_season is True
+
+    text = _model_text(f)
+    assert "CROSS-SEASON" in text
+    # The exact sentence the workbook used to print for this run.
+    assert "year-matched to this board" not in text
+    assert "2027" in text, "the page must name the board's own season"
+
+
+def test_a_model_matching_the_run_year_is_year_matched_even_across_profiles():
+    # The complement, and the reason this cannot be fixed by always saying
+    # CROSS-SEASON: a 2027 model applied to a 2027 board is year-matched even
+    # though the profile it was rendered from says 2026.
+    from sffl.market_model import MarketModel
+    m = MarketModel(season=2027, fitted_on="2027-08-30", curve=(2.0, 0.66),
+                    policy="starter", evidence={"observations": 140},
+                    diagnostics={})
+    f = intel.gather(LG, rows(), curve=m.curve, market=m, year=2027)
+    assert f.market_cross_season is False
+    assert "CROSS-SEASON" not in _model_text(f)
+
+
+def test_an_in_process_fit_is_year_matched_to_the_run_year(tmp_path):
+    # The fit branch reported lg.season as the curve's own season too. It is
+    # the run's year: load_prices' guard has already refused any prices whose
+    # season disagrees with --year, which is what makes this knowable.
+    pool = [player("Alpha", "TQB", 30.0), player("Bravo", "RB", 12.0)]
+    f = intel.gather(LG, rows(), pool=pool, prices={"alpha": 20.0, "bravo": 10.0},
+                     curve=(2.0, 0.66), year=2027,
+                     bids_path=str(tmp_path / "absent.csv"))
+    assert f.market_season == 2027
+    assert f.market_cross_season is False
+
+
+# --------------------------------------------------------------------------
+# "YEAR-MATCHED BY CONSTRUCTION" IS A GUARANTEE, NOT A DEFAULT.
+#
+# The in-process-fit branch printed it unconditionally, on the strength of a
+# comment claiming load_prices "refuses any prices file whose own season
+# disagrees with --year". That was never true of a file with no `season`
+# column: it cannot disagree, so there is nothing to refuse and the guard
+# warns instead. So `render --year 2026 --prices auction-rosters-2025.csv`
+# printed an UNVERIFIED PRICES SEASON banner to stdout and a workbook saying
+# "year-matched by construction" - beside the b=0.53 curve that mismatch
+# produces. The workbook is what a human reads at the draft table.
+# --------------------------------------------------------------------------
+
+class _Prices(dict):
+    """A prices dict that carries its own account of itself, as PriceMap does."""
+
+    def __init__(self, mapping, season_verified, source_path=None):
+        dict.__init__(self, mapping)
+        self.total_rows = len(mapping)
+        self.season_verified = season_verified
+        self.source_path = source_path
+
+
+def _fit_facts(season_verified, path=None):
+    pool = [player("Alpha", "TQB", 30.0), player("Bravo", "RB", 12.0)]
+    prices = _Prices({"alpha": 20.0, "bravo": 10.0}, season_verified, path)
+    return intel.gather(LG, rows(), pool=pool, prices=prices, curve=(2.0, 0.66))
+
+
+def test_an_unverifiable_prices_season_is_not_called_year_matched():
+    f = _fit_facts(False, "data/league/auction-rosters-2025.csv")
+    assert f.market_season_verified is False
+    assert f.market_prices_file.endswith("auction-rosters-2025.csv")
+
+    text = _model_text(f)
+    assert "year-matched by construction" not in text
+    assert "COULD NOT VERIFY" in text
+    assert "season" in text
+    assert "auction-rosters-2025.csv" in text, "name the file it could not check"
+    assert "%d" % LG.season in text
+
+
+def test_a_verified_prices_season_still_says_year_matched_by_construction():
+    # The complement. A guarantee that is never claimed is as useless as one
+    # that is always claimed: the 2026 file DOES state its season.
+    f = _fit_facts(True, "data/league/auction-rosters-2026.csv")
+    assert f.market_season_verified is True
+    text = _model_text(f)
+    assert "year-matched by construction" in text
+    assert "COULD NOT VERIFY" not in text
+
+
+def test_prices_that_say_nothing_about_themselves_leave_the_wording_alone():
+    # A plain dict of prices (any caller that is not load_prices) carries no
+    # such account. Absent is "not stated", not "unverified".
+    pool = [player("Alpha", "TQB", 30.0)]
+    f = intel.gather(LG, rows(), pool=pool, prices={"alpha": 20.0},
+                     curve=(2.0, 0.66))
+    assert f.market_season_verified is None
+    assert "year-matched by construction" in _model_text(f)

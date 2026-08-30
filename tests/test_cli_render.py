@@ -69,7 +69,7 @@ def test_dropping_unrostered_players_reprices_nobody_on_the_rendered_board(tmp_p
     args = argparse.Namespace(
         source=DS, file=UNROSTERED_FIXTURE, year=2026, set=None,
         curves=None, prices=None, policy="starter", tqb_starters=None)
-    pool, _curve, _prices = _value_pool(load_league("leagues/sffl/2026.yaml"), args)
+    pool, _curve, _prices, _market = _value_pool(load_league("leagues/sffl/2026.yaml"), args)
 
     # The workbook rounds MY$ to whole dollars, so compare on that basis.
     priced = dict((p.name, round(p.stats["_dollars"], 0)) for p in pool)
@@ -172,3 +172,22 @@ def test_render_degrades_loudly_when_the_bid_history_cannot_be_read(tmp_path, ca
     assert rc == 0
     assert "WARNING" in out and "budget arithmetic only" in out
     assert os.path.getsize(pdf) > 0
+
+
+def test_plan_can_apply_a_persisted_market_model(tmp_path, capsys):
+    # `plan` is a PRE-AUCTION command and gained no --market, so the one
+    # command whose whole context is "before this season's prices exist"
+    # could not use the persisted model that exists for exactly that case.
+    # (_value_pool's getattr(args, "market", None) made the omission safe
+    # rather than a crash, which is why it went unnoticed.)
+    from sffl.market_model import MarketModel, save
+    model = str(tmp_path / "m.yaml")
+    save(model, MarketModel(season=2026, fitted_on="2026-08-30",
+                            curve=(2.05, 0.662), policy="starter",
+                            evidence={"observations": 130}, diagnostics={}))
+    rc = main(["plan", "--source", DS, "--file", FIXTURE, "--year", "2027",
+               "--market", model])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "using the 2026 market model" in out
+    assert "CROSS-SEASON" in out

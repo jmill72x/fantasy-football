@@ -6,12 +6,17 @@
 
 import argparse
 import csv
+import hashlib
 import os
+import re
 import sys
+import textwrap
+import warnings
 
 from sffl.calibrate import load_curves
-from sffl.fit import (DEFAULT_TQB_STARTERS, choose_policy, load_prices,
-                      tqb_starters_season)
+from sffl.fit import (DEFAULT_TQB_STARTERS, SeasonMismatchError,
+                      UnverifiedPricesSeasonWarning, choose_policy,
+                      load_prices)
 from sffl.identity import NFL_TEAMS, normalize_name
 from sffl.league import load_league
 from sffl.market import assign_expected_prices, fit_price_curve
@@ -41,6 +46,45 @@ PROJECTIONS_URL_TEMPLATE = (
     CBS_LEAGUE_BASE + "/stats/stats-main/all:RB:WR:TE/%d:p/standard/projections")
 
 
+def _banner(title, body):
+    """Print an unmissable block. Used where a run must SAY what it could not check.
+
+    Wrapped and indented rather than one long line because the messages that
+    matter here are paragraphs, and a paragraph printed as a single 600-column
+    line is, in a terminal, a way of not saying it.
+    """
+    print("")
+    print("  ** %s **" % title)
+    for line in textwrap.wrap(body, 74):
+        print("     " + line)
+    print("")
+
+
+def _load_prices_announcing(path, tqb_starters_path, season):
+    """`fit.load_prices`, with its unverifiable-season warning PRINTED.
+
+    `load_prices` raises the warning so no caller can bypass it (Decision 3),
+    but a `warnings.warn` is easy to miss in a terminal full of a valuation's
+    own output - and this particular silence is the exact thing the branch
+    exists to end. So the CLI catches it and prints it as a banner, in the
+    same stream as the numbers it qualifies.
+
+    Only this module's own warning is intercepted. Anything else raised
+    inside is re-emitted untouched: swallowing an unrelated DeprecationWarning
+    to make room for this one would be the same mistake in miniature.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        prices = load_prices(path, tqb_starters_path=tqb_starters_path,
+                             season=season)
+    for w in caught:
+        if issubclass(w.category, UnverifiedPricesSeasonWarning):
+            _banner("UNVERIFIED PRICES SEASON", str(w.message))
+        else:
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+    return prices
+
+
 def _value_pool(lg, args):
     """Build a pool and run it through the full valuation path: vendor
     extract -> calibration curves -> replacement policy -> VORP/dollars ->
@@ -50,9 +94,23 @@ def _value_pool(lg, args):
     the same player differently - duplicating this path would let a fix or a
     calibration change land in one command's copy and not the other's.
 
-    Returns (pool, curve, prices) on success. Returns None after printing why
-    on the one recoverable failure (`--policy fit` without `--prices`) - the
-    caller should print nothing further and return 1.
+    Returns (pool, curve, prices, market) on success. `market` is the loaded
+    `MarketModel` (see `sffl.market_model.load`) when this run applied one via
+    `--market`, else None - callers that need to name which model priced the
+    board (see `sffl.render.intel.gather`'s `market=` argument) must carry
+    this fourth element out; the 3-tuple this used to return had no way to.
+    Returns None after printing why on the one recoverable failure
+    (`--policy fit` without `--prices`) - the caller should print nothing
+    further and return 1.
+
+    `--market <path>` APPLIES a model persisted earlier by `fit-market`
+    instead of fitting one from `--prices` in this run. The two are mutually
+    exclusive: one fits, one applies, and asking for both in a single run is
+    the exact confusion this split exists to end. With a model supplied, its
+    persisted policy is used (`choose_policy` never runs, so `--policy fit`
+    needs no prices at all) and its persisted curve is applied directly -
+    `prices` stays None, matching the "no --prices supplied" shape everywhere
+    downstream.
     """
     pool = build_pool(lg, args.source, args.file, args.year, args.set)
 
@@ -62,33 +120,57 @@ def _value_pool(lg, args):
             p.stats["_season_points"] = score_season_calibrated(lg, p, curves)
         pool.sort(key=lambda p: -p.stats["_season_points"])
 
+    market = None
+    if getattr(args, "market", None):
+        if args.prices:
+            raise SystemExit(
+                "--market and --prices are mutually exclusive: --market "
+                "APPLIES a model fitted earlier, --prices FITS one now. "
+                "Passing both is asking to fit and apply in the same run, "
+                "which is the confusion this split exists to end. Use "
+                "--prices with `sffl fit-market` to produce a model, then "
+                "--market to price a board with it.")
+        from sffl.market_model import describe
+        from sffl.market_model import load as load_market
+        market = load_market(args.market)
+        # ANNOUNCED EVERY RUN, and loudly when the seasons differ. A curve
+        # silently older than the board it prices is the failure this split
+        # was built to design out - permitting the cross-season apply is only
+        # safe because it is impossible to do accidentally.
+        print("  " + describe(market))
+        if market.season != args.year:
+            print("  NOTE: this is a CROSS-SEASON apply - a %d model pricing "
+                  "%d projections. That is intended (last year's model of how "
+                  "this room behaves), but it is not a year-matched fit."
+                  % (market.season, args.year))
+
     # Loaded whenever --prices is supplied, under any policy: --policy fit
     # needs it to choose a replacement level, and every policy needs it to
     # fit the market curve (_est_price) below. Without it there is nothing
     # to fit against, so `prices` stays None and _est_price is never written.
     prices = None
     if args.prices:
-        # THE GUARD THAT THE 2026 REFIT PAID FOR. Fitting one season's prices
-        # against another season's projections is what manufactured a phantom
-        # $13.2 top-end bias, an EST$ curve tuned to remove it, and a deferred
-        # code change waiting on evidence that never existed. It is invisible
-        # in the output - every number looks reasonable. So it is refused here.
-        _map_season = tqb_starters_season(args.tqb_starters)
-        if _map_season is not None and _map_season != args.year:
-            raise SystemExit(
-                "refusing to value %d projections against the %d Team QB "
-                "starter map (%s).\n"
-                "Quarterbacks change franchises between seasons, so the wrong "
-                "map silently mis-joins or drops every Team QB price - and "
-                "pairing one season's prices with another's projections is "
-                "what produced this project's largest measurement error.\n"
-                "Pass --tqb-starters for %d, and a --prices file from %d."
-                % (args.year, _map_season, args.tqb_starters,
-                   args.year, args.year))
-        prices = load_prices(args.prices, tqb_starters_path=args.tqb_starters)
+        # The guard now lives in fit.load_prices, so it cannot be bypassed by
+        # a caller that reaches for the function directly. Converted to
+        # SystemExit here so the CLI keeps its clean single-line failure -
+        # but only for the guard's OWN failure (SeasonMismatchError). Any
+        # other ValueError (a bad alias chain, an unrecognised franchise
+        # code, a malformed price cell) is a genuine data problem and must
+        # keep its traceback so the offending row can be located, not be
+        # flattened to this guard's single-line message.
+        try:
+            prices = _load_prices_announcing(args.prices,
+                                             args.tqb_starters, args.year)
+        except SeasonMismatchError as exc:
+            raise SystemExit(str(exc))
 
     policy = args.policy
-    if policy == "fit":
+    if market is not None:
+        # The persisted policy was chosen from year-matched prices when the
+        # model was fitted, so a pre-auction run needs no price file to know
+        # it - this is the deadlock closing.
+        policy = market.policy
+    elif policy == "fit":
         if not args.prices:
             print("error: --policy fit requires --prices with observed auction prices")
             return None
@@ -131,7 +213,10 @@ def _value_pool(lg, args):
     # _est_price is unaffected either way - assign_expected_prices applies
     # the same flat override to them regardless of what curve was fit.
     curve = None
-    if prices is not None:
+    if market is not None:
+        curve = market.curve
+        assign_expected_prices(lg, pool, curve)
+    elif prices is not None:
         priced = [(p.stats["_dollars"], prices[normalize_name(p.name)])
                   for p in pool if normalize_name(p.name) in prices
                   and _pool_of(p.pos) not in lg.flat_priced_pools]
@@ -152,7 +237,7 @@ def _value_pool(lg, args):
         print("  %-5s %8.1f pts" % (name, levels[name]))
     print("  $%.4f per VORP point\n" % rate)
 
-    return pool, curve, prices
+    return pool, curve, prices, market
 
 
 def _board_rows(lg, pool, args):
@@ -267,7 +352,7 @@ def cmd_value(args):
     result = _value_pool(lg, args)
     if result is None:
         return 1
-    pool, curve, prices = result
+    pool, curve, prices, _market = result
 
     # _spread_rec_yds / _spread_rush_yds / _n_sources are only populated when
     # the pool came through sffl.consensus.merge (multi-source agreement
@@ -330,7 +415,7 @@ def cmd_value(args):
                             n_sources])
         print("\nwrote %s" % args.out)
 
-    if curve is not None:
+    if curve is not None and prices is not None:
         # Restricted to the same non-flat population the curve was fit on
         # (see `priced` above): flat-priced K/DST all land in the $1-2 band
         # at exactly $1 MY$/EST$ regardless of what the curve does, so
@@ -356,6 +441,16 @@ def cmd_value(args):
                 - sum(actual) / len(actual)
             print("  %-10s %4d %+9.1f %+9.1f %9.1f"
                   % (label, len(rows), mybias, estbias, sum(actual) / len(actual)))
+    elif curve is not None:
+        # curve came from --market, not a fit against this run's own
+        # --prices, so there is nothing observed to measure bias against.
+        # Correct to omit the table, but every other omission in this
+        # function says why it is absent - a table that vanishes with no
+        # explanation reads as a bug to the operator, not a property of the
+        # run.
+        print("\n(bias against observed prices not shown - this run applied "
+              "a persisted --market model rather than fitting against "
+              "--prices, so there are no observed prices to compare against)")
 
     return 0
 
@@ -369,7 +464,7 @@ def cmd_render(args):
     result = _value_pool(lg, args)
     if result is None:
         return 1
-    pool, curve, prices = result
+    pool, curve, prices, market = result
 
     rows = _board_rows(lg, pool, args)
 
@@ -394,7 +489,14 @@ def cmd_render(args):
         # quote a number the board beside it does not support. A fact this run
         # did not produce is reported as not measured, never as a stale
         # constant. See sffl.render.intel.
-        facts = gather_intel(lg, rows, pool=pool, prices=prices, curve=curve)
+        # year=args.year, NOT the league profile's season: this page's
+        # cross-season verdict must be the same verdict stdout printed a few
+        # lines above, and stdout compares against --year. A 2027 board built
+        # from the 2026 profile used to be announced CROSS-SEASON in the
+        # terminal and "year-matched to this board" in the workbook - and the
+        # workbook is what goes to the draft table.
+        facts = gather_intel(lg, rows, pool=pool, prices=prices, curve=curve,
+                             market=market, year=args.year)
         stats = render_xlsx(lg, rows, args.xlsx, intel=facts)
         print("wrote %s" % args.xlsx)
         # render_xlsx truncates to a hard two-page row budget (derived from
@@ -437,7 +539,7 @@ def cmd_plan(args):
     result = _value_pool(lg, args)
     if result is None:
         return 1
-    pool, _curve, _prices = result
+    pool, _curve, _prices, _market = result
 
     try:
         history = load_bid_history(args.bids)
@@ -453,6 +555,187 @@ def cmd_plan(args):
 
     rows = _board_rows(lg, pool, args)
     _print_plan(plan_bids(lg, rows, history), lg.silent_auction["bid_floor"])
+    return 0
+
+
+_PATH_SEASON = re.compile(r"^(?:19|20)\d\d$")
+
+
+def projections_season_from_path(path):
+    """The season an extract's PATH names, or None when it names none clearly.
+
+    The extracts are stored one directory per season - `data/extracts/Draft
+    Sharks/2026/rankings-2026-08-23.csv` - so the path is a second, independent
+    statement of which season a file is FOR, alongside `--year`. Independent is
+    the whole value: `--year` is what the operator typed, and typing the wrong
+    one is the failure being guarded against, so it cannot be checked against
+    itself.
+
+    Only a whole path COMPONENT that is exactly four digits counts. The date
+    inside `rankings-2026-08-23.csv` is deliberately not read: it is when the
+    file was pulled, not the season it projects, and a January pull for the
+    previous season would make those two disagree. Returns None when no
+    component qualifies OR when two different ones do - an ambiguous path is
+    not evidence, and the caller must say so rather than pick one.
+    """
+    parts = [p for p in re.split(r"[\\/]+", path) if p]
+    years = set(int(p) for p in parts if _PATH_SEASON.match(p))
+    return years.pop() if len(years) == 1 else None
+
+
+def _sha256_file(path):
+    """Content hash of a file, for evidence that names data too large or too
+    licensed to commit (a gitignored vendor extract that gets overwritten in
+    place). A path alone proves nothing a year later - the file at that path
+    may since have been refreshed - but a hash pins exactly which bytes were
+    fitted against, without copying a single row into a tracked file.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def cmd_fit_market(args):
+    """Fit this room's price curve and policy from year-matched evidence, and persist them.
+
+    THE ONLY COMMAND THAT FITS. Everything else applies a model this wrote.
+    That separation is the point: fitting is season-bound and can only happen
+    after an auction, while applying needs nothing but a curve and this year's
+    projections. Fusing them is what made a pre-auction run choose between
+    refusing outright and silently fitting across seasons.
+    """
+    import datetime
+
+    from sffl.market_model import MarketModel, save
+
+    # THE PROJECTIONS' OWN SEASON, checked BEFORE any work: the `evidence`
+    # block exists so a bad fit cannot be invisible, and an evidence block
+    # that can assert a self-contradicting falsehood is worse than none,
+    # because it will be believed. `projections_year: 2025` beside
+    # `projections_file: .../2026/rankings-2026-08-23.csv` was reproducible
+    # here - nothing compared the extract to --year, and projections_year was
+    # written from --year rather than read from anything.
+    path_season = projections_season_from_path(args.file)
+    if path_season is not None and path_season != args.year:
+        raise SystemExit(
+            "refusing to fit: --year %d, but the projections file is %s, "
+            "whose path names season %d. One of the two is wrong, and a fit "
+            "pairs prices with projections - getting that pairing wrong is "
+            "what this command exists to make impossible. Correct --year or "
+            "point --file at the %d extract."
+            % (args.year, args.file, path_season, args.year))
+    if path_season is None:
+        _banner(
+            "PROJECTIONS SEASON NOT VERIFIED",
+            "%s names no unambiguous season in its path, so --year %d could "
+            "not be cross-checked against the projections themselves and is "
+            "being taken on trust. The artifact records that: its "
+            "evidence.projections_year_source will say '--year (unverified)' "
+            "rather than claiming the file confirmed it. Storing extracts one "
+            "directory per season (data/extracts/<vendor>/<year>/) makes this "
+            "checkable." % (args.file, args.year))
+
+    lg = load_league(args.league)
+    pool = build_pool(lg, args.source, args.file, args.year, args.set)
+
+    if args.curves:
+        curves = load_curves(args.curves)
+        for p in pool:
+            p.stats["_season_points"] = score_season_calibrated(lg, p, curves)
+        pool.sort(key=lambda p: -p.stats["_season_points"])
+
+    # season=args.year is what makes this refuse every cross-season
+    # combination it can detect - the TQB map's season and the prices file's
+    # own season column must both agree with the projections' year. Only the
+    # guard's own SeasonMismatchError becomes SystemExit here; any other
+    # ValueError (bad alias chain, unrecognised franchise code, malformed
+    # price cell) is a genuine data problem and keeps its traceback.
+    #
+    # require_file_season is what separates a FIT from an apply: a prices
+    # file that cannot state its own season is REFUSED here (and merely
+    # warned about on value/render), because a fit is persisted and later
+    # seasons trust it without ever re-deriving it.
+    try:
+        prices = load_prices(args.prices, tqb_starters_path=args.tqb_starters,
+                             season=args.year, require_file_season=True)
+    except SeasonMismatchError as exc:
+        raise SystemExit(str(exc))
+
+    policy, reports = choose_policy(lg, pool, prices)
+    chosen = [r for r in reports if r["policy"] == policy][0]
+
+    # choose_policy leaves the pool carrying the LAST policy's numbers, not
+    # the winner's - see its docstring. Re-run the valuation with the chosen
+    # policy before fitting, or the curve is fit against the wrong dollars.
+    levels = replacement_levels(lg, pool, policy)
+    assign_vorp(lg, pool, levels)
+    assign_dollars(lg, pool)
+
+    pairs = []
+    for p in pool:
+        if lg.flat_priced_pools.get(_pool_of(p.pos)) is not None:
+            continue
+        key = normalize_name(p.name)
+        if key in prices:
+            pairs.append((p.stats["_dollars"], prices[key]))
+
+    curve = fit_price_curve(pairs)
+
+    model = MarketModel(
+        season=args.year,
+        fitted_on=datetime.date.today().isoformat(),
+        curve=curve,
+        policy=policy,
+        evidence={
+            "prices_file": args.prices,
+            "prices_rows": prices.total_rows,
+            "observations": len(pairs),
+            "projections_source": args.source,
+            # READ from the extract's path when it says one, not copied from
+            # --year. The two are cross-checked above, so they cannot
+            # disagree here - and when the path says nothing, the artifact
+            # says WHERE the year came from instead of presenting an
+            # unverified assertion in the same shape as a verified one.
+            "projections_year": (path_season if path_season is not None
+                                 else args.year),
+            "projections_year_source": (
+                "projections file path"
+                if path_season is not None
+                else "--year (unverified: the path names no season)"),
+            "tqb_starters": args.tqb_starters,
+            # Added so the artifact can be reproduced, not just described:
+            # `projections_source` above names the PROFILE (e.g.
+            # sources/draftsharks.yaml), which says how to parse a file but
+            # not which one - two extracts of the same vendor on the same day
+            # can disagree. `projections_file` names the actual path used and
+            # `projections_file_sha256` pins its bytes, since the extract
+            # itself is gitignored licensed data that gets overwritten in
+            # place (a path alone would go stale silently). `curves_file`,
+            # `league_profile` and `set` complete the command line that
+            # produced this fit - everything `sffl fit-market` was given,
+            # bar the output path and prices, is recoverable from `evidence`.
+            "projections_file": args.file,
+            "projections_file_sha256": _sha256_file(args.file),
+            "curves_file": args.curves,
+            "league_profile": args.league,
+            "set": args.set,
+        },
+        diagnostics={
+            "mae": round(chosen["mae"], 4),
+            "top10_mae": round(chosen["top10_mae"], 4),
+            "top10_bias": round(chosen["top10_bias"], 4),
+        },
+    )
+    try:
+        save(args.out, model, overwrite=args.force)
+    except OSError as exc:
+        raise SystemExit(str(exc))
+    print("wrote %s" % args.out)
+    print("  policy chosen from these prices: %s" % policy)
+    print("  curve: a=%.4f b=%.4f from %d observations"
+          % (curve[0], curve[1], len(pairs)))
     return 0
 
 
@@ -997,6 +1280,9 @@ def main(argv=None):
                       choices=["starter", "draftable", "fit"])
     val.add_argument("--prices", default=None,
                       help="observed auction prices CSV; required with --policy fit")
+    val.add_argument("--market", default=None,
+                      help="apply a persisted market model (see fit-market); "
+                           "mutually exclusive with --prices")
     val.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
                       help="year-bound map of starting QB name -> franchise code, "
                            "used to join --prices' Team QB rows to the pool "
@@ -1016,6 +1302,9 @@ def main(argv=None):
                       choices=["starter", "draftable", "fit"])
     ren.add_argument("--prices", default=None,
                       help="observed auction prices CSV; required with --policy fit")
+    ren.add_argument("--market", default=None,
+                      help="apply a persisted market model (see fit-market); "
+                           "mutually exclusive with --prices")
     ren.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
                       help="year-bound map of starting QB name -> franchise code, "
                            "used to join --prices' Team QB rows to the pool "
@@ -1042,6 +1331,14 @@ def main(argv=None):
                       choices=["starter", "draftable", "fit"])
     pln.add_argument("--prices", default=None,
                       help="observed auction prices CSV; required with --policy fit")
+    # `plan` is a PRE-AUCTION command, and pre-auction is exactly when a
+    # persisted model is the only option there is: --prices for the season
+    # being planned does not exist until the auction it was meant to inform
+    # has happened. _value_pool already handles it identically for all three
+    # commands; only the flag was missing.
+    pln.add_argument("--market", default=None,
+                      help="apply a persisted market model (see fit-market); "
+                           "mutually exclusive with --prices")
     pln.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
                       help="year-bound map of starting QB name -> franchise code, "
                            "used to join --prices' Team QB rows to the pool "
@@ -1051,6 +1348,25 @@ def main(argv=None):
     pln.add_argument("--bids", default=DEFAULT_BIDS,
                       help="silent-auction bid history CSV (default: %s)" % DEFAULT_BIDS)
     pln.set_defaults(func=cmd_plan)
+
+    fm = sub.add_parser("fit-market",
+                        help="fit this room's price curve from year-matched "
+                             "prices and persist it for future seasons")
+    fm.add_argument("--source", required=True)
+    fm.add_argument("--file", required=True)
+    fm.add_argument("--year", type=int, required=True)
+    fm.add_argument("--set", default=None)
+    fm.add_argument("--league", default=DEFAULT_LEAGUE)
+    fm.add_argument("--curves", default=None)
+    fm.add_argument("--prices", required=True,
+                    help="observed auction prices FROM THE SAME SEASON as --year")
+    fm.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
+                    help="Team QB starter map for --year")
+    fm.add_argument("--out", required=True,
+                    help="where to write the model, e.g. market/2026.yaml")
+    fm.add_argument("--force", action="store_true",
+                    help="overwrite an existing model")
+    fm.set_defaults(func=cmd_fit_market)
 
     wk = sub.add_parser("week", help="weekly waiver and start/sit decisions")
     wk.add_argument("--projections", required=True,
