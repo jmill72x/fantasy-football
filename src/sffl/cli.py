@@ -37,13 +37,41 @@ DEFAULT_LEAGUE = "leagues/sffl/2026.yaml"
 # logged in - identity-derived, so it can never drift onto another manager's
 # team the way a hardcoded /teams/<N> could.
 #
-# PROJECTIONS: week-parameterised. Built from --week rather than accepting a
-# hardcoded URL, so a new week never requires editing a URL by hand (and can
-# never silently run against last week's page because someone forgot to).
+# PROJECTIONS: week-parameterised AND scope-parameterised. Built from
+# --week and a group's CBS "scope" token rather than accepting a hardcoded
+# URL, so a new week never requires editing a URL by hand (and can never
+# silently run against last week's page because someone forgot to) and
+# scoring an eighth lineup slot never requires a second hand-written URL
+# literal that could drift out of sync with this one.
 CBS_LEAGUE_BASE = "https://stripesfantasyfootballleague.football.cbssports.com"
 DEFAULT_TEAM_URL = CBS_LEAGUE_BASE + "/teams"
 PROJECTIONS_URL_TEMPLATE = (
-    CBS_LEAGUE_BASE + "/stats/stats-main/all:RB:WR:TE/%d:p/standard/projections")
+    CBS_LEAGUE_BASE + "/stats/stats-main/all:%s/%d:p/standard/projections")
+
+# The four position-group pages `sffl alert` captures and merges into one
+# pool, in the order they are captured - and the CBS URL "scope" token each
+# one lives at, which is NOT always the same string as the group's own name
+# (RB-WR-TE's scope is "RB:WR:TE", colon-joined; the others are their own
+# name). `sources/cbs-weekly.yaml` owns what each group's PAGE COLUMNS mean;
+# this dict is the only place that owns what each group's URL looks like -
+# one mapping, so a fifth group later needs one new entry here, not a
+# hand-written URL literal added at each call site.
+ALERT_GROUPS = ("RB-WR-TE", "TQB", "K", "DST")
+GROUP_SCOPES = {
+    "RB-WR-TE": "RB:WR:TE",
+    "TQB": "TQB",
+    "K": "K",
+    "DST": "DST",
+}
+
+
+def _projections_url(group, week):
+    """The CBS weekly-projections URL for one position group's page.
+
+    The ONLY function that turns a (group, week) pair into a URL - see
+    PROJECTIONS_URL_TEMPLATE and GROUP_SCOPES above.
+    """
+    return PROJECTIONS_URL_TEMPLATE % (GROUP_SCOPES[group], week)
 
 
 def _banner(title, body):
@@ -776,6 +804,75 @@ def _avail_classifier(path, owner_codes):
     return lambda avail: classify_avail(avail, owner_codes)
 
 
+def _merge_projection_groups(group_rows):
+    """Merge parsed rows from several position-group pages into one pool.
+
+    `group_rows` is an ORDERED list of (group_name, [PlayerProjection, ...])
+    - one entry per page already parsed with `cbs_weekly.parse(group=...)`.
+    Returns `(merged, owner)`: `merged` is the combined row list; `owner`
+    maps each row's KEY (see below) to whichever group's row is IN `merged`
+    for that key, so a caller that needs to know which page a given row
+    came from (`_cmd_week`'s avail classifier - see below) does not have to
+    re-derive it.
+
+    THE KEY IS (normalize_name(p.name), p.pos), NOT NAME ALONE. Found
+    against the real TQB and DST fixtures while wiring this up: CBS's
+    TQB and DST pages both use the NFL TEAM'S NICKNAME as the row's
+    "player name" - e.g. "Chargers" is a genuine row on BOTH pages, one an
+    aggregate of the team's quarterback production, the other of its
+    defense. Every one of the 32 NFL teams collides this way EVERY WEEK -
+    it is not a rare edge case. A name-only key would read all 32 as
+    cross-group duplicates, silently drop one of TQB/DST for every single
+    team, and - worse - make whichever row survived (DST, since it is
+    merged last) answer for the OTHER position's slot: a roster's TQB pick
+    would resolve to a DST-flavored row, get pos="DST", and the TQB slot
+    would render UNFILLED despite a real, correctly-projected pick. Adding
+    `pos` to the key separates "Chargers the team-QB entity" from
+    "Chargers the defense entity" as the two distinct rows they are, so
+    both survive with no warning at all - this is the ordinary, expected
+    shape of the data, not a collision.
+
+    A player is still expected to appear on exactly one group's page - RB,
+    WR, TE and K rows are real individuals, and TQB/DST rows are one team
+    aggregate each - but this does NOT assume it. The FIRST group (in the
+    order given) to claim a given key wins; every LATER group's claim on
+    the SAME key is reported with a WARNING naming both groups and dropped,
+    rather than silently kept or silently overwritten - a TRUE duplicate
+    (same name, same position, two different pages) is exactly the kind of
+    merge surprise that must be visible, since it would otherwise either
+    double-count him or silently pick one page's numbers over the other's
+    with no signal either way.
+
+    Deliberately narrower than that: a key repeated WITHIN one group's own
+    row list (e.g. a normalize_name suffix collision, "Braelon Allen" vs
+    "Braelon Allen Jr.", both RB) is NOT touched here and both rows pass
+    through unchanged - that is a different, already-handled concern
+    (`_cmd_week`'s own by_key construction warns and keeps the last one),
+    not a cross-group duplicate, and treating it the same way here would
+    silently drop one of two genuinely different players before that
+    existing check ever saw the second row.
+    """
+    from sffl.identity import normalize_name
+
+    merged = []
+    owner = {}
+    for group_name, rows in group_rows:
+        for p in rows:
+            key = (normalize_name(p.name), p.pos)
+            if key in owner and owner[key] != group_name:
+                print("  WARNING: %r (%s) appears in both the %s and %s "
+                      "projection groups - a player at that position "
+                      "should be on exactly one group's page. Keeping the "
+                      "%s row, dropping this %s one so the pool is not "
+                      "double-counted."
+                      % (p.name, p.pos, owner[key], group_name, owner[key],
+                         group_name))
+                continue
+            owner.setdefault(key, group_name)
+            merged.append(p)
+    return merged, owner
+
+
 def _cmd_week(args):
     from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
     from sffl.cbs_weekly import parse as parse_weekly
@@ -787,8 +884,31 @@ def _cmd_week(args):
 
     lg = load_league(args.league)
     curves = load_curves(args.curves) if args.curves else None
-    projections = parse_weekly(args.projections, group=args.group,
-                               week=args.week, season=lg.season)
+
+    # --projections/--group is the ORIGINAL single-page interface and stays
+    # exactly as it was: give none of the three flags below and this
+    # function is byte-for-byte the same as before this task, which is why
+    # every pre-existing test above still passes only this pair.
+    # --projections-tqb/-k/-dst are new and OPTIONAL - give any of them and
+    # that saved page is parsed under its own FIXED group name (never
+    # --group, which only ever names the first pair's group) and merged
+    # into the same pool, so a waiver run or a start/sit check can see all
+    # eight lineup slots instead of five.
+    group_files = [(args.group, args.projections)]
+    for group_name, path in (("TQB", args.projections_tqb),
+                             ("K", args.projections_k),
+                             ("DST", args.projections_dst)):
+        if path:
+            group_files.append((group_name, path))
+
+    group_rows = [(group_name, parse_weekly(path, group=group_name,
+                                            week=args.week, season=lg.season))
+                 for group_name, path in group_files]
+    projections, owner_group = _merge_projection_groups(group_rows)
+
+    if len(group_files) > 1:
+        print("  merged %d position group page(s): %s"
+              % (len(group_files), ", ".join(g for g, _p in group_files)))
 
     # F5. The spec's failure table requires a raise for an empty roster
     # (below) on the reasoning that an empty roster optimises to an empty
@@ -802,7 +922,7 @@ def _cmd_week(args):
         raise SystemExit(
             "0 rows parsed from %s; a page that parses no rows is almost "
             "certainly the wrong page or a failed save, not a real empty "
-            "result" % args.projections)
+            "result" % ", ".join(path for _g, path in group_files))
 
     owned_raw = [l.strip() for l in open(args.roster) if l.strip()]
     if not owned_raw:
@@ -816,14 +936,33 @@ def _cmd_week(args):
     # one silently vanishes. Not raised - a real page can legitimately carry
     # two similarly-named players - but it must not be silent, so name both
     # raw spellings when it happens.
+    #
+    # This by_key is keyed by name ALONE, unlike `_merge_projection_groups`'
+    # (name, pos) key - `--roster`/`--current` are plain one-name-per-line
+    # text files with no position column, so a lookup against them can only
+    # ever have a bare name to go on, and keying by_key any other way would
+    # make every roster/current lookup below unable to find its own entries.
+    # The cost, found while wiring up TQB+DST merging: CBS's TQB and DST
+    # pages both use the NFL TEAM NICKNAME as the row name ("Chargers" is a
+    # real row on both), so merging both groups here can hit a SAME-NAME,
+    # DIFFERENT-POSITION collision that `--roster`'s plain-text format has
+    # no way to disambiguate - `by_key[key].pos != p.pos` below still
+    # WARNS and still keeps only the last one (silently answering for BOTH
+    # the TQB and the DST slot with a single row, one of them wrong) rather
+    # than raising, because there is no more information here to resolve it
+    # correctly; a manager who genuinely rosters the same NFL team for both
+    # TQB and DST should read this warning as a real limitation, not a bug
+    # report.
     by_key = {}
     for p in projections:
         key = normalize_name(p.name)
-        if key in by_key and by_key[key].name != p.name:
-            print("  WARNING: %r and %r both normalize to the same key - "
-                  "only %r is kept (last one wins); the other's projection "
-                  "is silently dropped from the pool"
-                  % (by_key[key].name, p.name, p.name))
+        if key in by_key and (by_key[key].name != p.name
+                              or by_key[key].pos != p.pos):
+            print("  WARNING: %r (%s) and %r (%s) both normalize to the "
+                  "same key - only %r (%s) is kept (last one wins); the "
+                  "other's projection is silently dropped from the pool"
+                  % (by_key[key].name, by_key[key].pos, p.name, p.pos,
+                     p.name, p.pos))
         by_key[key] = p
 
     missing = [n for n in owned_raw if normalize_name(n) not in by_key]
@@ -851,8 +990,9 @@ def _cmd_week(args):
             "empty roster file raises for. A likely cause is a non-breaking "
             "space or other invisible character from the saved page "
             "(normalize_name strips it rather than splitting on it); check "
-            "%s against the names in %s." % (len(owned_raw), args.roster,
-                                              args.roster, args.projections))
+            "%s against the names in %s." % (
+                len(owned_raw), args.roster, args.roster,
+                ", ".join(path for _g, path in group_files)))
 
     def cand(p):
         return Candidate(name=p.name, pos=p.pos,
@@ -895,24 +1035,36 @@ def _cmd_week(args):
     # than guessed at, exactly like every other "raise rather than guess"
     # gate in this project.
     #
-    # `classify` picks cbs_weekly's tab-path or space-path classifier for
-    # THIS file - see `_avail_classifier`. Wiring the space-path
-    # `classify_avail` unconditionally here (this command's only option
-    # before `classify_avail_tab` existed) is exactly the bug a real
-    # Playwright-captured `--projections` file hits: a tab-path owner cell
+    # `classify_by_group` picks cbs_weekly's tab-path or space-path
+    # classifier PER FILE - see `_avail_classifier`. This used to be a
+    # single classifier bound to `args.projections`, which was correct
+    # when there was only one file; merging in --projections-tqb/-k/-dst
+    # means a free row can come from any of up to four files, and each one
+    # independently is tab- or space-delimited (a real Playwright capture
+    # is tab-delimited; the historical browser-tool save is not) - `owner_group`
+    # (from `_merge_projection_groups`) says which file a given row survived
+    # the merge from, so each row is classified against ITS OWN file's
+    # shape, never against whichever file happened to be `--projections`.
+    # Wiring the space-path `classify_avail` unconditionally here (this
+    # command's only option before `classify_avail_tab` existed) is exactly
+    # the bug a real Playwright-captured file hits: a tab-path owner cell
     # like "Sgt Hu..." matches no configured `owner_codes` and is not
     # "FA"/"W", so it comes back unclassified for every single owned row on
     # that page - a noisy warning naming a dozen team names, and a waiver
     # board that has silently stopped telling owned players from free
     # agents on the format this pipeline now actually captures.
-    classify = _avail_classifier(args.projections, owner_codes)
-    free_rows = [p for k, p in by_key.items() if k not in owned]
+    classify_by_group = dict((group_name, _avail_classifier(path, owner_codes))
+                             for group_name, path in group_files)
+    free_rows = [(k, p) for k, p in by_key.items() if k not in owned]
     available_rows = []
     excluded_owned = 0
     excluded_out_free = []
     unclassified_avail = set()
-    for p in free_rows:
-        status = classify(p.avail)
+    for k, p in free_rows:
+        # `owner_group` is keyed (name, pos) - see `_merge_projection_groups`
+        # - not by the plain `by_key`/`owned` name key `k`, so it is
+        # re-derived from the row itself rather than from `k`.
+        status = classify_by_group[owner_group[(k, p.pos)]](p.avail)
         if status == "available":
             if is_out(p.status):
                 excluded_out_free.append(p)
@@ -943,7 +1095,8 @@ def _cmd_week(args):
     # "n matched of N loaded" rather than a bare count with nothing to
     # compare it against. `resolved` was already computed above, where the
     # I2 guard needs it first.
-    print("  %d rows parsed from %s" % (len(projections), args.projections))
+    print("  %d rows parsed from %s"
+          % (len(projections), ", ".join(path for _g, path in group_files)))
     print("  %d of %d roster names resolved to a projection"
           % (resolved, len(owned_raw)))
     print("  %d free agents ranked (%d excluded - rostered by another team)"
@@ -1055,11 +1208,6 @@ def _cmd_alert(args):
     from sffl.pool import score_week
 
     lg = load_league(args.league)
-    projections_url = args.projections_url or (PROJECTIONS_URL_TEMPLATE % args.week)
-    urls = {
-        "roster": args.team_url,
-        "projections": projections_url,
-    }
 
     capture_error = None
     roster_names = []
@@ -1076,11 +1224,24 @@ def _cmd_alert(args):
     sidelined = []
     result = None
     age_days = 0
+    # (group, reason) for each of the four position-group pages that could
+    # NOT be captured or parsed on THIS run. Distinct from
+    # POSITION_NOT_CAPTURED below: that means the pipeline never covers this
+    # position at all (a permanent scope limit); this means it normally
+    # does and THIS run's fetch of it failed (a transient, one-run
+    # problem) - conflating the two would make a DST page that starts
+    # 404ing in week 6 read as "we've never captured defenses," which is
+    # false and hides the actual, fixable failure.
+    group_failures = []
 
     try:
-        written = capture(urls, args.out_dir, args.profile_dir)
-        roster_path = written[urls["roster"]]
-        proj_path = written[urls["projections"]]
+        # ROSTER FIRST, its own capture() call, and any failure here still
+        # suppresses the whole digest exactly as before this task - an
+        # unverified roster parses to an empty one, and nothing downstream
+        # can be trusted once that has happened.
+        roster_written = capture({"roster": args.team_url}, args.out_dir,
+                                 args.profile_dir)
+        roster_path = roster_written[args.team_url]
         # parse_lineup, not parse_roster: the page also carries Jeff's
         # CURRENT starting lineup, which is the actual start/sit value -
         # compose() renders it against the optimum below. `starters` and
@@ -1094,32 +1255,99 @@ def _cmd_alert(args):
              - datetime.datetime.fromtimestamp(os.path.getmtime(roster_path)))
             .total_seconds() // 86400)
 
-        projections = parse_weekly(proj_path, group=args.group,
-                                   week=args.week, season=lg.season)
         curves = load_curves(args.curves) if args.curves else None
-        by_key = dict((normalize_name(p.name), p) for p in projections)
-        owned = [normalize_name(n) for n in roster_names]
+
+        # EACH of the four position-group pages gets its OWN capture() call,
+        # in its OWN try/except - not one combined call for all four. A
+        # single combined call shares one browser-navigation loop inside
+        # `capture()` (see capture.py) that raises and stops on the FIRST
+        # page that fails, so pages later in that one call would never even
+        # be attempted - exactly the outcome Task 3 exists to prevent ("a
+        # failure on one page should not prevent the other three from being
+        # captured and scored"). Recovering already-written pages from a
+        # single failed combined call was considered and rejected: it would
+        # depend on capture.py's internal out_dir/name.txt file-naming
+        # scheme, which is not part of its documented return-or-raise
+        # contract and which this task's file scope does not include
+        # changing. The cost is real (see the report's timing section) but
+        # bounded and predictable, and correctness under partial failure
+        # matters more here than shaving a few seconds off a background job.
+        group_rows = []
+        for group in ALERT_GROUPS:
+            url = (args.projections_url
+                   if group == "RB-WR-TE" and args.projections_url
+                   else _projections_url(group, args.week))
+            try:
+                written = capture({group: url}, args.out_dir,
+                                  args.profile_dir)
+                rows = parse_weekly(written[url], group=group,
+                                    week=args.week, season=lg.season)
+            except (CaptureError, ValueError) as exc:
+                group_failures.append((group, str(exc)))
+                continue
+            group_rows.append((group, rows))
+
+        if not group_rows:
+            # Every single position-group page failed - the projections
+            # half of this run learned NOTHING, which is the same class of
+            # failure as the roster capture failing outright: nothing
+            # downstream can be trusted, so this is raised (not merely
+            # logged in group_failures) to fall into the same
+            # capture_error path that suppresses the whole lineup below.
+            raise CaptureError(
+                "all %d position-group projection pages failed to capture "
+                "or parse: %s" % (
+                    len(ALERT_GROUPS),
+                    "; ".join("%s (%s)" % (g, m) for g, m in group_failures)))
+
+        projections, _owner_group = _merge_projection_groups(group_rows)
+
+        # `starter_positions` (it covers every rostered player, reserves
+        # included - see `cbs_roster.parse_positions` - not only starters)
+        # comes first here because `by_key`/`owned` below both need it: the
+        # roster PAGE prints a position for every row it carries, unlike
+        # `sffl week`'s plain-text --roster file, which does not.
+        starter_positions = parse_positions(roster_path)
+
+        # Keyed (normalize_name(name), pos), NOT name alone - see
+        # `_merge_projection_groups`'s docstring. CBS's TQB and DST pages
+        # both use the NFL TEAM NICKNAME as a row's "player name", so
+        # "Chargers" is a real, distinct row on BOTH pages every week. A
+        # name-only key here would let whichever position happened to merge
+        # last (DST) silently answer for the OTHER slot too: a rostered TQB
+        # pick would resolve to a DST-flavored row, and the TQB slot would
+        # render UNFILLED despite a real, correctly-projected pick - found
+        # live against the real TQB/DST fixtures while wiring this up.
+        by_key = {}
+        for p in projections:
+            by_key[(normalize_name(p.name), p.pos)] = p
+        owned = [(normalize_name(n), starter_positions.get(n))
+                for n in roster_names]
 
         # C1. Which of CBS's eight starters could not be scored at all, and
-        # WHY. `--group` is RB-WR-TE, so the TQB, the kicker and the defense
-        # have no projection and are not in `by_key`; the START/SIT diff in
-        # `compose` is a set difference, so before this they landed in the
-        # SIT column every single week, dressed as merit-based bench advice.
+        # WHY. Before this task only RB-WR-TE was ever captured, so the TQB,
+        # the kicker and the defense had no projection and were not in
+        # `by_key`; the START/SIT diff in `compose` is a set difference, so
+        # before that fix they landed in the SIT column every single week,
+        # dressed as merit-based bench advice.
         #
-        # The covered positions are read off the parsed page itself rather
-        # than from the `--group` string: the group name is a label in
-        # sources/cbs-weekly.yaml, while what the page actually contains is
-        # the fact that decides whether a missing projection is expected.
-        # A starter whose position IS on the page and who still has no row
-        # is a different animal - a data problem, not a scope limit - and
-        # the two must not be reported as one thing.
+        # The covered positions are read off the MERGED pages themselves
+        # rather than off a group name, because what actually decides
+        # whether a missing projection is expected is what the pages
+        # contained - and after this task that is ordinarily all four
+        # groups, not one. A starter whose position IS covered and who
+        # still has no row is a different animal - a data problem, not a
+        # scope limit - and the two must not be reported as one thing. Note
+        # that a position whose ONLY page failed this run (see
+        # `group_failures` above) also reads as "not covered" here, which
+        # is why the DEGRADED banner appended to the body below exists: it
+        # is the thing that tells the two apart for a reader of the digest.
         covered_positions = set(p.pos for p in projections)
-        starter_positions = parse_positions(roster_path)
         unevaluated_starters = []
         for name in starters:
-            if normalize_name(name) in by_key:
-                continue
             pos = starter_positions.get(name, "")
+            if (normalize_name(name), pos) in by_key:
+                continue
             why = (PROJECTION_MISSING if pos and pos in covered_positions
                    else POSITION_NOT_CAPTURED)
             unevaluated_starters.append((name, pos, why))
@@ -1214,6 +1442,33 @@ def _cmd_alert(args):
                    unevaluated_starters=unevaluated_starters,
                    injury_error=injury_error,
                    injuries_age_minutes=injuries_age_minutes)
+
+    # A PARTIAL capture failure - one to three of the four position-group
+    # pages, with the roster and at least one other page still good - must
+    # be LOUD IN THE PUSHED MESSAGE ITSELF, not merely on stdout: this is
+    # appended to `body` (the exact string handed to `send()` below), never
+    # only printed separately, because a note that never reaches the phone
+    # is exactly as invisible as the silent UNFILLED slot this task exists
+    # to replace. Unlike `capture_error`, this never suppresses the digest -
+    # `compose` above already rendered a real (if partial) lineup from
+    # whatever DID come back, per the per-page isolation in the try block -
+    # so this banner supplements that lineup instead of replacing it.
+    # Skipped when `capture_error` fired: that banner already says nothing
+    # could be verified at all, and a per-group breakdown under it would
+    # bury the one fact that matters.
+    if group_failures and not capture_error:
+        banner = ["!! PROJECTIONS DEGRADED: %d of %d position-group page(s) "
+                  "could not be captured or parsed this run:"
+                  % (len(group_failures), len(ALERT_GROUPS))]
+        for group, reason in group_failures:
+            banner.append("  - %s: %s" % (group, reason))
+        banner.append(
+            "  Any lineup slot normally filled from these group(s) may be "
+            "missing or based on stale data this run - this is NOT the "
+            "same as a position this pipeline never covers (see NOT "
+            "EVALUATED above, if present).")
+        body = body + "\n\n" + "\n".join(banner)
+
     print(body)
 
     # ORDERING: the topic is fetched HERE, after the digest above is already
@@ -1244,15 +1499,17 @@ def _cmd_alert(args):
         delivery_error = exc
 
     # A capture failure, a DEGRADED run (the injury fetch produced nothing,
-    # or produced something that is not from this run), or a delivery
-    # failure is each visible in a way launchd's log must be able to see, so
-    # each makes the exit code non-zero - but they are DIFFERENT failures
-    # (nothing produced, vs. an alert missing half its content, vs. a
-    # correct alert that could not be pushed), and the printed body above,
-    # not the exit code, is what tells them apart. A missing --injuries
-    # argument is NOT counted here: that is a deliberate invocation, not a
-    # failed step, and it is still stated in the body.
-    return 1 if (capture_error or injury_fetch_failed or delivery_error) else 0
+    # or produced something that is not from this run, or one to three of
+    # the four position-group pages failed - `group_failures`), or a
+    # delivery failure is each visible in a way launchd's log must be able
+    # to see, so each makes the exit code non-zero - but they are DIFFERENT
+    # failures (nothing produced, vs. an alert missing half its content,
+    # vs. a correct alert that could not be pushed), and the printed body
+    # above, not the exit code, is what tells them apart. A missing
+    # --injuries argument is NOT counted here: that is a deliberate
+    # invocation, not a failed step, and it is still stated in the body.
+    return 1 if (capture_error or injury_fetch_failed or delivery_error
+                or group_failures) else 0
 
 
 def main(argv=None):
@@ -1371,7 +1628,35 @@ def main(argv=None):
     wk = sub.add_parser("week", help="weekly waiver and start/sit decisions")
     wk.add_argument("--projections", required=True,
                     help="saved CBS weekly projections page text")
-    wk.add_argument("--group", default="RB-WR-TE")
+    wk.add_argument("--group", default="RB-WR-TE",
+                    help="the group --projections was saved from (default: "
+                         "RB-WR-TE, this command's original single-page "
+                         "interface). Unrelated to --projections-tqb/-k/"
+                         "-dst below, which are each always parsed under "
+                         "their own fixed group name")
+    wk.add_argument("--projections-tqb", default=None,
+                    help="OPTIONAL: a saved CBS weekly TQB page, merged "
+                         "with --projections into one pool. Omit it (and "
+                         "-k/-dst) and this command behaves exactly as "
+                         "before this flag existed - RB-WR-TE (or "
+                         "whatever --group names) only")
+    wk.add_argument("--projections-k", default=None,
+                    help="OPTIONAL: a saved CBS weekly K page - see "
+                         "--projections-tqb")
+    wk.add_argument("--projections-dst", default=None,
+                    help="OPTIONAL: a saved CBS weekly DST page - see "
+                         "--projections-tqb. KNOWN LIMITATION: CBS's TQB "
+                         "and DST pages both list every NFL team's "
+                         "nickname as a row's own name (e.g. 'Chargers' "
+                         "is a real row on both), and this command's "
+                         "plain one-name-per-line --roster file has no "
+                         "position column to disambiguate which one an "
+                         "owned team name refers to when BOTH -tqb and "
+                         "-dst are given. This is reported (a WARNING "
+                         "names both positions), never silent, but is not "
+                         "fully resolved - sffl alert does not have this "
+                         "limitation, since it reads position off the "
+                         "captured roster page instead")
     wk.add_argument("--week", type=int, required=True)
     wk.add_argument("--roster", required=True,
                     help="one owned player name per line")
@@ -1391,7 +1676,6 @@ def main(argv=None):
     alr.add_argument("--kind", choices=["friday", "sunday"], required=True)
     alr.add_argument("--league", default=DEFAULT_LEAGUE)
     alr.add_argument("--week", type=int, required=True)
-    alr.add_argument("--group", default="RB-WR-TE")
     alr.add_argument("--curves")
     alr.add_argument("--injuries", help="JSON written by ops/fetch_injuries.sh")
     alr.add_argument("--team-url", default=DEFAULT_TEAM_URL,
@@ -1400,9 +1684,12 @@ def main(argv=None):
                           "this at a numbered /teams/<N>, that is a "
                           "DIFFERENT manager's team)")
     alr.add_argument("--projections-url",
-                     help="override the weekly projections URL; by default "
-                          "built from --week against CBS's stats-main page, "
-                          "so a new week never needs a hand-edited URL")
+                     help="override the RB-WR-TE weekly projections URL "
+                          "only; the TQB/K/DST pages have no override and "
+                          "are always built from --week. By default all "
+                          "four are built from --week against CBS's "
+                          "stats-main page, so a new week never needs a "
+                          "hand-edited URL")
     alr.add_argument("--out-dir", default="data/captures")
     alr.add_argument("--profile-dir", default="data/browser-profile")
     alr.add_argument("--dry-run", action="store_true")
