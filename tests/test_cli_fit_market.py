@@ -69,3 +69,29 @@ def test_nothing_is_written_when_the_fit_is_refused(tmp_path):
     with pytest.raises(SystemExit):
         main(argv)
     assert not os.path.exists(out)
+
+
+def test_a_fit_is_refused_when_the_prices_file_cannot_state_its_season(tmp_path):
+    # A fit bakes a prices/projections pairing into a persisted artifact that
+    # later seasons trust and never re-derive, so "the season is taken on
+    # trust from the TQB map" - which is only a proxy - is not good enough
+    # here. value/render keep working against a column-less file with a
+    # loud note; a FIT refuses.
+    import csv
+    src = "tests/fixtures/prices_market_fit_sample.csv"
+    dest = str(tmp_path / "no_season.csv")
+    with open(src, newline="") as fh:
+        reader = csv.DictReader(fh)
+        fields = [f for f in reader.fieldnames if f != "season"]
+        rows = [dict((k, r[k]) for k in fields) for r in reader]
+    with open(dest, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+
+    out = str(tmp_path / "never.yaml")
+    argv, _ = _args(tmp_path, prices=dest, out=out)
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+    assert "season" in str(exc.value)
+    assert not os.path.exists(out), "a refused fit must write nothing"

@@ -8,10 +8,14 @@ import argparse
 import csv
 import hashlib
 import os
+import re
 import sys
+import textwrap
+import warnings
 
 from sffl.calibrate import load_curves
-from sffl.fit import (DEFAULT_TQB_STARTERS, SeasonMismatchError, choose_policy,
+from sffl.fit import (DEFAULT_TQB_STARTERS, SeasonMismatchError,
+                      UnverifiedPricesSeasonWarning, choose_policy,
                       load_prices)
 from sffl.identity import NFL_TEAMS, normalize_name
 from sffl.league import load_league
@@ -40,6 +44,45 @@ CBS_LEAGUE_BASE = "https://stripesfantasyfootballleague.football.cbssports.com"
 DEFAULT_TEAM_URL = CBS_LEAGUE_BASE + "/teams"
 PROJECTIONS_URL_TEMPLATE = (
     CBS_LEAGUE_BASE + "/stats/stats-main/all:RB:WR:TE/%d:p/standard/projections")
+
+
+def _banner(title, body):
+    """Print an unmissable block. Used where a run must SAY what it could not check.
+
+    Wrapped and indented rather than one long line because the messages that
+    matter here are paragraphs, and a paragraph printed as a single 600-column
+    line is, in a terminal, a way of not saying it.
+    """
+    print("")
+    print("  ** %s **" % title)
+    for line in textwrap.wrap(body, 74):
+        print("     " + line)
+    print("")
+
+
+def _load_prices_announcing(path, tqb_starters_path, season):
+    """`fit.load_prices`, with its unverifiable-season warning PRINTED.
+
+    `load_prices` raises the warning so no caller can bypass it (Decision 3),
+    but a `warnings.warn` is easy to miss in a terminal full of a valuation's
+    own output - and this particular silence is the exact thing the branch
+    exists to end. So the CLI catches it and prints it as a banner, in the
+    same stream as the numbers it qualifies.
+
+    Only this module's own warning is intercepted. Anything else raised
+    inside is re-emitted untouched: swallowing an unrelated DeprecationWarning
+    to make room for this one would be the same mistake in miniature.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        prices = load_prices(path, tqb_starters_path=tqb_starters_path,
+                             season=season)
+    for w in caught:
+        if issubclass(w.category, UnverifiedPricesSeasonWarning):
+            _banner("UNVERIFIED PRICES SEASON", str(w.message))
+        else:
+            warnings.warn_explicit(w.message, w.category, w.filename, w.lineno)
+    return prices
 
 
 def _value_pool(lg, args):
@@ -116,9 +159,8 @@ def _value_pool(lg, args):
         # keep its traceback so the offending row can be located, not be
         # flattened to this guard's single-line message.
         try:
-            prices = load_prices(args.prices,
-                                 tqb_starters_path=args.tqb_starters,
-                                 season=args.year)
+            prices = _load_prices_announcing(args.prices,
+                                             args.tqb_starters, args.year)
         except SeasonMismatchError as exc:
             raise SystemExit(str(exc))
 
@@ -552,9 +594,14 @@ def cmd_fit_market(args):
     # guard's own SeasonMismatchError becomes SystemExit here; any other
     # ValueError (bad alias chain, unrecognised franchise code, malformed
     # price cell) is a genuine data problem and keeps its traceback.
+    #
+    # require_file_season is what separates a FIT from an apply: a prices
+    # file that cannot state its own season is REFUSED here (and merely
+    # warned about on value/render), because a fit is persisted and later
+    # seasons trust it without ever re-deriving it.
     try:
         prices = load_prices(args.prices, tqb_starters_path=args.tqb_starters,
-                             season=args.year)
+                             season=args.year, require_file_season=True)
     except SeasonMismatchError as exc:
         raise SystemExit(str(exc))
 
