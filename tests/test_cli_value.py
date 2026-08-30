@@ -210,3 +210,49 @@ def test_a_prices_file_that_states_its_season_prints_no_such_note(capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "UNVERIFIED" not in out
+
+
+def _intel_text(xlsx):
+    import openpyxl
+    ws = openpyxl.load_workbook(xlsx)["Key & Intel"]
+    return "\n".join(str(c) for row in ws.iter_rows(values_only=True)
+                     for c in row if c is not None)
+
+
+def test_stdout_and_the_workbook_agree_that_the_prices_season_is_unverified(tmp_path, capsys):
+    # Same class as the cross-season finding, on the other branch of the
+    # condition: stdout printed the UNVERIFIED PRICES SEASON banner while the
+    # workbook asserted "year-matched by construction" - the stronger and
+    # false claim, on the artifact a human reads under time pressure.
+    #
+    # Read off the real .xlsx, because that disagreement is invisible to any
+    # unit test on the facts object.
+    prices = _strip_season_column(MARKET_FIT_PRICES,
+                                  str(tmp_path / "no_season.csv"))
+    xlsx = str(tmp_path / "board.xlsx")
+    rc = main(["render", "--source", DS, "--file", MARKET_FIT_FIXTURE,
+               "--year", "2026", "--policy", "fit", "--prices", prices,
+               "--tqb-starters", TQB_2026, "--xlsx", xlsx])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "UNVERIFIED PRICES SEASON" in out, "stdout half"
+
+    sheet = _intel_text(xlsx)
+    assert "year-matched by construction" not in sheet, (
+        "the workbook must not make a guarantee stdout just said it cannot make")
+    assert "COULD NOT VERIFY" in sheet
+    assert "no_season.csv" in sheet, "the page must name the file it could not check"
+
+
+def test_the_workbook_still_claims_year_matched_when_the_file_says_its_season(tmp_path, capsys):
+    # The complement: the fixture carries a season column, so the guarantee
+    # is real and must still be stated.
+    xlsx = str(tmp_path / "board.xlsx")
+    assert main(["render", "--source", DS, "--file", MARKET_FIT_FIXTURE,
+                 "--year", "2026", "--policy", "fit", "--prices",
+                 MARKET_FIT_PRICES, "--tqb-starters", TQB_2026,
+                 "--xlsx", xlsx]) == 0
+    assert "UNVERIFIED" not in capsys.readouterr().out
+    sheet = _intel_text(xlsx)
+    assert "year-matched by construction" in sheet
+    assert "COULD NOT VERIFY" not in sheet

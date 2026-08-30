@@ -486,3 +486,65 @@ def test_an_in_process_fit_is_year_matched_to_the_run_year(tmp_path):
                      bids_path=str(tmp_path / "absent.csv"))
     assert f.market_season == 2027
     assert f.market_cross_season is False
+
+
+# --------------------------------------------------------------------------
+# "YEAR-MATCHED BY CONSTRUCTION" IS A GUARANTEE, NOT A DEFAULT.
+#
+# The in-process-fit branch printed it unconditionally, on the strength of a
+# comment claiming load_prices "refuses any prices file whose own season
+# disagrees with --year". That was never true of a file with no `season`
+# column: it cannot disagree, so there is nothing to refuse and the guard
+# warns instead. So `render --year 2026 --prices auction-rosters-2025.csv`
+# printed an UNVERIFIED PRICES SEASON banner to stdout and a workbook saying
+# "year-matched by construction" - beside the b=0.53 curve that mismatch
+# produces. The workbook is what a human reads at the draft table.
+# --------------------------------------------------------------------------
+
+class _Prices(dict):
+    """A prices dict that carries its own account of itself, as PriceMap does."""
+
+    def __init__(self, mapping, season_verified, source_path=None):
+        dict.__init__(self, mapping)
+        self.total_rows = len(mapping)
+        self.season_verified = season_verified
+        self.source_path = source_path
+
+
+def _fit_facts(season_verified, path=None):
+    pool = [player("Alpha", "TQB", 30.0), player("Bravo", "RB", 12.0)]
+    prices = _Prices({"alpha": 20.0, "bravo": 10.0}, season_verified, path)
+    return intel.gather(LG, rows(), pool=pool, prices=prices, curve=(2.0, 0.66))
+
+
+def test_an_unverifiable_prices_season_is_not_called_year_matched():
+    f = _fit_facts(False, "data/league/auction-rosters-2025.csv")
+    assert f.market_season_verified is False
+    assert f.market_prices_file.endswith("auction-rosters-2025.csv")
+
+    text = _model_text(f)
+    assert "year-matched by construction" not in text
+    assert "COULD NOT VERIFY" in text
+    assert "season" in text
+    assert "auction-rosters-2025.csv" in text, "name the file it could not check"
+    assert "%d" % LG.season in text
+
+
+def test_a_verified_prices_season_still_says_year_matched_by_construction():
+    # The complement. A guarantee that is never claimed is as useless as one
+    # that is always claimed: the 2026 file DOES state its season.
+    f = _fit_facts(True, "data/league/auction-rosters-2026.csv")
+    assert f.market_season_verified is True
+    text = _model_text(f)
+    assert "year-matched by construction" in text
+    assert "COULD NOT VERIFY" not in text
+
+
+def test_prices_that_say_nothing_about_themselves_leave_the_wording_alone():
+    # A plain dict of prices (any caller that is not load_prices) carries no
+    # such account. Absent is "not stated", not "unverified".
+    pool = [player("Alpha", "TQB", 30.0)]
+    f = intel.gather(LG, rows(), pool=pool, prices={"alpha": 20.0},
+                     curve=(2.0, 0.66))
+    assert f.market_season_verified is None
+    assert "year-matched by construction" in _model_text(f)

@@ -36,6 +36,7 @@ an applied one, because `sffl.cli._value_pool` leaves `prices` `None` on every
 year-matched curve from one carried over from a season this board is not.
 """
 
+import os
 import statistics
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -148,6 +149,17 @@ class IntelFacts(object):
     # market_season is itself known - "not cross-season" is a claim that
     # needs a season to compare against, not a default.
     market_cross_season: Optional[bool] = None
+    # Could this run VERIFY that its own --prices file is from this board's
+    # season? True when the file's `season` column said so, False when the
+    # file cannot state one (the pre-column 2025 file), None when there was
+    # no in-process fit to ask about. False is not "the seasons disagree" -
+    # a disagreement is refused upstream and never reaches this page. It is
+    # "nobody here can tell", which is the one thing the page must not
+    # round up to "year-matched by construction".
+    market_season_verified: Optional[bool] = None
+    # The --prices file the curve was fit from, named so the page can point
+    # at the file whose season it could not confirm.
+    market_prices_file: Optional[str] = None
     # pool name -> (n joined, mean absolute error of MY$ against price paid)
     mae_by_pool: Dict[str, Tuple[int, float]] = field(default_factory=dict)
     # {"median","n_low","n_low_under","n_high","n_high_over"} - see
@@ -272,10 +284,20 @@ def _market_provenance(board_season, prices, market, n_curve_obs):
         cross = (season != board_season) if season is not None else None
         return True, season, fitted_on, n_obs, cross
     if prices is not None:
-        # Fit in this run, from this run's own prices - by construction the
-        # model's season IS this board's season, and it is not a cross-season
-        # apply. Nothing here is assumed: load_prices refuses any prices file
-        # whose own season or TQB-starter map disagrees with `--year`.
+        # Fit in this run, from this run's own prices, so the model's season
+        # is this board's season and this is not a cross-season apply.
+        #
+        # HOW FAR THAT IS ACTUALLY KNOWN depends on the prices file. This
+        # comment used to claim `load_prices` "refuses any prices file whose
+        # own season disagrees with --year", which was never true of a file
+        # that carries no `season` column - it cannot disagree, so there is
+        # nothing to refuse, and the guard warns instead. The page went on
+        # printing "year-matched by construction" for exactly the run whose
+        # stdout was printing a banner saying the season could not be
+        # verified, and printing it beside the b=0.53 curve that mismatch
+        # produces. `season_verified` is the prices' own account of
+        # themselves (see `sffl.fit.PriceMap`); False means the claim below
+        # is unavailable, not that it is false.
         return False, board_season, None, n_curve_obs, False
     # A curve exists (the caller only reaches `gather`'s market block when it
     # does) but neither signal above fired - a --market apply whose loaded
@@ -400,6 +422,16 @@ def gather(lg, rows, pool=None, prices=None, curve=None, market=None,
         (facts.market_applied, facts.market_season, facts.market_fitted_on,
          facts.market_n_obs, facts.market_cross_season) = _market_provenance(
             board_season, prices, market, facts.n_curve_obs)
+        # Read off the PriceMap rather than recomputed: `sffl.fit.load_prices`
+        # is the only thing that knows, and it is the only thing that should.
+        # `getattr` because tests (and any other caller) may hand `gather` a
+        # plain dict of prices, which carries no such account of itself -
+        # absent is None ("not stated"), which leaves the wording exactly as
+        # it was; only an explicit False changes what the page claims.
+        if prices is not None:
+            facts.market_season_verified = getattr(
+                prices, "season_verified", None)
+            facts.market_prices_file = getattr(prices, "source_path", None)
 
     if history is None:
         try:
@@ -446,12 +478,28 @@ def _market_model_text(f):
     coeffs = "a=%.2f, b=%.2f" % f.curve
 
     if not f.market_applied:
-        # Fit in-process, this run: the season and "not cross-season" are
-        # known by construction (see `_market_provenance`), never guessed.
+        # Fit in-process, this run. "Year-matched by construction" is a real
+        # guarantee ONLY when the prices file states its own season and it
+        # agreed - that is what makes it a construction rather than a hope.
         obs = ("%d" % f.market_n_obs) if f.market_n_obs is not None else "an unrecorded number of"
+        board = f.season if f.season is not None else "this"
+        if f.market_season_verified is False:
+            # The file cannot say what season it is, so this page must not
+            # say it either. This was the page's worst sentence: the same
+            # run's stdout printed a banner saying the season could not be
+            # verified, and the workbook - the thing a human reads at the
+            # draft table, under time pressure - answered "year-matched by
+            # construction" beside the curve that mismatch produces.
+            named = (" (%s)" % os.path.basename(f.market_prices_file)
+                     if f.market_prices_file else "")
+            return ("%s, fit fresh this run from %s prices - but the prices "
+                    "file%s carries no 'season' column, so THIS RUN COULD "
+                    "NOT VERIFY they are %s prices. Year-matched only if "
+                    "that file really is %s; nothing here checked it."
+                    % (coeffs, obs, named, board, board))
         return ("%s, fit fresh this run from %s of this %s board's own "
                 "prices - year-matched by construction."
-                % (coeffs, obs, f.season if f.season is not None else "this"))
+                % (coeffs, obs, board))
 
     # Applied from a persisted model (--market).
     if f.market_season is None:

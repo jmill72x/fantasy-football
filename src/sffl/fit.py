@@ -74,12 +74,28 @@ class PriceMap(dict):
     source CSV held, so a caller can report "n matched of N loaded" instead
     of a bare match count with no denominator. Behaves exactly like a plain
     dict everywhere else (iteration, `in`, `.get`, `len`, equality with a
-    plain dict) - only `.total_rows` is new.
+    plain dict) - only the three attributes below are new.
+
+    `.season_verified` is how the prices' own account of themselves reaches
+    whatever consumes them. It is None when no season was asserted (nothing
+    was claimed, so nothing was checked), True when the file's own `season`
+    column confirmed the asserted season, and False when a season was
+    asserted against a file that could not state one. The distinction has to
+    travel WITH the prices: the workbook's intel page was calling an
+    in-process fit "year-matched by construction" on the strength of this
+    guard, while the same run's stdout was printing a banner saying the
+    season could not be verified. A fact that only exists in the CLI's
+    stdout is a fact the artifact cannot use.
+
+    `.source_path` is the file it all came from, so a consumer can name it
+    without being handed the path separately.
     """
 
     def __init__(self, *args, **kwargs):
         super(PriceMap, self).__init__(*args, **kwargs)
         self.total_rows = 0
+        self.season_verified = None
+        self.source_path = None
 
 
 def tqb_starters_season(path):
@@ -295,6 +311,12 @@ def load_prices(path, alias_path=DEFAULT_ALIASES,
     aliases = Resolver(alias_path).aliases
     starters = _load_tqb_starters(tqb_starters_path)
     out = PriceMap()
+    out.source_path = path
+    # Only the guard above can answer this, and only it ever should: every
+    # consumer downstream now reads the verdict off the map rather than
+    # re-deriving it (or, as the intel page did, assuming it).
+    if season is not None:
+        out.season_verified = bool(declared) and declared[0] is not None
     with open(path, newline="") as fh:
         for row in csv.DictReader(fh):
             name = normalize_name(row["player_as_written"])
