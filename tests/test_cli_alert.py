@@ -18,6 +18,20 @@ The fixtures are COPIED rather than read in place because `_cmd_alert` reads
 file mtimes to compute the roster and injuries ages; a checked-out file's
 mtime is an artifact of when git wrote it and would make those assertions
 depend on the state of the working tree.
+
+TASK 3 UPDATE. `_cmd_alert` used to capture exactly two pages (roster,
+RB-WR-TE projections) in ONE `capture()` call keyed `{"roster":...,
+"projections":...}`. It now captures the roster and all FOUR position-group
+pages (RB-WR-TE, TQB, K, DST), each in its OWN `capture()` call - one
+single-entry dict per call, never a combined one - so that a failure on any
+one page cannot prevent the others from being attempted (see the
+docstring in `_cmd_alert` and Task 3's report for why). `fake_capture` below
+asserts exactly that shape (`len(urls) == 1`) so a regression back to one
+combined call - which would silently defeat the per-page failure isolation
+this file exists to pin - fails loudly here rather than only in production.
+`alert_env.fail_group(group, exc)` lets a test fail exactly one page while
+the rest still succeed; `alert_env.fail_capture(exc)` still fails EVERY
+call, for the pre-existing "nothing could be verified at all" scenarios.
 """
 
 import json
@@ -31,6 +45,9 @@ from sffl.capture import SessionExpired
 
 ROSTER_FIXTURE = "tests/fixtures/cbs_team_page.txt"
 PROJECTIONS_FIXTURE = "tests/fixtures/cbs_weekly_tab_rbwrte.txt"
+TQB_FIXTURE = "tests/fixtures/cbs_weekly_tqb.txt"
+K_FIXTURE = "tests/fixtures/cbs_weekly_k.txt"
+DST_FIXTURE = "tests/fixtures/cbs_weekly_dst.txt"
 INJURIES_FIXTURE = "tests/fixtures/statsdeck_injuries.json"
 
 
@@ -54,24 +71,41 @@ def alert_env(tmp_path, monkeypatch):
     as launchd would and hands back (exit_code, printed_body).
     """
     roster = tmp_path / "roster.txt"
-    projections = tmp_path / "projections.txt"
+    rbwrte = tmp_path / "rbwrte.txt"
+    tqb = tmp_path / "tqb.txt"
+    k = tmp_path / "k.txt"
+    dst = tmp_path / "dst.txt"
     shutil.copy(ROSTER_FIXTURE, str(roster))
-    shutil.copy(PROJECTIONS_FIXTURE, str(projections))
+    shutil.copy(PROJECTIONS_FIXTURE, str(rbwrte))
+    shutil.copy(TQB_FIXTURE, str(tqb))
+    shutil.copy(K_FIXTURE, str(k))
+    shutil.copy(DST_FIXTURE, str(dst))
 
     sent = _Sent()
     monkeypatch.setattr("sffl.notify.send", sent)
     monkeypatch.setattr("sffl.notify.topic_from_keychain",
                         lambda *a, **k: "stub-topic")
 
-    state = {"capture_error": None,
-             "roster": str(roster),
-             "projections": str(projections)}
+    # "roster" and each of the four `sffl.cli.ALERT_GROUPS` names are the
+    # only keys `_cmd_alert` ever calls `capture()` with - one at a time.
+    state = {
+        "capture_error": None,     # raised for EVERY capture() call
+        "group_errors": {},        # name -> exception, for ONE page only
+        "paths": {"roster": str(roster), "RB-WR-TE": str(rbwrte),
+                  "TQB": str(tqb), "K": str(k), "DST": str(dst)},
+    }
 
     def fake_capture(urls, out_dir, profile_dir, **kwargs):
+        assert len(urls) == 1, (
+            "_cmd_alert must capture exactly one page per capture() call "
+            "(got %r) so a failure on one page cannot abort the others - "
+            "see this file's module docstring" % (urls,))
+        (name, url), = urls.items()
         if state["capture_error"] is not None:
             raise state["capture_error"]
-        return {urls["roster"]: state["roster"],
-                urls["projections"]: state["projections"]}
+        if name in state["group_errors"]:
+            raise state["group_errors"][name]
+        return {url: state["paths"][name]}
 
     monkeypatch.setattr("sffl.capture.capture", fake_capture)
 
@@ -80,10 +114,16 @@ def alert_env(tmp_path, monkeypatch):
         sent_calls = sent.calls
 
         def fail_capture(self, exc):
+            """Every capture() call fails - nothing at all is verified."""
             state["capture_error"] = exc
 
-        def set_projections(self, path):
-            state["projections"] = str(path)
+        def fail_group(self, name, exc):
+            """Only the ONE named page ("roster", "RB-WR-TE", "TQB", "K",
+            or "DST") fails; every other page still succeeds."""
+            state["group_errors"][name] = exc
+
+        def set_projections(self, path, group="RB-WR-TE"):
+            state["paths"][group] = str(path)
 
         def run(self, capsys, *extra):
             argv = ["alert", "--kind", "friday", "--week", "1",
@@ -244,22 +284,44 @@ def test_no_injuries_argument_still_refuses_to_claim_a_clean_roster(
 
 # --- C1: un-evaluated starters --------------------------------------------
 
-def test_the_tqb_kicker_and_defense_are_named_not_listed_as_sits(
+def test_a_now_captured_tqb_starter_is_scored_not_left_unevaluated(
         alert_env, capsys):
-    # THE C1 DEFECT, on the real committed fixtures: CBS starts eight, the
-    # projections page covers RB/WR/TE only, so the TQB, the kicker and the
-    # defense were "in current, not in optimal" by construction and appeared
-    # under SIT every single week as merit-based bench advice.
+    # UPDATED FOR TASK 3 - this used to be part of the C1 regression test
+    # (`test_the_tqb_kicker_and_defense_are_named_not_listed_as_sits`):
+    # before this task only RB-WR-TE was ever captured, so Chargers (the
+    # fixture roster's current TQB starter) had no projection anywhere and
+    # was reported as a SCOPE LIMIT (POSITION_NOT_CAPTURED), landing in
+    # NOT EVALUATED rather than being scored. Now that `_cmd_alert` also
+    # captures and merges the TQB page, and the real TQB fixture DOES carry
+    # a "Chargers TQB" row, he is scored for real: he must fill the
+    # optimal lineup's TQB slot and must no longer appear anywhere in NOT
+    # EVALUATED - the exact gap this task exists to close.
+    code, out = alert_env.run(capsys)
+    assert code == 0
+    assert "Chargers (TQB)" not in out
+    slots_section = out[out.index("BEST LINEUP"):]
+    assert "TQB    Chargers" in slots_section
+
+
+def test_a_covered_positions_player_with_no_row_is_a_data_problem_not_a_scope_limit(
+        alert_env, capsys):
+    # Evan McPherson (K) and the Patriots (DST) are on the fixture roster's
+    # current lineup, but neither name appears on the K/DST fixtures used
+    # here. Their POSITIONS are captured (the K and DST pages both
+    # succeeded this run - see `covered_positions` in `_cmd_alert`), so
+    # their absence is a DATA PROBLEM (PROJECTION_MISSING), never a scope
+    # limit (POSITION_NOT_CAPTURED) - and, either way, they must never
+    # silently read as a SIT recommendation.
     code, out = alert_env.run(capsys)
     assert code == 0
     start = out.index("START / SIT vs your current CBS lineup:")
     sit_block = out[start:out.index("\n\n", start)]
-    for name in ("Chargers", "Evan McPherson", "Patriots"):
+    for name in ("Evan McPherson", "Patriots"):
         assert name not in sit_block
         assert name in out  # named, never silently dropped
 
     section = out[out.index("NOT EVALUATED for start/sit"):]
-    assert "Chargers (TQB)" in section
+    assert "DATA PROBLEM" in section
     assert "Evan McPherson (K)" in section
     assert "Patriots (DST)" in section
     assert "NOT recommendations to bench anyone" in out
