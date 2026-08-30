@@ -1331,6 +1331,14 @@ def main(argv=None):
                       choices=["starter", "draftable", "fit"])
     pln.add_argument("--prices", default=None,
                       help="observed auction prices CSV; required with --policy fit")
+    # `plan` is a PRE-AUCTION command, and pre-auction is exactly when a
+    # persisted model is the only option there is: --prices for the season
+    # being planned does not exist until the auction it was meant to inform
+    # has happened. _value_pool already handles it identically for all three
+    # commands; only the flag was missing.
+    pln.add_argument("--market", default=None,
+                      help="apply a persisted market model (see fit-market); "
+                           "mutually exclusive with --prices")
     pln.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
                       help="year-bound map of starting QB name -> franchise code, "
                            "used to join --prices' Team QB rows to the pool "
