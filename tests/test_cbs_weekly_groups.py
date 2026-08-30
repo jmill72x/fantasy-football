@@ -8,6 +8,8 @@ implementation plan - see task-2-report.md for the corrections that were
 necessary because the plan's three maps were hypotheses, not verified fact.
 """
 
+import pytest
+
 from sffl.cbs_weekly import parse
 
 TQB_FIXTURE = "tests/fixtures/cbs_weekly_tqb.txt"
@@ -108,7 +110,10 @@ def test_k_stats_land_in_the_right_slots():
     assert r.stats["fg_30_39"] == 0.7
     assert r.stats["fg_40_49"] == 0.7
     assert r.stats["xp_made"] == 3.5
-    # The two internal total columns must not leak into the scored stats.
+    # The internal sub-50-attempts accumulator must not leak into the
+    # scored stats - it exists only to compute fg_missed (see below) and
+    # must be popped before a PlayerProjection is built.
+    assert "fg_att_u50" not in r.stats
     assert "fg_total_made" not in r.stats
     assert "fg_total_att" not in r.stats
 
@@ -147,10 +152,44 @@ def test_k_a_nonzero_50_plus_scores_as_fg_50_59_and_fg_60_is_absent():
     assert r.stats.get("fg_60_plus", 0) == 0
 
 
-def test_k_fg_missed_is_derived_from_the_two_total_columns():
-    """fg_missed = total ATT - total FG. Jake Bates: 2.6 - 2.1 = 0.5."""
+def test_k_fg_missed_is_sub_50_only_not_total_att_minus_total_fg():
+    """fg_missed = SUB-50 ATT minus SUB-50 FG, per poc/validate_k_weekly.py
+    (17/17 real weeks exact; 50+ misses proven unpenalized on week 6).
+
+    Jake Bates's real capture row: 1-19 0.0/0.0, 20-29 0.5/0.5, 30-39
+    0.7/0.7, 40-49 0.7/0.8 -> sub-50 missed = 0.1 (all from the 40-49
+    band). This is NOT total ATT (2.6) minus total FG (2.1) = 0.5 - an
+    earlier, wrong version of this derivation used exactly that formula
+    and over-penalized every kicker with a 50+ attempt."""
     r = by_name(parse(K_FIXTURE, group="K", week=1))["Jake Bates"]
-    assert r.stats["fg_missed"] == 0.5
+    assert r.stats["fg_missed"] == pytest.approx(0.1)
+    assert r.stats["fg_missed"] != pytest.approx(0.5)
+
+
+def test_k_50_plus_misses_are_not_penalized():
+    """The specific hazard IMPORTANT-1 names: Jake Bates's real row has a
+    50+ miss (ATT 0.7 - FG 0.3 = 0.4), and none of it may appear in
+    fg_missed. If it did, fg_missed would be 0.5 (0.1 sub-50 + 0.4 from
+    50+) instead of the correct 0.1."""
+    r = by_name(parse(K_FIXTURE, group="K", week=1))["Jake Bates"]
+    fifty_plus_att, fifty_plus_fg = 0.7, 0.3
+    assert fifty_plus_att - fifty_plus_fg == pytest.approx(0.4)  # the real miss
+    assert r.stats["fg_missed"] == pytest.approx(0.1)            # excludes it
+
+
+def test_k_fg_missed_cannot_go_negative(tmp_path):
+    """A data anomaly (FG made in a band exceeding that band's attempts -
+    should never happen in real CBS output, but the derivation must not
+    trust that) must clamp to 0, not pay POINTS for a miss that didn't
+    happen. Uses the real, default profile (sources/cbs-weekly.yaml)."""
+    bad = tmp_path / "anomaly.txt"
+    bad.write_text(
+        "\tFA\tTest Kicker K • ARI\tNO\t1\t1\t1\t1\t1\t"
+        "1.0\t1.0\t0.0\t0.0\t0.6\t0.5\t0.0\t0.0\t0.0\t0.0\t"
+        "0.0\t0.0\t0.0\t0.0\t0.0\n")
+    r = parse(str(bad), group="K", week=1)[0]
+    assert r.stats["fg_missed"] == 0.0
+    assert r.stats["fg_missed"] >= 0.0
 
 
 def test_k_expect_tokens_refuses_a_column_added(tmp_path):
@@ -189,13 +228,19 @@ def test_dst_stats_land_in_the_right_slots():
     assert r.stats["def_fum_rec"] == 0.3
     assert r.stats["def_int"] == 0.8
     assert r.stats["def_td"] == 0.1
-    assert r.stats["def_safety"] == 0.0
     assert r.stats["def_ya"] == 248.0
     assert r.stats["def_pa"] == 19.6
     # Sanity per the brief: yards-against in the hundreds, points-against
     # in the tens.
     assert 100 < r.stats["def_ya"] < 999
     assert 0 < r.stats["def_pa"] < 99
+    # def_safety on the Broncos row is genuinely 0.0, which is a vacuous
+    # witness for "did this column land correctly" (every wrong column
+    # could also read 0.0 by coincidence). The Dolphins row in this same
+    # fixture has a non-zero STY (0.1) - a real witness that the safety
+    # column, not some neighboring column, is what landed in def_safety.
+    dolphins = by_name(parse(DST_FIXTURE, group="DST", week=1))["Dolphins"]
+    assert dolphins.stats["def_safety"] == 0.1
 
 
 def test_dst_dwn_column_is_unidentified_and_not_scored():
@@ -228,3 +273,78 @@ def test_dst_expect_tokens_refuses_a_column_removed(tmp_path):
     import pytest
     with pytest.raises(ValueError, match="15"):
         parse(str(bad), group="DST", week=1)
+
+
+# --------------------------------------------------------------------------
+# Profile-load validation (IMPORTANT-3): a bad stat name must be refused at
+# load time, not silently scored as 0 forever.
+# --------------------------------------------------------------------------
+
+def test_a_misspelled_stat_name_is_refused_at_load_naming_group_and_stat(tmp_path):
+    """This is the exact hole that let `sacks` (should be `def_sack`) and
+    `fg_under_30` (should be `fg_u30`) reach a committed group map:
+    score_game reads any stat key with a default of 0, so a bad name never
+    raises at scoring time - it just scores that whole category as 0,
+    forever, for every player in the group. Validation must catch this the
+    moment the profile loads."""
+    prof = tmp_path / "p.yaml"
+    prof.write_text(
+        "owner_codes: [ZZ]\n"
+        "groups:\n"
+        "  BAD:\n"
+        "    stats: [sacks, def_int]\n"
+        "    expect_tokens: 4\n")
+    page = tmp_path / "page.txt"
+    page.write_text("\tFA\tSome Team DST • DEN\tOPP\t1.0\t2.0\t3.0\t4.0\n")
+    with pytest.raises(ValueError, match="BAD"):
+        parse(str(page), group="BAD", week=1, profile_path=str(prof))
+
+
+def test_a_misspelled_stat_name_error_names_the_offending_stat(tmp_path):
+    prof = tmp_path / "p.yaml"
+    prof.write_text(
+        "owner_codes: [ZZ]\n"
+        "groups:\n"
+        "  BAD:\n"
+        "    stats: [sacks, def_int]\n"
+        "    expect_tokens: 4\n")
+    page = tmp_path / "page.txt"
+    page.write_text("\tFA\tSome Team DST • DEN\tOPP\t1.0\t2.0\t3.0\t4.0\n")
+    with pytest.raises(ValueError, match="sacks"):
+        parse(str(page), group="BAD", week=1, profile_path=str(prof))
+
+
+def test_a_real_stat_key_and_the_allowed_unscored_names_load_cleanly(tmp_path):
+    """The flip side: STAT_KEYS names, `_`, and the explicitly-allowed
+    unscored/internal names must NOT be refused."""
+    prof = tmp_path / "p.yaml"
+    prof.write_text(
+        "owner_codes: [ZZ]\n"
+        "groups:\n"
+        "  OK:\n"
+        "    stats: [def_int, _, rush_att, fg_att_u50]\n"
+        "    expect_tokens: 5\n")
+    page = tmp_path / "page.txt"
+    page.write_text("\tFA\tSome Team DST • DEN\tOPP\t1.0\t2.0\t3.0\t4.0\n")
+    rows = parse(str(page), group="OK", week=1, profile_path=str(prof))
+    assert len(rows) == 1
+
+
+def test_a_bad_stat_name_in_an_unrelated_group_is_still_caught(tmp_path):
+    """Validation runs for EVERY group in the profile when it loads, not
+    just the one being parsed - the whole point is to catch a bad name in
+    a group nobody happens to be exercising this week."""
+    prof = tmp_path / "p.yaml"
+    prof.write_text(
+        "owner_codes: [ZZ]\n"
+        "groups:\n"
+        "  GOOD:\n"
+        "    stats: [def_int]\n"
+        "    expect_tokens: 3\n"
+        "  BAD:\n"
+        "    stats: [fg_under_30]\n"
+        "    expect_tokens: 3\n")
+    page = tmp_path / "page.txt"
+    page.write_text("\tFA\tSome Team DST • DEN\tOPP\t1.0\t2.0\n")
+    with pytest.raises(ValueError, match="BAD"):
+        parse(str(page), group="GOOD", week=1, profile_path=str(prof))
