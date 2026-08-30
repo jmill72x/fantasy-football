@@ -96,24 +96,47 @@ def tqb_starters_season(path):
     return int(season) if season is not None else None
 
 
-def prices_season(path):
-    """The season a prices CSV declares, or None if it carries no column.
+def prices_seasons(path):
+    """EVERY DISTINCT season a prices CSV declares, in the order first seen.
 
-    The TQB starter map was only ever a PROXY for the prices' season, which is
-    why mismatched prices with a matched map used to pass silently - the two
-    are independent facts and only one was checked. A prices file that states
-    its own season is direct evidence. Files written before the column exists
-    return None and are handled by the caller, loudly.
+    PLURAL, and that is the whole contract. This used to be `prices_season`,
+    which returned the FIRST non-empty `season` cell and never looked at the
+    rest - so it reported a whole file's season from one row. A CSV whose
+    first row said 2026 and whose remaining 155 rows said 2025 verified
+    clean, and `fit-market --year 2026` wrote an artifact stamped
+    `season: 2026` carrying a=2.4432 b=0.5308 from 123 observations: the
+    artifact-era curve, blessed once and believed by every season after.
+
+    That shape is not exotic. A single rosters file accumulating several
+    seasons is exactly what adding a `season` column invites someone to do,
+    so the column has to be read as evidence about the WHOLE file or it is
+    not evidence at all.
+
+    Returns a tuple:
+      ()          the file carries no `season` column at all
+      (2026,)     every priced row declares the same season
+      (None,)     the column exists but every priced row leaves it blank
+      (2026, 2025) / (2026, None)   NON-UNIFORM - the caller must refuse
+
+    A blank cell is reported as `None` rather than skipped: a file that
+    labels some rows and not others is making a partial claim, and a partial
+    claim about which season a fit is pairing with must not be rounded up to
+    a whole one. Rows with no `player_as_written` are ignored, matching
+    `load_prices`, so a trailing blank line is not a second "season".
     """
+    seen = []
     with open(path, newline="") as fh:
         reader = csv.DictReader(fh)
         if reader.fieldnames is None or "season" not in reader.fieldnames:
-            return None
+            return ()
         for row in reader:
-            value = (row.get("season") or "").strip()
-            if value:
-                return int(value)
-    return None
+            if not normalize_name(row.get("player_as_written") or ""):
+                continue
+            raw = (row.get("season") or "").strip()
+            value = int(raw) if raw else None
+            if value not in seen:
+                seen.append(value)
+    return tuple(seen)
 
 
 def _load_tqb_starters(path):
@@ -194,7 +217,44 @@ def load_prices(path, alias_path=DEFAULT_ALIASES,
                 "(%s). Quarterbacks change franchises between Augusts, so the "
                 "wrong map silently mis-joins or drops every Team QB price."
                 % (season, map_season, tqb_starters_path))
-        file_season = prices_season(path)
+        declared = prices_seasons(path)
+
+        # NON-UNIFORM FIRST, because it is the failure the `season` column
+        # itself created. `prices_seasons` used to be `prices_season` and
+        # returned the first non-empty cell, so a file whose first row said
+        # 2026 and whose other 155 rows said 2025 VERIFIED CLEAN - and
+        # `fit-market --year 2026` then persisted a=2.4432 b=0.5308 from 123
+        # observations, the artifact-era curve, into the one file every
+        # later season is meant to trust without re-deriving it. Worse than
+        # the bug it replaced, which at least had to be re-committed yearly.
+        #
+        # REFUSED, never filtered down to the matching rows. A tool that
+        # quietly uses a subset of the file the operator pointed at is its
+        # own kind of silence, and this one would fit on a sample nobody
+        # chose: the operator asked for 156 prices and would be shown a
+        # curve from 33, with the count reported as if it were the whole
+        # room. Which rows belong to which season is a data-organisation
+        # decision a human should make deliberately - by splitting the file
+        # - not one a loader should make on their behalf.
+        if len(declared) > 1:
+            raise SeasonMismatchError(
+                "%s declares more than one season: %s. A prices file must "
+                "state ONE season for the whole file, because the season is "
+                "a fact about the auction the file records, not about "
+                "individual rows. Reading only the first row's value is how "
+                "a mixed file passed verification and persisted the "
+                "artifact-era curve (a=2.4432, b=0.5308) as if it were "
+                "year-matched. Split it into one file per season rather "
+                "than asserting %d over rows that disagree."
+                % (path, ", ".join("(blank)" if v is None else str(v)
+                                   for v in declared), season))
+
+        # (None,) - the column is there and every row leaves it blank - is
+        # the same epistemic state as no column at all: the file declares
+        # nothing. Handled identically rather than as its own case, so an
+        # empty column cannot become a third, quieter way of skipping the
+        # check.
+        file_season = declared[0] if declared else None
         if file_season is None:
             # THE ANNOUNCEMENT HALF OF DECISION 2. Verification shipped
             # without it, so a column-less file simply skipped the check in
