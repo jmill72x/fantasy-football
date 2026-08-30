@@ -311,16 +311,25 @@ def top10_cost(report):
     WHY NOT top10_mae ALONE. It was, until the 2026 prices arrived and showed
     what it cannot see. Measured year-matched against them, `draftable` beat
     `starter` on top10_mae ($9.08 against $10.06) while being far worse in the
-    only way that matters: its top-10 error was ENTIRELY systematic - mae
-    $10.34 against bias -$10.34, meaning all sixteen round-one players were
-    under-priced by about $10 apiece. `starter` had a larger spread around a
-    bias of -$0.25.
+    only way that matters: its top-10 error is ENTIRELY systematic - mae $9.08
+    against bias -$9.08, so every one of its ten most expensive matched
+    players is under-priced, by about $9 apiece. `starter`'s error is roughly
+    half noise and half bias: mae $10.06 against bias +$5.10.
 
     Those are not equally bad. Noise averages out across thirteen roster spots;
-    a policy that under-prices every expensive player by $10 loses every one of
+    a policy that under-prices every expensive player by $9 loses every one of
     them, and no amount of drafting skill recovers that. So bias is added to
     mae: it is already inside mae once, and this counts it again. Pure noise is
     charged once, pure bias twice.
+
+    THE FIGURES ABOVE ARE MEASURED, and pinned by
+    `test_a_lower_top10_mae_does_not_win_when_it_is_all_bias`, which
+    reproduces them from the real 2026 extract and prices. They used to read
+    "$10.34 against bias -$10.34" and "a bias of -$0.25" - the -$0.25 came
+    from a different table's dollar band, and starter's real top-10 bias is
+    +$5.10. The decision is unchanged either way (the ratio test, not the
+    decimals, is what it rests on), but a docstring quoting a number no run
+    produces is the failure this whole area exists to prevent.
     """
     return report["top10_mae"] + abs(report["top10_bias"])
 
