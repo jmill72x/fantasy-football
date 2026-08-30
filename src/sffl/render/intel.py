@@ -22,6 +22,18 @@ off the league profile and the rows. The market figures need `prices`/`pool`
 (i.e. a run with --prices), and the history figures need the tracked bid file.
 Where those are missing the page says the run did not measure them - never a
 zero, never last month's number.
+
+WHICH MODEL PRICED EST$, AND FROM WHEN. A curve fit fresh from this run's own
+--prices and a curve applied from a persisted `MarketModel` (--market) are the
+same (a, b) tuple - nothing about the shape says which one it is, or what
+season an applied one came from. `gather`'s `market` argument (the loaded
+`MarketModel` itself, only ever available on an applied run) is the one way to
+learn an applied model's season, fit date and observation count; failing that,
+whether `prices` is `None` still tells `gather` an in-process fit apart from
+an applied one, because `sffl.cli._value_pool` leaves `prices` `None` on every
+--market run. See `_market_provenance` and the "Model" item in
+`_dollar_columns` - a reader looking at EST$ has no other way to tell a
+year-matched curve from one carried over from a season this board is not.
 """
 
 import statistics
@@ -108,6 +120,28 @@ class IntelFacts(object):
     n_prices_joined: Optional[int] = None
     n_curve_obs: Optional[int] = None
     record_price: Optional[float] = None
+    # Which model produced `curve`, and from when - see `_market_provenance`.
+    # True: `curve` was APPLIED from a persisted `MarketModel` (--market).
+    # False: `curve` was FIT in this run, from this run's own --prices.
+    # None: no curve at all - the two market fields below stay None too.
+    market_applied = None  # type: Optional[bool]
+    # The model's own season. Always known when `curve` was fit in-process
+    # (it is this run's own `season`, by construction). Known for an applied
+    # model only when `gather` was handed the `MarketModel` itself - the
+    # curve tuple alone carries no season, which is the exact fact this field
+    # exists to report honestly as unmeasured rather than assume "current".
+    market_season: Optional[int] = None
+    # The date string a persisted model records it was fitted on. Only ever
+    # known for an applied model whose `MarketModel` was passed in.
+    market_fitted_on: Optional[str] = None
+    # How many real prices the curve in use was fitted against - THIS run's
+    # `n_curve_obs` for an in-process fit, or the persisted model's own
+    # recorded `evidence["observations"]` for an applied one.
+    market_n_obs: Optional[int] = None
+    # market_season != this board's season. None (not False) until
+    # market_season is itself known - "not cross-season" is a claim that
+    # needs a season to compare against, not a default.
+    market_cross_season: Optional[bool] = None
     # pool name -> (n joined, mean absolute error of MY$ against price paid)
     mae_by_pool: Dict[str, Tuple[int, float]] = field(default_factory=dict)
     # {"median","n_low","n_low_under","n_high","n_high_over"} - see
@@ -190,6 +224,50 @@ def _mae_by_pool(pool, prices):
                 for name, v in errs.items() if v)
 
 
+def _market_provenance(lg, prices, market, n_curve_obs):
+    """Which model produced this run's curve, and from when.
+
+    `curve` (a, b) is silent about its own origin - both an in-process fit
+    and an applied persisted model produce the exact same tuple shape. Two
+    signals distinguish them, and only two:
+
+      - `market`, when the caller passes the loaded `MarketModel` itself
+        (`sffl.market_model.load`'s return value, or anything duck-typed the
+        same way: `.season`, `.fitted_on`, `.evidence`). This is the only way
+        to learn an APPLIED model's season, fit date or observation count -
+        none of that survives into the bare curve tuple `_value_pool` returns
+        today, so without it those facts are correctly None, not guessed.
+      - `prices`, which `sffl.cli._value_pool` leaves `None` on a `--market`
+        run and populated on a `--prices` run (see its own docstring) - so
+        "prices is not None" is itself evidence this run fit the curve fresh,
+        year-matched by construction (`load_prices`'s season guard already
+        enforces that upstream, before `gather` ever sees the result).
+
+    Returns `(applied, season, fitted_on, n_obs, cross_season)`, every one of
+    them `None` except `applied` when the run gave `gather` no way to know
+    the season a persisted model came from.
+    """
+    if market is not None:
+        season = getattr(market, "season", None)
+        fitted_on = getattr(market, "fitted_on", None)
+        evidence = getattr(market, "evidence", None) or {}
+        n_obs = evidence.get("observations")
+        cross = (season != lg.season) if season is not None else None
+        return True, season, fitted_on, n_obs, cross
+    if prices is not None:
+        # Fit in this run, from this run's own prices - by construction the
+        # model's season IS this board's season, and it is not a cross-season
+        # apply. Nothing here is assumed: load_prices refuses any prices file
+        # whose own season or TQB-starter map disagrees with `--year`.
+        return False, lg.season, None, n_curve_obs, False
+    # A curve exists (the caller only reaches `gather`'s market block when it
+    # does) but neither signal above fired - a --market apply whose loaded
+    # MarketModel was not threaded through to `gather`. Still knowable as
+    # "applied" (it is the one remaining way `_value_pool` sets a curve with
+    # `prices` left None); everything about WHICH model is honestly None.
+    return True, None, None, None, None
+
+
 def _flat_pool_observations(lg, pool, prices):
     """What the room really paid for the pools this board prices flat.
 
@@ -243,8 +321,8 @@ def _history_facts(facts, history):
             if all(b.bid == facts.bid_floor for b in history if b.rank == r))
 
 
-def gather(lg, rows, pool=None, prices=None, curve=None, history=None,
-           bids_path=DEFAULT_BIDS):
+def gather(lg, rows, pool=None, prices=None, curve=None, market=None,
+           history=None, bids_path=DEFAULT_BIDS):
     """Everything the intel sheet may state about THIS render.
 
     `pool` and `prices` come from the valuation run (`sffl.cli._value_pool`);
@@ -252,6 +330,12 @@ def gather(lg, rows, pool=None, prices=None, curve=None, history=None,
     loading the tracked bid file, and a missing or malformed one degrades that
     section rather than failing the render - the board is the artifact that
     must exist on auction day, and this page is a legend for it.
+
+    `market` is the loaded `MarketModel` (`sffl.market_model.load`'s return
+    value) when this run applied a persisted one (`--market`); leave it None
+    for an in-process fit or when no curve was fitted at all. It is the only
+    way this page can name an applied model's own season, fit date and
+    observation count - see `_market_provenance`.
     """
     facts = IntelFacts(total_capital=lg.total_capital(),
                        league_name=lg.name, season=lg.season)
@@ -287,6 +371,11 @@ def gather(lg, rows, pool=None, prices=None, curve=None, history=None,
         facts.flat_obs = _flat_pool_observations(lg, pool, prices)
         facts.tqb_dispersion = _tqb_dispersion(pool, prices)
 
+    if facts.curve is not None:
+        (facts.market_applied, facts.market_season, facts.market_fitted_on,
+         facts.market_n_obs, facts.market_cross_season) = _market_provenance(
+            lg, prices, market, facts.n_curve_obs)
+
     if history is None:
         try:
             history = load_bid_history(bids_path)
@@ -315,6 +404,46 @@ def _money(value):
     return "$%.2f" % value
 
 
+def _market_model_text(f):
+    """Which market model priced EST$, and from which season.
+
+    The one place this page states the curve's full provenance in one spot -
+    season, coefficients, observation count, and (when known) whether this is
+    a cross-season apply - so a reader does not have to piece it together
+    from the EST$ sentence. Every clause degrades to naming what this run did
+    NOT record rather than omitting the fact silently or guessing "current
+    season" for an applied model whose own season is unknown here - see
+    `_market_provenance`.
+    """
+    if f.curve is None:
+        return "No curve was fitted this run, so no model priced this board."
+
+    coeffs = "a=%.2f, b=%.2f" % f.curve
+
+    if not f.market_applied:
+        # Fit in-process, this run: the season and "not cross-season" are
+        # known by construction (see `_market_provenance`), never guessed.
+        obs = ("%d" % f.market_n_obs) if f.market_n_obs is not None else "an unrecorded number of"
+        return ("%s, fit fresh this run from %s of this %s board's own "
+                "prices - year-matched by construction."
+                % (coeffs, obs, f.season if f.season is not None else "this"))
+
+    # Applied from a persisted model (--market).
+    if f.market_season is None:
+        return ("%s, applied from a persisted market model - this run did "
+                "not record its season, fit date or observation count." % coeffs)
+
+    obs = ("%s" % f.market_n_obs) if f.market_n_obs is not None else "an unrecorded number of"
+    fitted = (", fitted %s" % f.market_fitted_on) if f.market_fitted_on else ""
+    if f.market_cross_season:
+        return ("%s, the persisted %d model (n=%s%s) - a CROSS-SEASON apply "
+                "onto this %s board, not a year-matched fit."
+                % (coeffs, f.market_season, obs, fitted,
+                   f.season if f.season is not None else "this"))
+    return ("%s, the persisted %d model (n=%s%s), year-matched to this board."
+            % (coeffs, f.market_season, obs, fitted))
+
+
 def _dollar_columns(f):
     items = [
         ("MY$", "What a player is worth against replacement, in this "
@@ -322,19 +451,33 @@ def _dollar_columns(f):
                 % _money(f.total_capital)),
     ]
 
-    if f.curve is not None and f.n_curve_obs:
-        joined = (" of the %d that join this board" % f.n_prices_joined
-                  if f.n_prices_joined else "")
-        est = ("What the room is likely to actually pay: that value bent onto "
-               "this league's own price curve (price = %.2f x value^%.2f), "
-               "fitted on %d real prices%s. Flat-priced kickers and "
-               "defenses are left out of the fit."
-               % (f.curve[0], f.curve[1], f.n_curve_obs, joined))
+    if f.curve is not None:
+        curve_desc = "price = %.2f x value^%.2f" % (f.curve[0], f.curve[1])
+        if f.market_applied:
+            # An APPLIED model: `n_curve_obs` is not this run's to claim - see
+            # `_market_provenance`. Was previously mis-tested here on
+            # `f.n_curve_obs`, which is None on a --market run (prices stays
+            # None), so this branch used to fall through to the "fitted no
+            # price curve" sentence below and tell the reader EST$ was blank
+            # when it was not.
+            est = ("What the room is likely to actually pay: value bent onto "
+                   "a market curve (%s). Flat-priced K/DST excluded. See "
+                   "\"Model\" for which one and its season."
+                   % curve_desc)
+        else:
+            joined = (" of %d joining" % f.n_prices_joined
+                      if f.n_prices_joined else "")
+            est = ("What the room is likely to actually pay: value bent onto "
+                   "this league's own curve, fit fresh this run (%s) on %d "
+                   "real prices%s. Flat-priced K/DST excluded."
+                   % (curve_desc, f.n_curve_obs or 0, joined))
     else:
         est = ("What the room is likely to actually pay. This run fitted no "
                "price curve, so EST$ is blank on the board rather than "
                "guessed.")
     items.append(("EST$", est))
+
+    items.append(("Model", _market_model_text(f)))
 
     items.append(
         ("Gap", "The gap between the two columns is the edge: MY$ well above "
