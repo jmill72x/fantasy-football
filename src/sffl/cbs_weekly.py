@@ -7,7 +7,7 @@ parser honest about a layout it cannot control.
 STAT NAMES IN A PROFILE'S `stats:` LIST MAY REPEAT. The list is positional -
 one token, one name - EXCEPT that a name appearing MORE THAN ONCE means those
 columns are SUMMED into that one key. This exists because CBS splits a single
-scored stat across multiple columns - e.g. `fg_under_30` is scored as one
+scored stat across multiple columns - e.g. `fg_u30` is scored as one
 number but CBS prints it as a `1-19` column and a `20-29` column - which a
 strictly positional map cannot express. `_` (a column the scoring engine does
 not use) is exempt: repeating `_` still discards every one of those columns
@@ -312,7 +312,7 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
             # A field name repeated in `fields` means those columns are
             # SUMMED into that one key (see the module docstring) - e.g.
             # CBS's `1-19` and `20-29` field-goal columns both feed
-            # `fg_under_30`. The `_` skip runs BEFORE accumulation so a
+            # `fg_u30`. The `_` skip runs BEFORE accumulation so a
             # repeated `_` (there will be many, marking columns the scoring
             # engine ignores) can never create a stat named `_`.
             stats = {}
@@ -326,6 +326,21 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                         "%s: %r has non-numeric %s %r"
                         % (path, name, field_name, token))
                 stats[field_name] = stats.get(field_name, 0.0) + value
+            # fg_missed (league-scored, -1 each) is DERIVED - total FG
+            # ATTEMPTS minus total FG MADE - which no single CBS column
+            # holds, so a positional map cannot express it directly. A
+            # profile that wants it maps CBS's own totals columns onto the
+            # internal names `fg_total_att`/`fg_total_made` (see the K
+            # group in sources/cbs-weekly.yaml); if a row produced both,
+            # they are combined into `fg_missed` and removed here so these
+            # two internal names never reach a PlayerProjection's stats -
+            # the scoring engine has never heard of them, deliberately
+            # (they are outside scoring.STAT_KEYS). A profile that does not
+            # map them is unaffected: this is a no-op unless both are
+            # present.
+            if "fg_total_att" in stats and "fg_total_made" in stats:
+                stats["fg_missed"] = (stats.pop("fg_total_att")
+                                       - stats.pop("fg_total_made"))
             status = status1 or status2 or ""
             out.append(PlayerProjection(
                 name=name,

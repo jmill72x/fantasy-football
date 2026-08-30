@@ -26,6 +26,94 @@ groups:
     # every one of them plausible. This is the check that catches that.
     expect_tokens: 17
 
+  # "Player" on this page is an NFL TEAM's aggregate Team-QB line, not an
+  # individual - e.g. "Chargers TQB • LAC". EXPERT is "N/R" on every row
+  # observed (there is no individual to rank), so this group exercises the
+  # same non-numeric-EXPERT right-anchoring RB-WR-TE already covers, just
+  # unconditionally.
+  #
+  # Verified against a real 2026-08-30 capture (data/captures/tqb.txt): the
+  # 11-column trailing stat block is PASSING (ATT COMP YDS TD INT), RUSHING
+  # (ATT YDS AVG TD), FUMBLES (LOST), FPTS - in exactly this order, matching
+  # the map below field for field. Cross-check: this row's pass_yds (265.1),
+  # pass_td (2.3), pass_int (0.7) plugged into the league's own bands/points
+  # plus rush_yds (35, below the 50-yard floor) and rush_td (0.2) totals
+  # ~18.4 points, against the page's own FPTS of 18.45 - close enough (CBS's
+  # own FPTS uses a scoring config we don't control) to confirm the columns
+  # are aligned, not just plausible.
+  #
+  # pass_att, rush_att and fum_lost are carried but not in scoring.STAT_KEYS
+  # (not scored by this league) - same convention as RB-WR-TE's rush_att/tgt.
+  TQB:
+    stats: [pass_att, pass_cmp, pass_yds, pass_td, pass_int,
+            rush_att, rush_yds, _, rush_td, fum_lost, _]
+    expect_tokens: 17
+
+  # No EXPERT column on this page - 5 preamble tokens (OPP OVP BYE ROST
+  # START), not 6, which is why expect_tokens is 16 and not 17.
+  #
+  # DWN (4th of the 11 stat-block columns, under the page's "TURNOVERS"
+  # header alongside FUM and INT) is UNIDENTIFIED and mapped to `_` ON
+  # PURPOSE - do not promote it to a scoring key without independent
+  # confirmation. Compared a week-1 and a week-2 capture (2026-08-30,
+  # data/captures/dst.txt vs dst_wk2.txt) across the 32 teams common to
+  # both: DWN sits in a narrow 0.5-0.8 band for EVERY team in EITHER week,
+  # unlike SACK (0.9-4.7) or INT (0.3-1.3), which move with team
+  # quality/matchup as a real turnover-forcing stat should. That rules out
+  # "it behaves like a normal counting stat" but does not name what it is -
+  # "turnovers gained on downs" fits the header grouping but is a guess, not
+  # a confirmed identification. It costs nothing to leave unscored either
+  # way: leagues/sffl/2026.yaml's `points:` has no downs-related defensive
+  # stat, so there is no scoring key this column could correctly feed even
+  # if its meaning were confirmed.
+  #
+  # Verified column order against the real capture: SACK FUM INT DWN TD STY
+  # (YARDS AGAINST) AVG TOTAL (POINTS AGAINST) AVG TOTAL FPTS. AVG and TOTAL
+  # are identical on a single-week projection (there is only one week to
+  # average), so the AVG/TOTAL pair for each of yards-against and
+  # points-against is redundant here - TOTAL is kept, AVG is discarded, for
+  # consistency with how every other group prefers the non-averaged column.
+  # Cross-check: def_ya lands in the hundreds (248) and def_pa in the tens
+  # (19.6) on the sample row, as expected.
+  DST:
+    stats: [def_sack, def_fum_rec, def_int, _, def_td, def_safety,
+            _, def_ya, _, def_pa, _]
+    expect_tokens: 16
+
+  # CBS's distance bands do not match the league's. fg_u30 is CBS's 1-19
+  # column PLUS its 20-29 column - a repeated name sums (see
+  # cbs_weekly.parse). CBS gives ONE 50+ column and the league scores
+  # 50-59 and 60+ separately; they are not separable. DECIDED (repo owner,
+  # not revisited here): 50+ scores as fg_50_59, which UNDER-states a 60+
+  # yard kick rather than OVER-valuing every 50-yarder. Pinned by
+  # test_a_kicker_with_a_nonzero_50_plus_scores_as_fg_50_59 in
+  # tests/test_cbs_weekly_groups.py, not just recorded in this comment.
+  #
+  # fg_missed (league-scored at -1 each) is DERIVED - total ATT minus total
+  # FG - which a positional map cannot express with a single column. CBS's
+  # own TOTAL FG / TOTAL ATT columns (the first two of the 15-column stat
+  # block, ahead of the per-distance breakdown) are captured here under the
+  # internal names fg_total_made/fg_total_att; cbs_weekly.parse subtracts
+  # them into fg_missed and discards the two internal names, so they never
+  # reach a PlayerProjection's stats (they are deliberately outside
+  # scoring.STAT_KEYS). MEASURED on the 2026-08-30 capture (data/captures/
+  # k.txt): among the ~34 kickers with a non-zero week-1 projection, missed
+  # field goals average 0.276/kicker/week (max 0.5), worth about -0.28
+  # points/week at this league's fg_missed rate - roughly 3-5% of a typical
+  # kicker's projected weekly score. Small, but real, systematic, and free
+  # to compute exactly from columns already on this page - scored rather
+  # than left out.
+  #
+  # Verified column order against the real capture: TOTAL (FG ATT), 1-19
+  # (FG ATT), 20-29 (FG ATT), 30-39 (FG ATT), 40-49 (FG ATT), 50+ (FG ATT),
+  # XP ATT, FPTS. Cross-check: the five distance bands' FG-made values sum
+  # to ~TOTAL FG (0.0+0.5+0.7+0.7+0.3 = 2.2 against a stated total of 2.1 -
+  # rounding), confirming the pairs are aligned.
+  K:
+    stats: [fg_total_made, fg_total_att, fg_u30, _, fg_u30, _, fg_30_39, _,
+            fg_40_49, _, fg_50_59, _, xp_made, _, _]
+    expect_tokens: 21
+
 # The league's manager abbreviations, exactly as CBS prints them in the
 # leftmost column of the ALL PLAYERS view.
 #
