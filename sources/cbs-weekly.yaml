@@ -86,23 +86,43 @@ groups:
   # 50-59 and 60+ separately; they are not separable. DECIDED (repo owner,
   # not revisited here): 50+ scores as fg_50_59, which UNDER-states a 60+
   # yard kick rather than OVER-valuing every 50-yarder. Pinned by
-  # test_a_kicker_with_a_nonzero_50_plus_scores_as_fg_50_59 in
+  # test_k_a_nonzero_50_plus_scores_as_fg_50_59_and_fg_60_is_absent in
   # tests/test_cbs_weekly_groups.py, not just recorded in this comment.
   #
-  # fg_missed (league-scored at -1 each) is DERIVED - total ATT minus total
-  # FG - which a positional map cannot express with a single column. CBS's
-  # own TOTAL FG / TOTAL ATT columns (the first two of the 15-column stat
-  # block, ahead of the per-distance breakdown) are captured here under the
-  # internal names fg_total_made/fg_total_att; cbs_weekly.parse subtracts
-  # them into fg_missed and discards the two internal names, so they never
-  # reach a PlayerProjection's stats (they are deliberately outside
-  # scoring.STAT_KEYS). MEASURED on the 2026-08-30 capture (data/captures/
-  # k.txt): among the ~34 kickers with a non-zero week-1 projection, missed
-  # field goals average 0.276/kicker/week (max 0.5), worth about -0.28
-  # points/week at this league's fg_missed rate - roughly 3-5% of a typical
-  # kicker's projected weekly score. Small, but real, systematic, and free
-  # to compute exactly from columns already on this page - scored rather
-  # than left out.
+  # OUR K SCORE IS ROUGHLY 2x CBS's OWN FPTS COLUMN - THIS IS A REAL
+  # SCORING-CONVENTION DIFFERENCE, NOT A MISALIGNED COLUMN. Checked on
+  # every row of the 2026-08-30 capture (98/98): CBS's own FPTS equals
+  # exactly TOTAL_FG + XP_made, i.e. CBS pays a FLAT 1 point per field
+  # goal regardless of distance. This league pays 2/3/4/5/8 by distance
+  # band instead (fg_u30/fg_30_39/fg_40_49/fg_50_59/fg_60), and
+  # poc/validate_k_weekly.py - which scores 17/17 real weeks EXACT against
+  # the live league site, including a week-12 63-yard make scoring 8 -
+  # is the arbiter that the distance table is correct. A kicker who makes
+  # mostly 40+ yard kicks will legitimately score roughly double CBS's own
+  # FPTS for the same game; do not "fix" this if you notice it later.
+  #
+  # fg_missed (league-scored at -1 each) is DERIVED and SUB-50 ONLY - the
+  # sum of the 1-19/20-29/30-39/40-49 bands' (ATT minus FG) - NOT total ATT
+  # minus total FG. poc/validate_k_weekly.py is the arbiter here too: it
+  # scores 17/17 real weeks EXACT and its own evidence proves 50+ misses
+  # carry NO penalty (week 6: 0-for-2 from 50+, engine score still exact).
+  # An earlier version of this map used total ATT minus total FG (EVERY
+  # miss, including 50+) and over-penalized every kicker with a 50+
+  # attempt - measured on the 2026-08-30 capture (data/captures/k.txt):
+  # among the ~34 kickers with a non-zero week-1 projection, that bug's
+  # mean over-penalty was 0.112 pts/kicker/week (max 0.40), and it was
+  # large enough to REORDER two real kickers on this exact capture (Jake
+  # Bates and Joey Slye swapped rank). The four sub-50 ATTEMPTS columns
+  # (1-19, 20-29, 30-39, 40-49 - currently `_`) are captured here under the
+  # single internal name `fg_att_u50` (repeated - a summed name, same
+  # mechanism as fg_u30); cbs_weekly.parse subtracts the already-scored
+  # sub-50 MADE total from it into `fg_missed` and discards the internal
+  # name, so it never reaches a PlayerProjection's stats (deliberately
+  # outside scoring.STAT_KEYS). CORRECTED measurement, sub-50 only, same
+  # capture: missed field goals average 0.165/kicker/week (max 0.4) among
+  # those ~34 kickers, worth about -0.165 points/week at this league's
+  # fg_missed rate - smaller than the original (wrong) 0.276/wk figure by
+  # exactly the 50+ misses this league does not penalize.
   #
   # Verified column order against the real capture: TOTAL (FG ATT), 1-19
   # (FG ATT), 20-29 (FG ATT), 30-39 (FG ATT), 40-49 (FG ATT), 50+ (FG ATT),
@@ -110,8 +130,8 @@ groups:
   # to ~TOTAL FG (0.0+0.5+0.7+0.7+0.3 = 2.2 against a stated total of 2.1 -
   # rounding), confirming the pairs are aligned.
   K:
-    stats: [fg_total_made, fg_total_att, fg_u30, _, fg_u30, _, fg_30_39, _,
-            fg_40_49, _, fg_50_59, _, xp_made, _, _]
+    stats: [_, _, fg_u30, fg_att_u50, fg_u30, fg_att_u50, fg_30_39, fg_att_u50,
+            fg_40_49, fg_att_u50, fg_50_59, _, xp_made, _, _]
     expect_tokens: 21
 
 # The league's manager abbreviations, exactly as CBS prints them in the

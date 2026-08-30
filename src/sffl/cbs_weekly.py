@@ -19,8 +19,61 @@ import yaml
 
 from sffl.identity import normalize_team
 from sffl.schema import PlayerProjection
+from sffl.scoring import STAT_KEYS
 
 DEFAULT_PROFILE = "sources/cbs-weekly.yaml"
+
+# Names a group's `stats:` list may use OUTSIDE scoring.STAT_KEYS, without
+# `_load_groups` refusing the profile. Two different reasons land a name
+# here, and both are enumerated rather than inferred, on purpose:
+#
+#   - CARRIED BUT DELIBERATELY UNSCORED: this league does not score the
+#     stat (pass_att, rush_att, tgt, fum_lost) but a profile still names the
+#     column so the width/positional accounting stays honest and a future
+#     reader can see what CBS put there.
+#   - INTERNAL, CONSUMED BY `parse()` BEFORE A ROW IS RETURNED: fg_att_u50
+#     exists only to compute the derived `fg_missed` (see the fg_missed
+#     block in `parse` below) and is popped out of `stats` before a
+#     PlayerProjection is built - it must never appear in scored output,
+#     but it must be allowed to appear in the YAML map that produces it.
+#
+# WHY THIS EXISTS AT ALL: `ingest/profiles.py` validates its `columns:` map
+# against exactly this vocabulary (STAT_KEYS) at load time; this module had
+# no equivalent check, which is exactly how `sacks` and `fg_under_30` -
+# both misspellings of real STAT_KEYS names - reached a committed group map.
+# `score_game` reads any stat key with a default of 0, so a bad name does
+# not error - it silently scores 0 for that category, forever, for every
+# player in the group. See _check_group_stats below.
+_ALLOWED_UNSCORED_STATS = frozenset({
+    "pass_att", "rush_att", "tgt", "fum_lost",  # carried, not scored
+    "fg_att_u50",                                # internal: see fg_missed
+})
+
+
+def _check_group_stats(profile_path, group_name, fields):
+    """Raise if `fields` (a group's `stats:` list) names an unrecognized stat.
+
+    Every name must be `_` (discarded), a real scoring key
+    (scoring.STAT_KEYS), or on the explicit `_ALLOWED_UNSCORED_STATS` list.
+    Anything else is either a misspelling of a real key - which `score_game`
+    would silently score as 0 forever, never raising - or a genuinely new
+    stat the scoring engine does not know about either way. Both are bugs
+    worth failing loudly on, immediately, rather than trusting arithmetic
+    that happens to look plausible on one sample row.
+    """
+    unknown = sorted(set(
+        f for f in fields
+        if f != "_" and f not in STAT_KEYS and f not in _ALLOWED_UNSCORED_STATS))
+    if unknown:
+        raise ValueError(
+            "%s group %r declares stat name(s) score_game does not read "
+            "and that are not on cbs_weekly._ALLOWED_UNSCORED_STATS: %s. A "
+            "stat key outside scoring.STAT_KEYS is not an error at scoring "
+            "time - score_game defaults a missing key to 0 and scores it "
+            "silently, forever. Fix the spelling to match scoring.STAT_KEYS, "
+            "or add the name to _ALLOWED_UNSCORED_STATS if it is genuinely "
+            "meant to be carried unscored or consumed internally by parse()."
+            % (profile_path, group_name, ", ".join(unknown)))
 
 # "W (9/16) Harold Fannin Jr. TE • CLE @JAC ..." - availability, name,
 # position, bullet, team, then the rest. `avail` is "FA" (free agent), "W"
@@ -190,7 +243,15 @@ def classify_avail_tab(avail):
 def _load_groups(profile_path):
     with open(profile_path) as fh:
         raw = yaml.safe_load(fh) or {}
-    return raw.get("groups", {})
+    groups = raw.get("groups", {})
+    # Validate EVERY group in the profile, not just the one this call is
+    # about to parse - a bad name in a group nobody happens to be testing
+    # this week is exactly the failure mode that let `sacks`/`fg_under_30`
+    # through, and it should be caught the moment the profile loads, not
+    # the first time someone parses that particular group.
+    for group_name, group in groups.items():
+        _check_group_stats(profile_path, group_name, group.get("stats", []))
+    return groups
 
 
 def _load_owner_codes(profile_path):
@@ -326,21 +387,41 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                         "%s: %r has non-numeric %s %r"
                         % (path, name, field_name, token))
                 stats[field_name] = stats.get(field_name, 0.0) + value
-            # fg_missed (league-scored, -1 each) is DERIVED - total FG
-            # ATTEMPTS minus total FG MADE - which no single CBS column
-            # holds, so a positional map cannot express it directly. A
-            # profile that wants it maps CBS's own totals columns onto the
-            # internal names `fg_total_att`/`fg_total_made` (see the K
-            # group in sources/cbs-weekly.yaml); if a row produced both,
-            # they are combined into `fg_missed` and removed here so these
-            # two internal names never reach a PlayerProjection's stats -
-            # the scoring engine has never heard of them, deliberately
-            # (they are outside scoring.STAT_KEYS). A profile that does not
-            # map them is unaffected: this is a no-op unless both are
-            # present.
-            if "fg_total_att" in stats and "fg_total_made" in stats:
-                stats["fg_missed"] = (stats.pop("fg_total_att")
-                                       - stats.pop("fg_total_made"))
+            # fg_missed (league-scored, -1 each) is DERIVED - SUB-50 ATTEMPTS
+            # minus SUB-50 MADE - which no single CBS column holds, so a
+            # positional map cannot express it directly.
+            #
+            # SUB-50 ONLY, NOT total ATT minus total FG: poc/validate_k_weekly.py
+            # scores 17/17 real weeks EXACT against the live league site and its
+            # own evidence proves 50+ misses carry NO penalty (week 6: 0-for-2
+            # from 50+, engine score still exact against CBS). That script's
+            # `missed_under_50` is the arbiter this project has for what
+            # `fg_missed` means, and it explicitly excludes the 50+ band. An
+            # earlier version of this derivation used total ATT minus total FG
+            # (EVERY miss, including 50+) and over-penalized every kicker with
+            # a 50+ attempt - see sources/cbs-weekly.yaml's K group comment for
+            # the measured size of that bug.
+            #
+            # A profile that wants this maps CBS's own four sub-50
+            # ATTEMPTS columns (1-19, 20-29, 30-39, 40-49) onto the single
+            # internal name `fg_att_u50` (repeated - see the summing rule
+            # above); if a row produced it, the sub-50 MADE total (already
+            # sitting in `fg_u30`/`fg_30_39`/`fg_40_49`, which this does NOT
+            # consume - they stay scored normally) is subtracted from it here
+            # and the internal name is removed, so it never reaches a
+            # PlayerProjection's stats - the scoring engine has never heard
+            # of it, deliberately (it is outside scoring.STAT_KEYS). A
+            # profile that does not map it is unaffected: this is a no-op
+            # unless it is present. Clamped at 0 as a defensive floor - a
+            # projection should never show more makes than attempts, but
+            # `fg_missed` scores at -1 and a negative value here would pay
+            # POINTS for a miss that didn't happen.
+            if "fg_att_u50" in stats:
+                made_u50 = (stats.get("fg_u30", 0.0)
+                            + stats.get("fg_30_39", 0.0)
+                            + stats.get("fg_40_49", 0.0))
+                missed_u50 = stats.pop("fg_att_u50") - made_u50
+                stats["fg_missed"] = max(0.0, missed_u50)
             status = status1 or status2 or ""
             out.append(PlayerProjection(
                 name=name,
