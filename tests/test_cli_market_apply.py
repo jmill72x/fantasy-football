@@ -27,9 +27,21 @@ def test_applying_a_model_prices_the_board(tmp_path, capsys):
 def test_a_cross_season_apply_is_permitted_and_announced(tmp_path, capsys):
     # The whole point: last year's model of the room, applied to this year's
     # projections, is the correct thing to want - but it must never be silent.
+    # Asserted on the distinctive NOTE wording, not on "2026" or "market
+    # model" - both of those already appear in describe(model)'s base
+    # announcement, which prints on EVERY apply regardless of season, so
+    # asserting on them would pass even with the NOTE deleted entirely.
     assert main(_value_argv(_write_model(tmp_path, season=2026), year=2027)) == 0
     out = capsys.readouterr().out
-    assert "2026" in out and "market model" in out
+    assert "CROSS-SEASON" in out
+
+
+def test_a_same_season_apply_does_not_print_the_cross_season_note(tmp_path, capsys):
+    # The complement: a note that always fires is a note nobody reads. If a
+    # future change made the NOTE unconditional, this is what would catch it.
+    assert main(_value_argv(_write_model(tmp_path, season=2026), year=2026)) == 0
+    out = capsys.readouterr().out
+    assert "CROSS-SEASON" not in out
 
 
 def test_market_and_prices_together_are_refused(tmp_path):

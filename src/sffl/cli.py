@@ -393,6 +393,16 @@ def cmd_value(args):
                 - sum(actual) / len(actual)
             print("  %-10s %4d %+9.1f %+9.1f %9.1f"
                   % (label, len(rows), mybias, estbias, sum(actual) / len(actual)))
+    elif curve is not None:
+        # curve came from --market, not a fit against this run's own
+        # --prices, so there is nothing observed to measure bias against.
+        # Correct to omit the table, but every other omission in this
+        # function says why it is absent - a table that vanishes with no
+        # explanation reads as a bug to the operator, not a property of the
+        # run.
+        print("\n(bias against observed prices not shown - this run applied "
+              "a persisted --market model rather than fitting against "
+              "--prices, so there are no observed prices to compare against)")
 
     return 0
 
