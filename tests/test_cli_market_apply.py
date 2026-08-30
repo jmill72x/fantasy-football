@@ -57,3 +57,52 @@ def test_policy_fit_needs_no_prices_when_a_model_is_supplied(tmp_path):
     # prices, so a pre-auction run needs no price file at all.
     argv = _value_argv(_write_model(tmp_path)) + ["--policy", "fit"]
     assert main(argv) == 0
+
+
+def _intel_text(xlsx):
+    """Every string on the workbook's Key & Intel sheet, joined.
+
+    Read off the real file, not off `gather`'s facts: the defect this guards
+    was that stdout and the workbook disagreed about the same run, and a unit
+    test on the facts object cannot see what actually reached the sheet.
+    """
+    import openpyxl
+    wb = openpyxl.load_workbook(xlsx)
+    ws = wb["Key & Intel"]
+    return "\n".join(str(c) for row in ws.iter_rows(values_only=True)
+                     for c in row if c is not None)
+
+
+def test_stdout_and_the_workbook_agree_that_an_apply_is_cross_season(tmp_path, capsys):
+    # THE DEFECT: intel compared the model against the LEAGUE PROFILE's
+    # season while the CLI compared it against --year. On this run - the
+    # 2027 pre-auction workflow this whole branch exists to enable - stdout
+    # correctly announced CROSS-SEASON while the workbook stated the
+    # opposite: "the persisted 2026 model ..., year-matched to this board".
+    # The workbook is what goes to the draft table.
+    model = _write_model(tmp_path, season=2026)
+    xlsx = str(tmp_path / "board.xlsx")
+    rc = main(["render", "--source", "sources/draftsharks.yaml",
+               "--file", "tests/fixtures/draftsharks_value_sample.csv",
+               "--year", "2027", "--market", model, "--xlsx", xlsx])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "CROSS-SEASON" in out, "stdout half"
+
+    sheet = _intel_text(xlsx)
+    assert "CROSS-SEASON" in sheet, "the workbook must say what stdout says"
+    assert "year-matched to this board" not in sheet
+    assert "2027" in sheet, "the workbook must name the board's own season"
+
+
+def test_the_workbook_does_not_cry_cross_season_on_a_year_matched_apply(tmp_path, capsys):
+    # The complement: a flag that always fires is a flag nobody reads.
+    model = _write_model(tmp_path, season=2026)
+    xlsx = str(tmp_path / "board.xlsx")
+    assert main(["render", "--source", "sources/draftsharks.yaml",
+                 "--file", "tests/fixtures/draftsharks_value_sample.csv",
+                 "--year", "2026", "--market", model, "--xlsx", xlsx]) == 0
+    assert "CROSS-SEASON" not in capsys.readouterr().out
+    sheet = _intel_text(xlsx)
+    assert "CROSS-SEASON" not in sheet
+    assert "year-matched to this board" in sheet

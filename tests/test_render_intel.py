@@ -421,3 +421,68 @@ def test_no_curve_means_no_market_model_to_name():
     assert f.market_applied is None
     text = _model_text(f)
     assert "no model priced this board" in text
+
+
+# --------------------------------------------------------------------------
+# THE BOARD'S SEASON IS `--year`, NOT THE LEAGUE PROFILE'S.
+#
+# `_market_provenance` compared the model against `lg.season` while the CLI's
+# stdout NOTE compared it against `args.year`. Those are independent, and on a
+# real `--year 2027 --market market/2026.yaml` run they disagreed: stdout
+# announced CROSS-SEASON while the workbook said "year-matched to this board".
+# The workbook is what goes to the draft table.
+#
+# The tests that existed passed because they built the mismatch against
+# `lg.season` (CROSS_MODEL is season 2025 and LG is 2026), which is exactly
+# the case the broken comparison still got right. These build it the way the
+# 2027 workflow does: a model whose season MATCHES the league profile but not
+# the year being priced. There is no leagues/sffl/2027.yaml - one profile
+# serves several seasons - so this is the normal shape of a pre-auction run,
+# not a contrived one.
+# --------------------------------------------------------------------------
+
+def test_the_board_being_priced_is_the_run_year_not_the_profile_season():
+    f = intel.gather(LG, rows(), year=2027)
+    assert LG.season == 2026, "fixture assumption"
+    assert f.season == 2027
+
+
+def test_a_model_matching_the_profile_but_not_the_run_year_is_cross_season():
+    # SAME_SEASON_MODEL.season == LG.season == 2026, so a comparison against
+    # the profile calls this year-matched. It is not: the board is 2027.
+    f = intel.gather(LG, rows(), curve=SAME_SEASON_MODEL.curve,
+                     market=SAME_SEASON_MODEL, year=2027)
+    assert f.market_season == 2026
+    assert f.season == 2027
+    assert f.market_cross_season is True
+
+    text = _model_text(f)
+    assert "CROSS-SEASON" in text
+    # The exact sentence the workbook used to print for this run.
+    assert "year-matched to this board" not in text
+    assert "2027" in text, "the page must name the board's own season"
+
+
+def test_a_model_matching_the_run_year_is_year_matched_even_across_profiles():
+    # The complement, and the reason this cannot be fixed by always saying
+    # CROSS-SEASON: a 2027 model applied to a 2027 board is year-matched even
+    # though the profile it was rendered from says 2026.
+    from sffl.market_model import MarketModel
+    m = MarketModel(season=2027, fitted_on="2027-08-30", curve=(2.0, 0.66),
+                    policy="starter", evidence={"observations": 140},
+                    diagnostics={})
+    f = intel.gather(LG, rows(), curve=m.curve, market=m, year=2027)
+    assert f.market_cross_season is False
+    assert "CROSS-SEASON" not in _model_text(f)
+
+
+def test_an_in_process_fit_is_year_matched_to_the_run_year(tmp_path):
+    # The fit branch reported lg.season as the curve's own season too. It is
+    # the run's year: load_prices' guard has already refused any prices whose
+    # season disagrees with --year, which is what makes this knowable.
+    pool = [player("Alpha", "TQB", 30.0), player("Bravo", "RB", 12.0)]
+    f = intel.gather(LG, rows(), pool=pool, prices={"alpha": 20.0, "bravo": 10.0},
+                     curve=(2.0, 0.66), year=2027,
+                     bids_path=str(tmp_path / "absent.csv"))
+    assert f.market_season == 2027
+    assert f.market_cross_season is False
