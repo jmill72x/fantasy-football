@@ -552,6 +552,31 @@ def cmd_plan(args):
     return 0
 
 
+_PATH_SEASON = re.compile(r"^(?:19|20)\d\d$")
+
+
+def projections_season_from_path(path):
+    """The season an extract's PATH names, or None when it names none clearly.
+
+    The extracts are stored one directory per season - `data/extracts/Draft
+    Sharks/2026/rankings-2026-08-23.csv` - so the path is a second, independent
+    statement of which season a file is FOR, alongside `--year`. Independent is
+    the whole value: `--year` is what the operator typed, and typing the wrong
+    one is the failure being guarded against, so it cannot be checked against
+    itself.
+
+    Only a whole path COMPONENT that is exactly four digits counts. The date
+    inside `rankings-2026-08-23.csv` is deliberately not read: it is when the
+    file was pulled, not the season it projects, and a January pull for the
+    previous season would make those two disagree. Returns None when no
+    component qualifies OR when two different ones do - an ambiguous path is
+    not evidence, and the caller must say so rather than pick one.
+    """
+    parts = [p for p in re.split(r"[\\/]+", path) if p]
+    years = set(int(p) for p in parts if _PATH_SEASON.match(p))
+    return years.pop() if len(years) == 1 else None
+
+
 def _sha256_file(path):
     """Content hash of a file, for evidence that names data too large or too
     licensed to commit (a gitignored vendor extract that gets overwritten in
@@ -578,6 +603,33 @@ def cmd_fit_market(args):
     import datetime
 
     from sffl.market_model import MarketModel, save
+
+    # THE PROJECTIONS' OWN SEASON, checked BEFORE any work: the `evidence`
+    # block exists so a bad fit cannot be invisible, and an evidence block
+    # that can assert a self-contradicting falsehood is worse than none,
+    # because it will be believed. `projections_year: 2025` beside
+    # `projections_file: .../2026/rankings-2026-08-23.csv` was reproducible
+    # here - nothing compared the extract to --year, and projections_year was
+    # written from --year rather than read from anything.
+    path_season = projections_season_from_path(args.file)
+    if path_season is not None and path_season != args.year:
+        raise SystemExit(
+            "refusing to fit: --year %d, but the projections file is %s, "
+            "whose path names season %d. One of the two is wrong, and a fit "
+            "pairs prices with projections - getting that pairing wrong is "
+            "what this command exists to make impossible. Correct --year or "
+            "point --file at the %d extract."
+            % (args.year, args.file, path_season, args.year))
+    if path_season is None:
+        _banner(
+            "PROJECTIONS SEASON NOT VERIFIED",
+            "%s names no unambiguous season in its path, so --year %d could "
+            "not be cross-checked against the projections themselves and is "
+            "being taken on trust. The artifact records that: its "
+            "evidence.projections_year_source will say '--year (unverified)' "
+            "rather than claiming the file confirmed it. Storing extracts one "
+            "directory per season (data/extracts/<vendor>/<year>/) makes this "
+            "checkable." % (args.file, args.year))
 
     lg = load_league(args.league)
     pool = build_pool(lg, args.source, args.file, args.year, args.set)
@@ -635,7 +687,17 @@ def cmd_fit_market(args):
             "prices_rows": prices.total_rows,
             "observations": len(pairs),
             "projections_source": args.source,
-            "projections_year": args.year,
+            # READ from the extract's path when it says one, not copied from
+            # --year. The two are cross-checked above, so they cannot
+            # disagree here - and when the path says nothing, the artifact
+            # says WHERE the year came from instead of presenting an
+            # unverified assertion in the same shape as a verified one.
+            "projections_year": (path_season if path_season is not None
+                                 else args.year),
+            "projections_year_source": (
+                "projections file path"
+                if path_season is not None
+                else "--year (unverified: the path names no season)"),
             "tqb_starters": args.tqb_starters,
             # Added so the artifact can be reproduced, not just described:
             # `projections_source` above names the PROFILE (e.g.
