@@ -3,6 +3,15 @@
 NO NETWORK I/O. The page is fetched by an operator (browser tools) and saved;
 this module parses the file. That keeps every test a fixture test and keeps the
 parser honest about a layout it cannot control.
+
+STAT NAMES IN A PROFILE'S `stats:` LIST MAY REPEAT. The list is positional -
+one token, one name - EXCEPT that a name appearing MORE THAN ONCE means those
+columns are SUMMED into that one key. This exists because CBS splits a single
+scored stat across multiple columns - e.g. `fg_under_30` is scored as one
+number but CBS prints it as a `1-19` column and a `20-29` column - which a
+strictly positional map cannot express. `_` (a column the scoring engine does
+not use) is exempt: repeating `_` still discards every one of those columns
+and never creates a stat literally named `_`.
 """
 
 import re
@@ -300,16 +309,23 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                     "layout is positional and a shift reads the wrong stat "
                     "into every field"
                     % (path, name, len(block), len(fields)))
+            # A field name repeated in `fields` means those columns are
+            # SUMMED into that one key (see the module docstring) - e.g.
+            # CBS's `1-19` and `20-29` field-goal columns both feed
+            # `fg_under_30`. The `_` skip runs BEFORE accumulation so a
+            # repeated `_` (there will be many, marking columns the scoring
+            # engine ignores) can never create a stat named `_`.
             stats = {}
             for field_name, token in zip(fields, block):
                 if field_name == "_":
                     continue
                 try:
-                    stats[field_name] = float(token)
+                    value = float(token)
                 except ValueError:
                     raise ValueError(
                         "%s: %r has non-numeric %s %r"
                         % (path, name, field_name, token))
+                stats[field_name] = stats.get(field_name, 0.0) + value
             status = status1 or status2 or ""
             out.append(PlayerProjection(
                 name=name,
