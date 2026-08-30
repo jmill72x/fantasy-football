@@ -60,15 +60,16 @@ def test_grid_endpoints_match_observed_mean_range():
 
 
 def test_grid_spacing_does_not_skip_a_band():
-    # rush_yds's narrowest band is 25 wide (e.g. [50, 74]); half that is the
-    # spacing _stat_grid aims for, so consecutive grid points must never be
-    # more than one band width apart.
+    # rush_yds's narrowest band is 25 wide (e.g. [50, 74]); _stat_grid aims
+    # for HALF that (12.5), not the full width - pin the exact value so a
+    # regression that drops the halving (spacing -> 25.0) is caught, not
+    # just a regression that exceeds the full band width.
     from sffl.league import load_league
     lg = load_league("leagues/sffl/2026.yaml")
     means = [0.0, 300.0]
     grid = _stat_grid(lg.bands["rush_yds"], means)
     gaps = [grid[i + 1] - grid[i] for i in range(len(grid) - 1)]
-    assert all(gap <= 25.0 + 1e-9 for gap in gaps)
+    assert all(abs(gap - 12.5) < 1e-9 for gap in gaps)
 
 
 def test_single_observed_mean_yields_a_single_point_grid():
@@ -90,14 +91,27 @@ def test_build_curves_pooled_matches_build_curves_shape():
     assert curves["rush_yds"] == []
 
 
-def test_steady_player_matches_the_naive_approximation():
-    # Every week identical -> every residual is 1.0 -> E[band(m)] == band(m).
+def test_pooled_expectation_matches_hand_computed_value_across_multiple_players():
+    # A single steady player collapses to residual 1.0 for every week, which
+    # would pass under implementations that never actually average over a
+    # pool (e.g. one that just returns band(m)). Use two players so pooling
+    # is load-bearing: player "a" swings between 0 and 80 around a mean of
+    # 40 (residuals 0, 0, 2, 2); player "b" is steady at 80 (residuals all
+    # 1). Pooled: [0, 0, 2, 2, 1, 1, 1, 1] (8 residuals).
+    #
+    # At m=80: values = m*r = [0, 0, 160, 160, 80, 80, 80, 80].
+    # band(0)=0, band(160)=6 ([150,174]), band(80)=3 ([75,99]).
+    # mean = (0+0+6+6+3+3+3+3) / 8 = 24/8 = 3.0.
+    #
+    # At m=40: values = [0, 0, 80, 80, 40, 40, 40, 40].
+    # band(0)=0, band(80)=3, band(40)=0 (below the [50,74] floor).
+    # mean = (0+0+3+3+0+0+0+0) / 8 = 6/8 = 0.75.
     from sffl.league import load_league
-    from sffl.calibrate import expected_points
     lg = load_league("leagues/sffl/2026.yaml")
-    lines = [_line("b", "RB", w, rush_yds=80.0) for w in range(1, 5)]
-    curves = build_curves_pooled(lg, lines)
-    assert expected_points(curves["rush_yds"], 80.0) == 3.0
+    lines = ([_line("a", "RB", w, rush_yds=v) for w, v in enumerate([0.0, 0.0, 80.0, 80.0], 1)]
+             + [_line("b", "RB", w, rush_yds=80.0) for w in range(1, 5)])
+    curves = build_curves_pooled(lg, lines, grid=[40.0, 80.0])
+    assert curves["rush_yds"] == [(40.0, 0.75), (80.0, 3.0)]
 
 
 def test_explicit_grid_overrides_derived_grid():
