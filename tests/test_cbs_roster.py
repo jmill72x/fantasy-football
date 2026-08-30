@@ -1,7 +1,8 @@
 import pytest
 
-from sffl.cbs_roster import (_ROW, parse_lineup, parse_positions,
-                             parse_roster)
+from sffl.cbs_roster import (_ROW, RosterRow, find_name_position_collisions,
+                             parse_lineup, parse_lineup_rows,
+                             parse_positions, parse_roster)
 
 FIXTURE = "tests/fixtures/cbs_team_page.txt"
 
@@ -132,3 +133,103 @@ def test_parse_positions_covers_reserves_as_well_as_starters():
     starters, reserves = parse_lineup(FIXTURE)
     for name in starters + reserves:
         assert name in positions
+
+
+# --- find_name_position_collisions -----------------------------------------
+
+def test_the_real_fixture_has_no_collisions():
+    # The overwhelming common case, pinned explicitly: the shipped fixture
+    # rosters "Chargers" (TQB) and "Patriots" (DST) - two different real
+    # teams - so nothing should ever collide on it.
+    assert find_name_position_collisions(FIXTURE) == {}
+
+
+def test_the_same_team_rostered_for_both_tqb_and_dst_is_found(tmp_path):
+    """THE REAL, REPRODUCED BUG this function exists to catch:
+    `parse_lineup`/`parse_positions` silently collapse two DIFFERENT roster
+    rows - a real NFL team's TQB aggregate AND its DST aggregate - into one
+    the moment their display names collide, because nothing stops a
+    manager from rostering the SAME team for both slots. This function is
+    the only one that still sees both rows."""
+    with open(FIXTURE) as fh:
+        text = fh.read()
+    # Same substitution used to reproduce the bug end-to-end for the task
+    # report: rename the DST row's team from Patriots to Chargers so it
+    # collides with the existing Chargers TQB row.
+    collided = text.replace("Patriots DST • NE ", "Chargers DST • LAC ")
+    assert "Chargers DST" in collided
+    p = tmp_path / "collision.txt"
+    p.write_text(collided)
+
+    collisions = find_name_position_collisions(str(p))
+    assert collisions == {"Chargers": ["DST", "TQB"]}
+    # And "Patriots" - no longer present at all - is correctly absent, not
+    # spuriously flagged.
+    assert "Patriots" not in collisions
+
+
+def test_a_collision_in_the_reserves_section_is_also_found(tmp_path):
+    # A collision must be found regardless of which side of the RESERVES
+    # marker either row falls on - the hazard is just as real for a bench
+    # pick as for a starter.
+    p = tmp_path / "collision.txt"
+    p.write_text(
+        "\tTQB\tChargers TQB • LAC\tARI\t\n"
+        "RESERVES\n"
+        "\tDST\tChargers DST • LAC\tARI\t\n"
+    )
+    assert find_name_position_collisions(str(p)) == {"Chargers": ["DST", "TQB"]}
+
+
+def test_a_name_repeated_at_the_same_position_is_not_a_collision(tmp_path):
+    # A genuine dedup case (e.g. the same row rendered twice by a page
+    # quirk) must NOT be flagged - only a name whose rows DISAGREE on slot
+    # is ambiguous.
+    p = tmp_path / "same_slot.txt"
+    p.write_text(
+        "\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+    )
+    assert find_name_position_collisions(str(p)) == {}
+
+
+# --- parse_lineup_rows: full-fidelity (name, slot, team) roster rows -------
+
+def test_parse_lineup_rows_matches_parse_lineup_when_there_is_no_collision():
+    starters, reserves = parse_lineup_rows(FIXTURE)
+    name_starters, name_reserves = parse_lineup(FIXTURE)
+    assert [r.name for r in starters] == name_starters
+    assert [r.name for r in reserves] == name_reserves
+    assert starters[0] == RosterRow("Chargers", "TQB", "LAC")
+    assert reserves[-1] == RosterRow("Courtland Sutton", "WR", "DEN")
+
+
+def test_parse_lineup_rows_keeps_both_sides_of_a_real_collision(tmp_path):
+    # THE REPRODUCED BUG: `parse_lineup` collapses this to ONE "Chargers"
+    # entry and silently loses which slot the second row occupied.
+    # `parse_lineup_rows` must keep BOTH, correctly labelled.
+    with open(FIXTURE) as fh:
+        text = fh.read()
+    collided = text.replace("Patriots DST • NE ", "Chargers DST • LAC ")
+    p = tmp_path / "collision.txt"
+    p.write_text(collided)
+
+    starters, _reserves = parse_lineup_rows(str(p))
+    chargers_rows = [r for r in starters if r.name == "Chargers"]
+    assert len(chargers_rows) == 2
+    assert set(r.slot for r in chargers_rows) == {"TQB", "DST"}
+    assert all(r.team == "LAC" for r in chargers_rows)
+
+
+def test_parse_lineup_rows_collapses_only_an_exact_triple_match(tmp_path):
+    # The SAME entity rendered twice (identical name, slot, AND team) is a
+    # page-layout artifact, not two different roster entries - this is the
+    # one case that should still collapse.
+    p = tmp_path / "exact_dup.txt"
+    p.write_text(
+        "\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "RESERVES\n"
+    )
+    starters, _reserves = parse_lineup_rows(str(p))
+    assert starters == [RosterRow("Ja'Marr Chase", "WR", "CIN")]

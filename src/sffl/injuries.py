@@ -155,6 +155,28 @@ def for_roster(reports, roster_names):
     punctuation - "Ja'Marr Chase" on one, "JaMarr Chase" on the other - and a
     literal comparison would silently report a clean bill of health for an
     injured starter.
+
+    EXAMINED, NOT UPGRADED, for the (name, pos, team) composite key the rest
+    of the merged path (`sffl.cli._merge_projection_groups`, `_cmd_alert`'s
+    own by_key, `sffl.alert._start_sit_diff`) now uses instead of name
+    alone. Explicitly decided against here, for a concrete reason rather
+    than an oversight: `Report` (this module) carries `name` and `team` but
+    has NO POSITION FIELD AT ALL - StatsDeck's injury feed describes an
+    individual NFL player's health, never a position slot, so a three-part
+    key is not even constructible from this data. A two-part (name, team)
+    key WOULD be constructible (both sides have `team`), but the actual
+    hazard this composite-key work exists to close - CBS's TQB/DST pages
+    using an NFL TEAM NICKNAME as a "player name" - cannot occur here: a
+    team defense is never issued an injury designation, only individual
+    players are, and `roster_names`/`Report.name` are both always real
+    person names on this path. The remaining residual - two DIFFERENT real
+    people sharing an exact normalized name AND BOTH being rostered on the
+    SAME 13-man fantasy team - is a pre-existing, extremely narrow
+    coincidence unrelated to anything CBS-specific, and upgrading this
+    function's signature (`roster_names` is a plain string list at every
+    call site, including ~10 in tests/test_injuries.py) to carry team for
+    a gap this narrow was judged not worth the churn. Left as name-only
+    matching, decided rather than left unexamined.
     """
     by_key = {}
     for r in reports:
