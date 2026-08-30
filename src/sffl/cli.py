@@ -6,6 +6,7 @@
 
 import argparse
 import csv
+import hashlib
 import os
 import sys
 
@@ -509,6 +510,20 @@ def cmd_plan(args):
     return 0
 
 
+def _sha256_file(path):
+    """Content hash of a file, for evidence that names data too large or too
+    licensed to commit (a gitignored vendor extract that gets overwritten in
+    place). A path alone proves nothing a year later - the file at that path
+    may since have been refreshed - but a hash pins exactly which bytes were
+    fitted against, without copying a single row into a tracked file.
+    """
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 def cmd_fit_market(args):
     """Fit this room's price curve and policy from year-matched evidence, and persist them.
 
@@ -575,6 +590,22 @@ def cmd_fit_market(args):
             "projections_source": args.source,
             "projections_year": args.year,
             "tqb_starters": args.tqb_starters,
+            # Added so the artifact can be reproduced, not just described:
+            # `projections_source` above names the PROFILE (e.g.
+            # sources/draftsharks.yaml), which says how to parse a file but
+            # not which one - two extracts of the same vendor on the same day
+            # can disagree. `projections_file` names the actual path used and
+            # `projections_file_sha256` pins its bytes, since the extract
+            # itself is gitignored licensed data that gets overwritten in
+            # place (a path alone would go stale silently). `curves_file`,
+            # `league_profile` and `set` complete the command line that
+            # produced this fit - everything `sffl fit-market` was given,
+            # bar the output path and prices, is recoverable from `evidence`.
+            "projections_file": args.file,
+            "projections_file_sha256": _sha256_file(args.file),
+            "curves_file": args.curves,
+            "league_profile": args.league,
+            "set": args.set,
         },
         diagnostics={
             "mae": round(chosen["mae"], 4),
