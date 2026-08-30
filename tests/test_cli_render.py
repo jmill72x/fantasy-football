@@ -69,7 +69,7 @@ def test_dropping_unrostered_players_reprices_nobody_on_the_rendered_board(tmp_p
     args = argparse.Namespace(
         source=DS, file=UNROSTERED_FIXTURE, year=2026, set=None,
         curves=None, prices=None, policy="starter", tqb_starters=None)
-    pool, _curve, _prices = _value_pool(load_league("leagues/sffl/2026.yaml"), args)
+    pool, _curve, _prices, _market = _value_pool(load_league("leagues/sffl/2026.yaml"), args)
 
     # The workbook rounds MY$ to whole dollars, so compare on that basis.
     priced = dict((p.name, round(p.stats["_dollars"], 0)) for p in pool)

@@ -50,9 +50,14 @@ def _value_pool(lg, args):
     the same player differently - duplicating this path would let a fix or a
     calibration change land in one command's copy and not the other's.
 
-    Returns (pool, curve, prices) on success. Returns None after printing why
-    on the one recoverable failure (`--policy fit` without `--prices`) - the
-    caller should print nothing further and return 1.
+    Returns (pool, curve, prices, market) on success. `market` is the loaded
+    `MarketModel` (see `sffl.market_model.load`) when this run applied one via
+    `--market`, else None - callers that need to name which model priced the
+    board (see `sffl.render.intel.gather`'s `market=` argument) must carry
+    this fourth element out; the 3-tuple this used to return had no way to.
+    Returns None after printing why on the one recoverable failure
+    (`--policy fit` without `--prices`) - the caller should print nothing
+    further and return 1.
 
     `--market <path>` APPLIES a model persisted earlier by `fit-market`
     instead of fitting one from `--prices` in this run. The two are mutually
@@ -189,7 +194,7 @@ def _value_pool(lg, args):
         print("  %-5s %8.1f pts" % (name, levels[name]))
     print("  $%.4f per VORP point\n" % rate)
 
-    return pool, curve, prices
+    return pool, curve, prices, market
 
 
 def _board_rows(lg, pool, args):
@@ -304,7 +309,7 @@ def cmd_value(args):
     result = _value_pool(lg, args)
     if result is None:
         return 1
-    pool, curve, prices = result
+    pool, curve, prices, _market = result
 
     # _spread_rec_yds / _spread_rush_yds / _n_sources are only populated when
     # the pool came through sffl.consensus.merge (multi-source agreement
@@ -416,7 +421,7 @@ def cmd_render(args):
     result = _value_pool(lg, args)
     if result is None:
         return 1
-    pool, curve, prices = result
+    pool, curve, prices, market = result
 
     rows = _board_rows(lg, pool, args)
 
@@ -441,7 +446,8 @@ def cmd_render(args):
         # quote a number the board beside it does not support. A fact this run
         # did not produce is reported as not measured, never as a stale
         # constant. See sffl.render.intel.
-        facts = gather_intel(lg, rows, pool=pool, prices=prices, curve=curve)
+        facts = gather_intel(lg, rows, pool=pool, prices=prices, curve=curve,
+                             market=market)
         stats = render_xlsx(lg, rows, args.xlsx, intel=facts)
         print("wrote %s" % args.xlsx)
         # render_xlsx truncates to a hard two-page row budget (derived from
@@ -484,7 +490,7 @@ def cmd_plan(args):
     result = _value_pool(lg, args)
     if result is None:
         return 1
-    pool, _curve, _prices = result
+    pool, _curve, _prices, _market = result
 
     try:
         history = load_bid_history(args.bids)
