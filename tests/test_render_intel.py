@@ -11,6 +11,7 @@ import re
 import pytest
 
 from sffl.league import load_league
+from sffl.market_model import MarketModel
 from sffl.render import intel
 from sffl.render.rows import BoardRow
 from sffl.schema import PlayerProjection
@@ -322,3 +323,101 @@ def test_the_team_qb_paragraph_degrades_instead_of_inventing_a_shape():
     text = dict(intel._model_weakness(f)[1])["Team QB"]
     assert "too few Team QB units" in text
     assert "WIDER" not in text
+
+
+# --------------------------------------------------------------------------
+# Which market model priced EST$, and from which season (Task 6, Part 2).
+#
+# A fit-in-process curve and an applied persisted model produce the exact
+# same (a, b) tuple - `gather` cannot tell them apart from the curve alone.
+# It distinguishes them from whether `prices` is None (see `_value_pool`'s
+# own docstring: --market leaves `prices` None, --prices does not) and, for
+# an applied model's own season/observations/fit date, from the `market`
+# argument - the loaded `MarketModel` itself. Absent that argument, those
+# three facts are honestly None rather than assumed "this season".
+# --------------------------------------------------------------------------
+
+MODEL_SEASON = 2025
+CROSS_MODEL = MarketModel(season=MODEL_SEASON, fitted_on="2025-08-15",
+                          curve=(2.2, 0.6), policy="starter",
+                          evidence={"observations": 130}, diagnostics={})
+SAME_SEASON_MODEL = MarketModel(season=LG.season, fitted_on="2026-08-29",
+                                curve=(2.0, 0.66), policy="starter",
+                                evidence={"observations": 156}, diagnostics={})
+
+
+def _model_text(f):
+    return dict(intel._dollar_columns(f)[1])["Model"]
+
+
+def test_a_curve_fit_in_process_names_this_seasons_own_observation_count():
+    pool = [player("Alpha", "TQB", 30.0), player("Bravo", "RB", 12.0)]
+    prices = {"alpha": 20.0, "bravo": 10.0}
+    f = intel.gather(LG, rows(), pool=pool, prices=prices, curve=(2.0, 0.66))
+    assert f.market_applied is False
+    assert f.market_season == LG.season
+    assert f.market_cross_season is False
+    assert f.market_n_obs == f.n_curve_obs == 2
+
+    text = _model_text(f)
+    assert "fit fresh this run" in text
+    assert "%d" % LG.season in text
+    assert "2" in text  # the observation count
+    assert "CROSS-SEASON" not in text
+
+    est = dict(intel._dollar_columns(f)[1])["EST$"]
+    assert "fitted no price curve" not in est
+
+
+def test_an_applied_curve_with_no_model_object_names_nothing_it_cannot_know():
+    # curve is set (assign_expected_prices ran) but `gather` was handed
+    # neither `prices` (so this is not an in-process fit) nor `market` (so
+    # there is no MarketModel to read a season off) - exactly a --market run
+    # whose loaded model was never threaded through to `gather`.
+    f = intel.gather(LG, rows(), curve=(2.0, 0.66))
+    assert f.market_applied is True
+    assert f.market_season is None
+    assert f.market_n_obs is None
+    assert f.market_cross_season is None
+
+    text = _model_text(f)
+    assert "did not record" in text
+    assert "2025" not in text and "2026" not in text
+
+    # The bug this replaces: EST$ IS populated on an applied run (curve is
+    # not None), so the page must never say it fitted none.
+    est = dict(intel._dollar_columns(f)[1])["EST$"]
+    assert "fitted no price curve" not in est
+    assert "APPLIED" not in est.upper() or "persisted" in est.lower()
+
+
+def test_a_cross_season_applied_model_is_named_and_flagged(tmp_path):
+    f = intel.gather(LG, rows(), curve=CROSS_MODEL.curve, market=CROSS_MODEL)
+    assert f.market_applied is True
+    assert f.market_season == MODEL_SEASON
+    assert f.market_n_obs == 130
+    assert f.market_fitted_on == "2025-08-15"
+    assert f.market_cross_season is True
+
+    text = _model_text(f)
+    assert "2025" in text and "130" in text and "2025-08-15" in text
+    assert "CROSS-SEASON" in text
+    assert "%d" % LG.season in text  # names the board's own season too
+
+
+def test_a_year_matched_applied_model_is_named_without_the_cross_season_flag():
+    f = intel.gather(LG, rows(), curve=SAME_SEASON_MODEL.curve,
+                     market=SAME_SEASON_MODEL)
+    assert f.market_cross_season is False
+
+    text = _model_text(f)
+    assert "%d" % LG.season in text and "156" in text
+    assert "CROSS-SEASON" not in text
+    assert "year-matched" in text
+
+
+def test_no_curve_means_no_market_model_to_name():
+    f = intel.gather(LG, rows())
+    assert f.market_applied is None
+    text = _model_text(f)
+    assert "no model priced this board" in text

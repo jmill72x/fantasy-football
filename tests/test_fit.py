@@ -242,11 +242,40 @@ def test_top10_cost_charges_systematic_error_twice_and_noise_once():
 
 
 def test_a_lower_top10_mae_does_not_win_when_it_is_all_bias():
-    # The real 2026 numbers. draftable wins on top10_mae and must still lose:
-    # its entire top-10 error is a one-directional $10.34 under-price.
-    starter = _report("starter", top10_mae=10.06, top10_bias=-0.25)
-    draftable = _report("draftable", top10_mae=9.08, top10_bias=-9.08)
+    # MEASURED, not quoted. The previous value here (top10_bias=-0.25 for
+    # starter) was lifted from the $26+ band of a different table and
+    # asserted that starter's top-10 is essentially unbiased. It over-prices
+    # by about $5/player across the ten most expensive priced players. The
+    # policy decision these numbers pin is correct either way - starter wins
+    # for any bias weight above 0.25 - but a green test asserting a bias
+    # that is not there is this codebase's signature failure in miniature.
+    #
+    # Reproduced with (PYTHONPATH=src):
+    #   pool = build_pool(lg, "sources/draftsharks.yaml",
+    #       "data/extracts/Draft Sharks/2026/rankings-2026-08-23.csv", 2026, None)
+    #   curves = load_curves("calibration/2025.yaml")  # score_season_calibrated
+    #   prices = load_prices("data/league/auction-rosters-2026.csv",
+    #       tqb_starters_path="identity/tqb-2026-starters.yaml", season=2026)
+    #   score_fit(lg, pool, prices, policy)
+    # This is exactly what `sffl fit-market` runs, and the starter figures
+    # below reproduce market/2026.yaml's persisted `diagnostics` exactly.
+    #
+    # draftable wins on top10_mae ($9.08 vs $10.06) and must still lose: its
+    # top-10 error is almost entirely systematic (|top10_bias| is ~100% of
+    # top10_mae - every one of its ten most expensive matched players is
+    # under-priced in the same direction). starter's error is roughly half
+    # noise, half bias (|top10_bias| is ~half of top10_mae) - a materially
+    # different, and much more recoverable, kind of wrong. That relationship,
+    # not the exact decimals, is what the decision rests on and what will
+    # still hold the next time projections are refreshed and these numbers
+    # drift.
+    starter = _report("starter", top10_mae=10.0638, top10_bias=5.1042)
+    draftable = _report("draftable", top10_mae=9.0782, top10_bias=-9.0782)
     assert draftable["top10_mae"] < starter["top10_mae"]
+    # draftable's top-10 error is almost entirely systematic bias ...
+    assert abs(draftable["top10_bias"]) / draftable["top10_mae"] > 0.95
+    # ... starter's is not - noise and bias are roughly comparable in size
+    assert abs(starter["top10_bias"]) / starter["top10_mae"] < 0.6
     assert top10_cost(starter) < top10_cost(draftable)
 
 
@@ -276,12 +305,20 @@ def test_score_fit_reports_signed_top10_bias():
 def test_the_2026_prices_pick_starter_over_draftable():
     """The regression this rule exists for.
 
-    Measured year-matched on the real 2026 prices, draftable wins top10_mae
-    ($9.08 vs $10.06) while under-pricing all sixteen round-one players by
-    about $10. Before top10_cost, choose_policy shipped that board.
+    Measured year-matched on the real 2026 prices (see the reproduction
+    recipe in test_a_lower_top10_mae_does_not_win_when_it_is_all_bias),
+    draftable wins top10_mae ($9.08 vs $10.06) while under-pricing its ten
+    most expensive matched players almost entirely one-directionally, by
+    about $9 apiece. Before top10_cost, choose_policy shipped that board.
+
+    starter's top10_bias is +5.10, not the -0.25 an earlier version of this
+    test asserted (that number was lifted from the $26+ band of a different
+    table). The measured bias here is still small enough, relative to
+    draftable's near-total systematic error, that the decision is unaffected -
+    which is what this test actually pins.
     """
-    starter = _report("starter", top10_mae=10.06, top10_bias=-0.25)
-    draftable = _report("draftable", top10_mae=9.08, top10_bias=-9.08)
+    starter = _report("starter", top10_mae=10.0638, top10_bias=5.1042)
+    draftable = _report("draftable", top10_mae=9.0782, top10_bias=-9.0782)
     assert min([starter, draftable], key=top10_cost)["policy"] == "starter"
 
 
