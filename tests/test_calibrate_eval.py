@@ -1,6 +1,7 @@
 import pytest
 
-from sffl.calibrate_eval import cross_validate, player_folds, realized
+from sffl.calibrate_eval import (
+    cross_validate, player_folds, predict_raw, predict_weekly, realized)
 from sffl.league import load_league
 from sffl.weekly import load_weekly, WeeklyLine
 
@@ -130,6 +131,50 @@ def test_empty_curve_folds_is_surfaced_when_only_some_folds_have_no_curve():
     assert result["rush_yds"]["empty_curve_folds"] == 5
     assert result["rush_yds"]["n"] == 0
     assert result["rush_yds"]["mae"] is None
+
+
+def test_predict_weekly_and_predict_raw_genuinely_differ_on_a_non_monotone_curve():
+    # If these two ever silently collapsed into the same function, the
+    # `predict` parameter on cross_validate would be decorative: the
+    # default would stop meaning anything, and a candidate that only fixes
+    # non-monotonicity (e.g. isotonic regression) could be judged against a
+    # baseline production doesn't actually ship. Curve constructed on
+    # purpose, not real data - the same pathological shape recorded in
+    # pool._monotone_envelope's own docstring: a bigger raw value (25.7)
+    # pays FEWER points than a smaller one (21.0) once a third, even bigger
+    # anchor (40.0) is added, so raw interpolation and the monotone
+    # envelope disagree at the middle anchor.
+    lg = load_league("leagues/sffl/2026.yaml")
+    curve = [(21.0, 0.525), (25.7, 0.119), (40.0, 3.0)]
+
+    raw = predict_raw(lg, "rush_yds", curve, 25.7)
+    weekly = predict_weekly(lg, "rush_yds", curve, 25.7)
+
+    # predict_raw reads the noisy anchor exactly as given.
+    assert raw == pytest.approx(0.119)
+    # predict_weekly's envelope has already seen the later, higher anchor
+    # and refuses to let the curve dip below what a lower mean already
+    # earned - it can only raise or hold, never lower (see
+    # pool._monotone_envelope's docstring).
+    assert weekly == pytest.approx(0.525)
+    assert weekly != raw
+    assert weekly > raw
+
+
+def test_cross_validate_defaults_to_the_weekly_predictor_and_labels_its_rows():
+    # The predictor a result was computed with must travel with the result,
+    # not live only in whichever variable name a caller happened to use.
+    from sffl.calibrate import build_curves
+    lg = load_league("leagues/sffl/2026.yaml")
+    lines = [_line("p%d" % i, "RB", w, rush_yds=5.0 * i)
+             for i in range(20) for w in range(1, 6)]
+
+    default_result = cross_validate(lg, lines, build_curves, k=5)
+    assert default_result["rush_yds"]["predictor"] == "predict_weekly"
+
+    raw_result = cross_validate(lg, lines, build_curves, k=5,
+                                 predict=predict_raw)
+    assert raw_result["rush_yds"]["predictor"] == "predict_raw"
 
 
 def test_the_harness_reproduces_the_shipped_curves():
