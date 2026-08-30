@@ -178,22 +178,57 @@ def test_cross_validate_defaults_to_the_weekly_predictor_and_labels_its_rows():
 
 
 def test_the_harness_reproduces_the_shipped_curves():
-    # THE VALIDITY GATE. If rebuilding the build set does not reproduce what
-    # ships, the harness misunderstands the pipeline and every comparison
-    # below it is meaningless.
+    # THE VALIDITY GATE. If rebuilding the two datasets does not reproduce
+    # what ships, the harness misunderstands the pipeline and every
+    # comparison below it is meaningless.
+    #
+    # Updated 2026-08-30 for the adopted per-stat split (see
+    # poc/build_calibration.py and
+    # docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md):
+    # pass_cmp/pass_yds/rec_ct/rec_yds/rush_yds now ship from
+    # build_curves_isotonic on the FULL dataset (build set + held-back);
+    # def_pa/def_ya are unchanged, build_curves on the build set only. This
+    # single-dataset/single-method assumption used to hold for every stat -
+    # it no longer does, and the harness must be told, not left to pass
+    # vacuously against a premise the shipped file no longer follows.
     import os
     if not os.path.isdir("data/weekly/2025"):
         pytest.skip("weekly data not present (gitignored)")
-    from sffl.calibrate import build_curves, load_curves
+    held_back_dir = "data/weekly/2025/_held_back"
+    if not os.path.isdir(held_back_dir):
+        pytest.skip("held-back weekly data not present (gitignored)")
+    from sffl.calibrate import build_curves, build_curves_isotonic, load_curves
+
+    ISOTONIC_FULL_DATASET_STATS = {
+        "pass_cmp", "pass_yds", "rec_ct", "rec_yds", "rush_yds"}
+    INTERPOLATED_BUILD_SET_STATS = {"def_pa", "def_ya"}
+
     lg = load_league("leagues/sffl/2026.yaml")
-    lines = []
+    build_set_lines = []
     for pos in ("DST", "K", "RB", "TQB", "WR"):
         p = "data/weekly/2025/%s.csv" % pos
         if os.path.exists(p):
-            lines.extend(load_weekly(p))
-    built = build_curves(lg, lines)
+            build_set_lines.extend(load_weekly(p))
+    held_back_lines = []
+    for pos in ("DST", "TQB", "WR", "TE"):
+        p = "%s/%s.full.csv" % (held_back_dir, pos)
+        if os.path.exists(p):
+            held_back_lines.extend(load_weekly(p))
+    full_dataset_lines = build_set_lines + held_back_lines
+
+    interpolated = build_curves(lg, build_set_lines)
+    isotonic = build_curves_isotonic(lg, full_dataset_lines)
     shipped = load_curves("calibration/2025.yaml")
+
     for stat in shipped:
-        assert len(built[stat]) == len(shipped[stat]), stat
-        for (m1, e1), (m2, e2) in zip(built[stat], shipped[stat]):
+        if stat in ISOTONIC_FULL_DATASET_STATS:
+            built = isotonic[stat]
+        elif stat in INTERPOLATED_BUILD_SET_STATS:
+            built = interpolated[stat]
+        else:
+            pytest.fail("stat %r in the shipped file is not classified into "
+                        "either bundle in this test - update it to match "
+                        "poc/build_calibration.py" % stat)
+        assert len(built) == len(shipped[stat]), stat
+        for (m1, e1), (m2, e2) in zip(built, shipped[stat]):
             assert abs(m1 - m2) < 1e-9 and abs(e1 - e2) < 1e-9, stat

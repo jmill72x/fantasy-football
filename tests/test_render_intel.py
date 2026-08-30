@@ -144,17 +144,26 @@ def test_no_bid_is_ever_named():
 
 
 def test_the_calibration_provenance_matches_the_curve_file():
-    # CALIBRATION_PLAYERS / _PLAYER_WEEKS are typed into intel.py because the
-    # curve file records them in a COMMENT, which yaml.safe_load discards. This
-    # is what stops the two from drifting: if the curves are ever rebuilt from
-    # a wider collection (TODO B - the target is ~120 players), this fails
-    # until the sheet is told.
+    # CALIBRATION_PLAYERS_* / _PLAYER_WEEKS_* are typed into intel.py because
+    # the curve file records them in a COMMENT, which yaml.safe_load discards.
+    # This is what stops the two from drifting: if the curves are ever
+    # rebuilt from a different collection or a different split between the
+    # isotonic and interpolated regimes, this fails until the sheet is told.
+    #
+    # Two regimes since the 2026-08-30 isotonic adoption (see
+    # poc/build_calibration.py) - the header states the isotonic (full
+    # dataset) counts first, then the interpolated (build-set-only) counts.
     with open("calibration/2025.yaml") as fh:
-        header = fh.read(400)
-    m = re.search(r"(\d+) distinct players, (\d+) player-weeks", header)
-    assert m, "calibration/2025.yaml no longer records its own provenance: %r" % header
-    assert intel.CALIBRATION_PLAYERS == int(m.group(1))
-    assert intel.CALIBRATION_PLAYER_WEEKS == int(m.group(2))
+        header = fh.read(600)
+    matches = re.findall(r"(\d+) distinct players, (\d+) player-weeks", header)
+    assert len(matches) == 2, (
+        "calibration/2025.yaml no longer records its own two-regime "
+        "provenance: %r" % header)
+    (iso_players, iso_weeks), (interp_players, interp_weeks) = matches
+    assert intel.CALIBRATION_PLAYERS_ISOTONIC == int(iso_players)
+    assert intel.CALIBRATION_PLAYER_WEEKS_ISOTONIC == int(iso_weeks)
+    assert intel.CALIBRATION_PLAYERS_INTERPOLATED == int(interp_players)
+    assert intel.CALIBRATION_PLAYER_WEEKS_INTERPOLATED == int(interp_weeks)
 
 
 def test_the_sheet_never_prints_a_bare_float():
