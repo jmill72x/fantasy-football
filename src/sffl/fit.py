@@ -24,6 +24,19 @@ DEFAULT_ALIASES = "identity/aliases.yaml"
 DEFAULT_TQB_STARTERS = "identity/tqb-2025-starters.yaml"
 
 
+class SeasonMismatchError(ValueError):
+    """Raised only by load_prices's own season guard - see its docstring.
+
+    A `ValueError` subclass rather than a plain `ValueError` so a caller (the
+    CLI) can convert exactly the guard's own failures into a clean
+    single-line message without also swallowing an unrelated `ValueError` -
+    an alias chain, a bad franchise code, a malformed price cell - raised
+    from elsewhere in the same function, which deserves its traceback rather
+    than being flattened to a single line that cannot locate the offending
+    row.
+    """
+
+
 class PriceMap(dict):
     """dict[canonical name -> price] that also remembers how many rows the
     source CSV held, so a caller can report "n matched of N loaded" instead
@@ -131,7 +144,7 @@ def load_prices(path, alias_path=DEFAULT_ALIASES,
     if season is not None:
         map_season = tqb_starters_season(tqb_starters_path)
         if map_season is None:
-            raise ValueError(
+            raise SeasonMismatchError(
                 "%s carries no 'season:' key, so it cannot be checked against "
                 "the %d prices being loaded. A map with no season used to skip "
                 "this check entirely - which is exactly how the wrong map goes "
@@ -139,14 +152,14 @@ def load_prices(path, alias_path=DEFAULT_ALIASES,
                 "mis-joins or drops every Team QB price. Add 'season: <year>' "
                 "to the map." % (tqb_starters_path, season))
         if map_season != season:
-            raise ValueError(
+            raise SeasonMismatchError(
                 "refusing to load %d prices with the %d Team QB starter map "
                 "(%s). Quarterbacks change franchises between Augusts, so the "
                 "wrong map silently mis-joins or drops every Team QB price."
                 % (season, map_season, tqb_starters_path))
         file_season = prices_season(path)
         if file_season is not None and file_season != season:
-            raise ValueError(
+            raise SeasonMismatchError(
                 "%s declares season %d but %d was asserted. The prices file's "
                 "own season column is direct evidence, unlike the TQB map "
                 "which is only a proxy - this is the mismatch that used to "
