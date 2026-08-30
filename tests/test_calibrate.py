@@ -1,3 +1,4 @@
+import yaml
 import pytest
 
 from sffl.calibrate import build_curves, expected_points, save_curves, load_curves
@@ -5,6 +6,9 @@ from sffl.league import load_league
 from sffl.weekly import WeeklyLine
 
 LG = load_league("leagues/sffl/2026.yaml")
+
+COMMITTED_CURVES_PATH = "calibration/2025.yaml"
+COMMITTED_PROVENANCE_PATH = "calibration/2025.provenance.yaml"
 
 
 def line(pid, week, **stats):
@@ -98,3 +102,41 @@ def test_unknown_stat_in_bands_raises_error():
     with pytest.raises(ValueError) as exc_info:
         build_curves(bad_lg, lines)
     assert "unknown_stat" in str(exc_info.value)
+
+
+def test_every_curve_stat_has_provenance_and_vice_versa():
+    """calibration/2025.yaml and its companion provenance file must never drift apart.
+
+    `calibrate.load_curves` does `{k: [(float(m), float(e)) for m, e in v]
+    for k, v in raw.items()}` and CRASHES on any key whose value is not a
+    list of (mean, expected) pairs - so provenance cannot live inside the
+    curve file itself (see poc/build_calibration.py's module docstring).
+    That makes a companion file the only option, and a companion file can
+    silently drift: a stat added to the curve file with no matching
+    provenance entry, or a stale provenance entry for a stat the curve file
+    no longer has, are exactly the "curve whose provenance is unknown"
+    failure this project keeps finding. This test is the tripwire.
+    """
+    curves = load_curves(COMMITTED_CURVES_PATH)
+    with open(COMMITTED_PROVENANCE_PATH) as fh:
+        provenance = yaml.safe_load(fh)
+
+    curve_stats = set(curves.keys())
+    provenance_stats = set(provenance.keys())
+    assert curve_stats == provenance_stats, (
+        "calibration/2025.yaml and calibration/2025.provenance.yaml name "
+        "different stats: only in curves=%r, only in provenance=%r"
+        % (curve_stats - provenance_stats, provenance_stats - curve_stats))
+
+    for stat, entry in provenance.items():
+        assert entry.get("method"), "provenance for %r has no method" % stat
+        assert entry.get("dataset"), "provenance for %r has no dataset" % stat
+        assert isinstance(entry.get("player_count"), int), (
+            "provenance for %r has no integer player_count" % stat)
+        assert isinstance(entry.get("anchor_count"), int), (
+            "provenance for %r has no integer anchor_count" % stat)
+        # The anchor count is a claim about the curve file itself - verify it,
+        # not just that the field exists.
+        assert entry["anchor_count"] == len(curves[stat]), (
+            "provenance for %r claims %d anchors but the curve file has %d"
+            % (stat, entry["anchor_count"], len(curves[stat])))

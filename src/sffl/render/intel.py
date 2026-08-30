@@ -54,15 +54,24 @@ from sffl.value import _pool_of
 TOP_CLUSTER_DEPTH = 4
 
 # HARDCODED, AND WHY. `calibration/2025.yaml` records its own provenance in a
-# generated comment - "# Data: N distinct players, M player-weeks" - and
+# generated comment - "# N distinct players, M player-weeks" per dataset - and
 # yaml.safe_load throws comments away, so no consumer of that file can read it
 # back. Parsing a comment out of a data file to put a number on a printed page
 # is worse than stating it here: the failure mode of a changed comment format
 # would be a wrong number, not a missing one. `test_the_calibration_provenance
 # _matches_the_curve_file` reads that header and fails if these drift from it,
 # so the file and the page cannot disagree unnoticed.
-CALIBRATION_PLAYERS = 48
-CALIBRATION_PLAYER_WEEKS = 811
+#
+# TWO regimes since the 2026-08-30 isotonic adoption (see
+# docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md and
+# calibration/2025.provenance.yaml for the full per-stat record):
+# pass_cmp/pass_yds/rec_ct/rec_yds/rush_yds are `build_curves_isotonic` on the
+# FULL dataset (build set + previously held-back weeks); def_pa/def_ya are
+# unchanged, `build_curves` on the build set only.
+CALIBRATION_PLAYERS_ISOTONIC = 132
+CALIBRATION_PLAYER_WEEKS_ISOTONIC = 2424
+CALIBRATION_PLAYERS_INTERPOLATED = 48
+CALIBRATION_PLAYER_WEEKS_INTERPOLATED = 811
 
 # REMOVED 2026-08-27: TQB_UNDERPRICED / TQB_OVERPRICED.
 #
@@ -667,12 +676,14 @@ def _model_weakness(f):
     items.append(("Team QB", lead + shape))
 
     items.append(("Curves",
-                  "The scoring calibration behind every projection is built "
-                  "from %d players of 2025 weekly data (%d player-weeks). "
-                  "Widening it further was tried and measured WORSE, so this "
-                  "is the depth that fits best, not the depth we ran out of "
-                  "time to improve."
-                  % (CALIBRATION_PLAYERS, CALIBRATION_PLAYER_WEEKS)))
+                  "The scoring calibration is built two ways. Completions, "
+                  "yards and receptions use a monotone fit over %d players "
+                  "(%d player-weeks); defense points/yards-allowed use a "
+                  "straight-line fit over the original %d players (%d "
+                  "player-weeks) and never reach DST's flat dollar value "
+                  "anyway."
+                  % (CALIBRATION_PLAYERS_ISOTONIC, CALIBRATION_PLAYER_WEEKS_ISOTONIC,
+                     CALIBRATION_PLAYERS_INTERPOLATED, CALIBRATION_PLAYER_WEEKS_INTERPOLATED)))
 
     items.append(("DST sacks",
                   "Defense sack scoring is structurally zeroed in the season "
