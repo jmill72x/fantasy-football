@@ -395,3 +395,84 @@ def test_omitting_the_season_keeps_the_old_permissive_behaviour(tmp_path):
     p = tmp_path / "prices.csv"
     p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
     assert load_prices(str(p)) is not None
+
+
+# --------------------------------------------------------------------------
+# THE ANNOUNCEMENT HALF OF DECISION 2.
+#
+# Verification shipped; the announcement did not. `prices_season` returns None
+# for a file with no `season` column and the guard simply did not fire - no
+# warning, no note, nothing - so the byte-for-byte configuration that
+# manufactured the phantom top-end bias (2025 prices, 2026 map, 2026
+# projections) fitted price = 2.443 * value^0.531 at exit 0 in silence. A
+# check that cannot run must SAY it could not run; its silence is otherwise
+# indistinguishable from a pass.
+# --------------------------------------------------------------------------
+
+COLUMNLESS_PRICES = "data/league/auction-rosters-2025.csv"
+
+
+def test_a_prices_file_with_no_season_column_says_so(tmp_path):
+    from sffl.fit import UnverifiedPricesSeasonWarning, load_prices
+    with pytest.warns(UnverifiedPricesSeasonWarning) as caught:
+        prices = load_prices(COLUMNLESS_PRICES,
+                             tqb_starters_path="identity/tqb-2025-starters.yaml",
+                             season=2025)
+    # It still LOADS - the pre-column files must keep working. What changes
+    # is that the run is no longer silent about what it could not check.
+    assert len(prices) > 100
+    message = str(caught[0].message)
+    assert COLUMNLESS_PRICES in message, "the warning must name the file"
+    assert "2025" in message, "the warning must name the season taken on trust"
+    assert "proxy" in message.lower(), (
+        "the warning must say WHY the TQB map is not evidence of the season")
+
+
+def test_a_prices_file_that_states_its_season_warns_about_nothing():
+    # The complement: a warning that fires on every run is a warning nobody
+    # reads. The 2026 file carries the column, so it is verified, not trusted.
+    import warnings
+
+    from sffl.fit import UnverifiedPricesSeasonWarning, load_prices
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        load_prices("data/league/auction-rosters-2026.csv",
+                    tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)
+    assert not [w for w in caught
+                if issubclass(w.category, UnverifiedPricesSeasonWarning)]
+
+
+def test_no_season_asserted_means_nothing_to_verify_and_nothing_to_warn_about():
+    # The warning is about an ASSERTION that could not be checked. A caller
+    # that asserts nothing (a poc script exploring an unknown file) has made
+    # no claim for this to qualify.
+    import warnings
+
+    from sffl.fit import UnverifiedPricesSeasonWarning, load_prices
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        load_prices(COLUMNLESS_PRICES)
+    assert not [w for w in caught
+                if issubclass(w.category, UnverifiedPricesSeasonWarning)]
+
+
+def test_a_fit_refuses_a_prices_file_that_cannot_state_its_season(tmp_path):
+    # A FIT is the one operation that bakes the pairing into a persisted
+    # artifact later seasons trust without re-deriving it, so for a fit the
+    # warning is not enough. Everything else keeps working (above).
+    from sffl.fit import SeasonMismatchError, load_prices
+    with pytest.raises(SeasonMismatchError) as exc:
+        load_prices(COLUMNLESS_PRICES,
+                    tqb_starters_path="identity/tqb-2025-starters.yaml",
+                    season=2025, require_file_season=True)
+    assert COLUMNLESS_PRICES in str(exc.value)
+    assert "season" in str(exc.value)
+
+
+def test_a_fit_accepts_a_prices_file_that_does_state_its_season():
+    from sffl.fit import load_prices
+    prices = load_prices("data/league/auction-rosters-2026.csv",
+                         tqb_starters_path="identity/tqb-2026-starters.yaml",
+                         season=2026, require_file_season=True)
+    assert len(prices) > 100

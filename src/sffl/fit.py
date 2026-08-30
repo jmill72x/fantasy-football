@@ -11,6 +11,7 @@ ever compare already-canonical names and need no resolver of their own.
 """
 
 import csv
+import warnings
 from typing import Dict
 
 import yaml
@@ -35,6 +36,37 @@ class SeasonMismatchError(ValueError):
     than being flattened to a single line that cannot locate the offending
     row.
     """
+
+
+class UnverifiedPricesSeasonWarning(UserWarning):
+    """The prices file carries no `season` column, so its season is UNVERIFIED.
+
+    Not an error: the two prices files that predate the column
+    (`data/league/auction-rosters-2025.csv`) must keep working. But the
+    verification half of Decision 2 shipped without its announcement half,
+    and a guard that cannot fire and says nothing is indistinguishable from
+    a guard that passed. This is the "says so" - see `load_prices`.
+    """
+
+
+def unverified_season_message(path, season, tqb_starters_path):
+    """The one wording for "this file's season could not be verified".
+
+    Kept here, beside the guard that raises it, so the library warning and
+    the CLI's printed NOTE cannot drift into saying two different things
+    about the same run.
+    """
+    return (
+        "%s carries no 'season' column, so THIS RUN CANNOT VERIFY that these "
+        "prices are from %d. The season is being taken on trust from the Team "
+        "QB starter map (%s), which is only a PROXY for it - the two are "
+        "independent facts and only one of them was checkable here. Pairing "
+        "one season's prices with another season's projections is exactly the "
+        "error that fitted price = 2.443 * value^0.531 against a year-matched "
+        "truth of 0.662, degraded Team QB joins from 21 to 15, and "
+        "manufactured a phantom top-end bias, with every number looking "
+        "plausible. Add a 'season' column to %s to make this verifiable."
+        % (path, season, tqb_starters_path, path))
 
 
 class PriceMap(dict):
@@ -105,7 +137,8 @@ def _load_tqb_starters(path):
 
 
 def load_prices(path, alias_path=DEFAULT_ALIASES,
-                tqb_starters_path=DEFAULT_TQB_STARTERS, season=None):
+                tqb_starters_path=DEFAULT_TQB_STARTERS, season=None,
+                require_file_season=False):
     """Map canonical player key -> price paid.
 
     Three reconciliations, in order, because the roster sheet is hand typed:
@@ -127,6 +160,10 @@ def load_prices(path, alias_path=DEFAULT_ALIASES,
     loading - see the guard below. When omitted, no season check runs at all;
     a caller that genuinely does not know the season (a poc script exploring
     an unknown file) is not forced to assert one.
+
+    `require_file_season` turns "this file cannot state its own season" from a
+    warning into a refusal. `sffl fit-market` sets it, and nothing else does -
+    see the guard below for why the two callers differ.
 
     Returns a `PriceMap` (a `dict` subclass); `.total_rows` on the result is
     the number of priced rows read from `path`, independent of how many of
@@ -158,7 +195,36 @@ def load_prices(path, alias_path=DEFAULT_ALIASES,
                 "wrong map silently mis-joins or drops every Team QB price."
                 % (season, map_season, tqb_starters_path))
         file_season = prices_season(path)
-        if file_season is not None and file_season != season:
+        if file_season is None:
+            # THE ANNOUNCEMENT HALF OF DECISION 2. Verification shipped
+            # without it, so a column-less file simply skipped the check in
+            # silence - and the whole point of the decision was that "the
+            # silence is visible rather than assumed". A guard that cannot
+            # fire must say that it could not fire, or the operator reads
+            # its absence as a pass.
+            #
+            # REFUSED for a FIT, warned about everywhere else. A fit bakes
+            # the pairing into a persisted artifact that later seasons trust
+            # and never re-derive, and the only files `fit-market` can
+            # legitimately be pointed at are ours, which can carry the
+            # column. A `value`/`render` run reprices one board, in front of
+            # an operator who is reading this warning, and must keep working
+            # against the pre-column 2025 file.
+            if require_file_season:
+                raise SeasonMismatchError(
+                    "refusing to FIT from %s: it carries no 'season' column, "
+                    "so nothing here can verify that these prices are from "
+                    "%d - the Team QB starter map (%s) is only a proxy for "
+                    "it. A fit is persisted and trusted by later seasons "
+                    "that will never re-derive it, so an unverifiable "
+                    "pairing must not be baked into one. Add a 'season' "
+                    "column to %s (the 2026 file has one), or fit from a "
+                    "file that has it."
+                    % (path, season, tqb_starters_path, path))
+            warnings.warn(
+                unverified_season_message(path, season, tqb_starters_path),
+                UnverifiedPricesSeasonWarning, stacklevel=2)
+        elif file_season != season:
             raise SeasonMismatchError(
                 "%s declares season %d but %d was asserted. The prices file's "
                 "own season column is direct evidence, unlike the TQB map "
