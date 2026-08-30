@@ -82,8 +82,12 @@ def test_a_starter_map_from_another_season_is_refused_not_quietly_used():
               "--policy", "fit", "--prices", PRICES,
               "--tqb-starters", "identity/tqb-2025-starters.yaml"])
     msg = str(e.value)
-    assert "refusing to value 2026 projections against the 2025" in msg
-    assert "--tqb-starters" in msg
+    # The guard now lives in fit.load_prices (Task 2), not in the CLI, so the
+    # wording changed from "refusing to value... projections" to "refusing to
+    # load... prices" -- but the refusal, and the two years it names, did not.
+    assert "refusing to load 2026 prices" in msg
+    assert "2025" in msg
+    assert "identity/tqb-2025-starters.yaml" in msg
 
 
 def test_est_price_column_appears_when_prices_are_supplied(tmp_path, capsys):
@@ -151,3 +155,104 @@ def test_market_curve_fits_and_populates_est_price(tmp_path, capsys):
     numeric = [v for v in values if v != ""]
     for v in numeric:
         float(v)  # raises if it is not a real number
+
+
+def _strip_season_column(src, dest):
+    """A copy of a prices CSV with its `season` column removed.
+
+    Stands in for data/league/auction-rosters-2025.csv, which predates the
+    column and must keep working. Built by removing the column rather than
+    committing a second column-less fixture, so it cannot drift from the one
+    the rest of these tests fit against.
+    """
+    import csv
+    with open(src, newline="") as fh:
+        reader = csv.DictReader(fh)
+        fields = [f for f in reader.fieldnames if f != "season"]
+        rows = [dict((k, r[k]) for k in fields) for r in reader]
+    with open(dest, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+    return dest
+
+
+def test_a_prices_file_that_cannot_state_its_season_says_so_on_stdout(tmp_path, capsys):
+    # THE HEADLINE DEFECT. `prices_season` returned None for a column-less
+    # file and the guard did not fire - no warning, no note, exit 0 - so
+    # 2025 prices against 2026 projections fitted b=0.531 in silence and a
+    # phantom top-end bias got a code change built to correct it.
+    #
+    # The verification half of Decision 2 shipped; this is the announcement
+    # half. The file must still LOAD (the real 2025 file predates the
+    # column), and the run must SAY it could not check.
+    prices = _strip_season_column(MARKET_FIT_PRICES,
+                                  str(tmp_path / "no_season.csv"))
+    rc = main(["value", "--source", DS, "--file", MARKET_FIT_FIXTURE,
+               "--year", "2026", "--policy", "fit", "--prices", prices,
+               "--tqb-starters", TQB_2026])
+    out = capsys.readouterr().out
+    assert rc == 0, "a column-less file must keep working on value/render"
+    assert "UNVERIFIED PRICES SEASON" in out
+    assert "no_season.csv" in out, "the announcement must name the file"
+    assert "proxy" in out.lower(), (
+        "it must explain that the season is taken on trust from the TQB map")
+    # And it really did price the board - this is an announcement, not a
+    # refusal, so everything downstream of the load must still have run.
+    assert "market curve" in out
+
+
+def test_a_prices_file_that_states_its_season_prints_no_such_note(capsys):
+    # The complement. A banner on every run is a banner nobody reads.
+    rc = main(["value", "--source", DS, "--file", MARKET_FIT_FIXTURE,
+               "--year", "2026", "--policy", "fit", "--prices",
+               MARKET_FIT_PRICES, "--tqb-starters", TQB_2026])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "UNVERIFIED" not in out
+
+
+def _intel_text(xlsx):
+    import openpyxl
+    ws = openpyxl.load_workbook(xlsx)["Key & Intel"]
+    return "\n".join(str(c) for row in ws.iter_rows(values_only=True)
+                     for c in row if c is not None)
+
+
+def test_stdout_and_the_workbook_agree_that_the_prices_season_is_unverified(tmp_path, capsys):
+    # Same class as the cross-season finding, on the other branch of the
+    # condition: stdout printed the UNVERIFIED PRICES SEASON banner while the
+    # workbook asserted "year-matched by construction" - the stronger and
+    # false claim, on the artifact a human reads under time pressure.
+    #
+    # Read off the real .xlsx, because that disagreement is invisible to any
+    # unit test on the facts object.
+    prices = _strip_season_column(MARKET_FIT_PRICES,
+                                  str(tmp_path / "no_season.csv"))
+    xlsx = str(tmp_path / "board.xlsx")
+    rc = main(["render", "--source", DS, "--file", MARKET_FIT_FIXTURE,
+               "--year", "2026", "--policy", "fit", "--prices", prices,
+               "--tqb-starters", TQB_2026, "--xlsx", xlsx])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "UNVERIFIED PRICES SEASON" in out, "stdout half"
+
+    sheet = _intel_text(xlsx)
+    assert "year-matched by construction" not in sheet, (
+        "the workbook must not make a guarantee stdout just said it cannot make")
+    assert "COULD NOT VERIFY" in sheet
+    assert "no_season.csv" in sheet, "the page must name the file it could not check"
+
+
+def test_the_workbook_still_claims_year_matched_when_the_file_says_its_season(tmp_path, capsys):
+    # The complement: the fixture carries a season column, so the guarantee
+    # is real and must still be stated.
+    xlsx = str(tmp_path / "board.xlsx")
+    assert main(["render", "--source", DS, "--file", MARKET_FIT_FIXTURE,
+                 "--year", "2026", "--policy", "fit", "--prices",
+                 MARKET_FIT_PRICES, "--tqb-starters", TQB_2026,
+                 "--xlsx", xlsx]) == 0
+    assert "UNVERIFIED" not in capsys.readouterr().out
+    sheet = _intel_text(xlsx)
+    assert "year-matched by construction" in sheet
+    assert "COULD NOT VERIFY" not in sheet
