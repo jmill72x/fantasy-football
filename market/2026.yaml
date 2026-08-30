@@ -1,0 +1,17 @@
+curve:
+  a: 2.0115481304265863
+  b: 0.6620227660597623
+diagnostics:
+  mae: 4.3392
+  top10_bias: 5.1042
+  top10_mae: 10.0638
+evidence:
+  observations: 130
+  prices_file: data/league/auction-rosters-2026.csv
+  prices_rows: 156
+  projections_source: sources/draftsharks.yaml
+  projections_year: 2026
+  tqb_starters: identity/tqb-2026-starters.yaml
+fitted_on: '2026-08-29'
+policy: starter
+season: 2026
