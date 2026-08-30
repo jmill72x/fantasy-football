@@ -128,3 +128,18 @@ def test_the_committed_2026_artifact_is_pinned():
     # so a pinned test that tolerated drift would defeat its own purpose.
     assert model.curve[0] == 2.0115481304265863, _PIN_FAILURE_HINT
     assert model.curve[1] == 0.6620227660597623, _PIN_FAILURE_HINT
+
+
+def test_the_apply_paths_policy_list_matches_the_fitters():
+    # `market_model._KNOWN_POLICIES` duplicates `fit.POLICIES` on purpose -
+    # importing fit here would drag the whole fitting path (prices, aliases,
+    # the TQB map) into a pure APPLY, which is the separation this module
+    # exists to keep. Duplication is the right trade, but nothing pinned the
+    # two lists together: adding a third policy to `fit` would make `load`
+    # reject a valid artifact the fitter had just written, and the failure
+    # would surface as an unusable model file rather than as a missed edit.
+    from sffl import fit
+    from sffl.market_model import _KNOWN_POLICIES
+    assert _KNOWN_POLICIES == fit.POLICIES, (
+        "market_model._KNOWN_POLICIES and fit.POLICIES have drifted; a policy "
+        "the fitter can choose must be a policy the apply path can load")
