@@ -33,6 +33,27 @@ def test_pooled_curve_is_non_decreasing():
     assert all(ys[i] <= ys[i + 1] + 1e-9 for i in range(len(ys) - 1))
 
 
+def test_pooled_curve_is_non_increasing_for_a_descending_stat():
+    # def_pa's band table pays LESS as the raw value climbs (allowing more
+    # points is worse defense - see pool._band_direction), so its pooled
+    # curve must run the OPPOSITE direction from rush_yds's. This is the
+    # direction that surprised review: the prior version of this test suite
+    # only ever exercised an ascending stat (rush_yds above), so a
+    # regression that assumed every pooled curve rises with the mean would
+    # have gone uncaught.
+    lines = []
+    for i in range(1, 11):
+        for w in range(1, 6):
+            lines.append(_line("d%d" % i, "DST", w, def_pa=2.0 * i * (0.5 + 0.2 * w)))
+    from sffl.league import load_league
+    lg = load_league("leagues/sffl/2026.yaml")
+    curve = build_curves_pooled(lg, lines)["def_pa"]
+    ys = [y for _x, y in curve]
+    assert all(ys[i] >= ys[i + 1] - 1e-9 for i in range(len(ys) - 1))
+    # Not a degenerate flat curve - it actually falls across the range.
+    assert ys[0] > ys[-1] + 1e-9
+
+
 def test_a_zero_mean_player_contributes_no_residuals():
     lines = [_line("z", "RB", w, rush_yds=0.0) for w in range(1, 6)]
     assert _pooled_residuals(lines, "rush_yds") == []
