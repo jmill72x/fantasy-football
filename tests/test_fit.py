@@ -322,16 +322,21 @@ def test_the_2026_prices_pick_starter_over_draftable():
     assert min([starter, draftable], key=top10_cost)["policy"] == "starter"
 
 
-def test_prices_season_reads_the_column_when_present():
-    from sffl.fit import prices_season
-    assert prices_season("data/league/auction-rosters-2026.csv") == 2026
+def test_prices_seasons_reads_the_column_for_THE_WHOLE_FILE():
+    # PLURAL on purpose. The predecessor returned the FIRST non-empty cell
+    # and never read the rest, which reported a whole file's season from one
+    # row. This asserts the real file declares exactly one season across all
+    # 156 of its priced rows - a strictly stronger claim than the old
+    # `prices_season(...) == 2026`, which one correct first row satisfied.
+    from sffl.fit import prices_seasons
+    assert prices_seasons("data/league/auction-rosters-2026.csv") == (2026,)
 
 
-def test_prices_season_is_none_when_the_file_predates_the_column(tmp_path):
+def test_prices_seasons_is_empty_when_the_file_predates_the_column(tmp_path):
     p = tmp_path / "old.csv"
     p.write_text("player_as_written,price\nJA'MARR CHASE,42\n")
-    from sffl.fit import prices_season
-    assert prices_season(str(p)) is None
+    from sffl.fit import prices_seasons
+    assert prices_seasons(str(p)) == ()
 
 
 def test_loading_prices_from_the_wrong_season_is_refused(tmp_path):
@@ -476,3 +481,108 @@ def test_a_fit_accepts_a_prices_file_that_does_state_its_season():
                          tqb_starters_path="identity/tqb-2026-starters.yaml",
                          season=2026, require_file_season=True)
     assert len(prices) > 100
+
+
+# --------------------------------------------------------------------------
+# THE `season` COLUMN'S OWN FAILURE MODE.
+#
+# Adding the column created an affordance: one rosters file accumulating
+# several seasons. `prices_season` read the FIRST non-empty cell and never
+# looked at the rest, so a file whose first row said 2026 and whose remaining
+# 155 rows said 2025 VERIFIED CLEAN - and fit-market --year 2026 persisted
+# a=2.4432 b=0.5308 from 123 observations, the artifact-era curve, into the
+# one file every later season is meant to trust without re-deriving it.
+# --------------------------------------------------------------------------
+
+def _mixed_prices(tmp_path, name="mixed.csv"):
+    """The real 2026 file with every row but the first restamped 2025."""
+    import csv
+    with open("data/league/auction-rosters-2026.csv", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+        fields = list(rows[0].keys())
+    for i, r in enumerate(rows):
+        r["season"] = "2026" if i == 0 else "2025"
+    p = tmp_path / name
+    with open(str(p), "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+    return str(p)
+
+
+def test_prices_seasons_reports_every_season_not_just_the_first_rows(tmp_path):
+    from sffl.fit import prices_seasons
+    assert prices_seasons(_mixed_prices(tmp_path)) == (2026, 2025)
+
+
+def test_prices_seasons_reports_a_partly_filled_column_as_partly_filled(tmp_path):
+    # A file that labels some rows and not others is making a PARTIAL claim,
+    # and a partial claim about which season a fit pairs with must not be
+    # rounded up to a whole one.
+    from sffl.fit import prices_seasons
+    p = tmp_path / "partial.csv"
+    p.write_text("player_as_written,price,season\n"
+                 "JA'MARR CHASE,42,2026\n"
+                 "BROCK BOWERS,14,\n")
+    assert prices_seasons(str(p)) == (2026, None)
+
+
+def test_prices_seasons_ignores_a_trailing_blank_line(tmp_path):
+    # A blank final row must not read as a second, unstated "season" - that
+    # would refuse every file whose author left a newline at the end.
+    from sffl.fit import prices_seasons
+    p = tmp_path / "trailing.csv"
+    p.write_text("player_as_written,price,season\nJA'MARR CHASE,42,2026\n,,\n")
+    assert prices_seasons(str(p)) == (2026,)
+
+
+def test_a_non_uniform_season_column_is_refused_not_verified(tmp_path):
+    # The whole point: this used to pass verification in silence.
+    from sffl.fit import SeasonMismatchError, load_prices
+    mixed = _mixed_prices(tmp_path)
+    with pytest.raises(SeasonMismatchError) as exc:
+        load_prices(mixed, tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)
+    message = str(exc.value)
+    assert "more than one season" in message
+    assert "2026" in message and "2025" in message
+
+
+def test_a_non_uniform_column_is_refused_even_though_the_first_row_matches(tmp_path):
+    # Explicitly the shape the old code accepted: row 1 says exactly what was
+    # asserted. A guard that reads one row cannot tell this from a clean file.
+    import warnings
+
+    from sffl.fit import SeasonMismatchError, load_prices, prices_seasons
+    mixed = _mixed_prices(tmp_path)
+    assert prices_seasons(mixed)[0] == 2026, "row 1 agrees with the assertion"
+    with warnings.catch_warnings():
+        # Nothing here may downgrade to a warning - it is a refusal.
+        warnings.simplefilter("error")
+        with pytest.raises(SeasonMismatchError):
+            load_prices(mixed,
+                        tqb_starters_path="identity/tqb-2026-starters.yaml",
+                        season=2026)
+
+
+def test_a_partly_filled_season_column_is_refused_too(tmp_path):
+    from sffl.fit import SeasonMismatchError, load_prices
+    p = tmp_path / "partial.csv"
+    p.write_text("player_as_written,price,season\n"
+                 "JA'MARR CHASE,42,2026\n"
+                 "BROCK BOWERS,14,\n")
+    with pytest.raises(SeasonMismatchError) as exc:
+        load_prices(str(p), tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)
+    assert "(blank)" in str(exc.value)
+
+
+def test_a_season_column_of_only_blanks_is_the_same_as_no_column(tmp_path):
+    # Not a third, quieter way of skipping the check: it declares nothing,
+    # so it warns exactly as a column-less file does.
+    from sffl.fit import UnverifiedPricesSeasonWarning, load_prices
+    p = tmp_path / "blank.csv"
+    p.write_text("player_as_written,price,season\nJA'MARR CHASE,42,\n")
+    with pytest.warns(UnverifiedPricesSeasonWarning):
+        load_prices(str(p), tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)

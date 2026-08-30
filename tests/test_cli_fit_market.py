@@ -148,3 +148,34 @@ def test_an_unparseable_extract_path_is_announced_not_assumed(tmp_path, capsys):
     ev = load(out).evidence
     assert ev["projections_year"] == 2026
     assert "unverified" in ev["projections_year_source"]
+
+
+def test_a_mixed_season_prices_file_writes_no_artifact(tmp_path):
+    # The defect the `season` column itself created: the first row says 2026,
+    # the other 155 say 2025, and it used to verify clean - fit-market exited
+    # 0 having persisted a=2.4432 b=0.5308 (the artifact-era curve) stamped
+    # `season: 2026`, into the one file every later season is meant to trust.
+    #
+    # Built from the real 156-row 2026 file rather than a toy, because the
+    # run has to get far enough to actually fit before the guard's absence
+    # would show.
+    import csv
+    with open("data/league/auction-rosters-2026.csv", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+        fields = list(rows[0].keys())
+    for i, r in enumerate(rows):
+        r["season"] = "2026" if i == 0 else "2025"
+    mixed = str(tmp_path / "mixed.csv")
+    with open(mixed, "w", newline="") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+
+    out = str(tmp_path / "never.yaml")
+    argv, _ = _args(tmp_path, prices=mixed, out=out)
+    with pytest.raises(SystemExit) as exc:
+        main(argv)
+    assert "more than one season" in str(exc.value)
+    assert not os.path.exists(out), (
+        "a mixed-season file must persist nothing - an artifact written here "
+        "is blessed once and believed by every season after")
