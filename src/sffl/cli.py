@@ -489,8 +489,14 @@ def cmd_render(args):
         # quote a number the board beside it does not support. A fact this run
         # did not produce is reported as not measured, never as a stale
         # constant. See sffl.render.intel.
+        # year=args.year, NOT the league profile's season: this page's
+        # cross-season verdict must be the same verdict stdout printed a few
+        # lines above, and stdout compares against --year. A 2027 board built
+        # from the 2026 profile used to be announced CROSS-SEASON in the
+        # terminal and "year-matched to this board" in the workbook - and the
+        # workbook is what goes to the draft table.
         facts = gather_intel(lg, rows, pool=pool, prices=prices, curve=curve,
-                             market=market)
+                             market=market, year=args.year)
         stats = render_xlsx(lg, rows, args.xlsx, intel=facts)
         print("wrote %s" % args.xlsx)
         # render_xlsx truncates to a hard two-page row budget (derived from

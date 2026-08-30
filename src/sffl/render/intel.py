@@ -102,6 +102,12 @@ class IntelFacts(object):
     # From the league profile - always available.
     total_capital: int
     league_name: str = ""
+    # The season THIS BOARD prices (`gather`'s `year`, i.e. `render --year`),
+    # falling back to the league profile's own season. Not always the same
+    # number: one profile serves several seasons, and a pre-auction 2027
+    # board is built from leagues/sffl/2026.yaml. Everything on this page
+    # that says "this board's season" - including the cross-season verdict -
+    # must read it from here, or the page contradicts the run that made it.
     season: Optional[int] = None
     flat_price: Optional[float] = None
     flat_pools: Tuple[str, ...] = ()
@@ -224,8 +230,19 @@ def _mae_by_pool(pool, prices):
                 for name, v in errs.items() if v)
 
 
-def _market_provenance(lg, prices, market, n_curve_obs):
+def _market_provenance(board_season, prices, market, n_curve_obs):
     """Which model produced this run's curve, and from when.
+
+    `board_season` is the season THIS RUN is pricing (`--year`), not the
+    league profile's own `season:` key. They are normally equal and were once
+    assumed to be: this compared the model against `lg.season`, while the CLI's
+    stdout NOTE compared it against `--year`, so a `--year 2027 --market
+    market/2026.yaml` run announced CROSS-SEASON in the terminal while the
+    workbook that goes to the draft table said "year-matched to this board".
+    The workbook is the artifact somebody drafts from, and it stated the
+    opposite of the truth. One league profile serves several seasons - there
+    is no `leagues/sffl/2027.yaml` - so the profile's season is exactly the
+    wrong thing to compare a model against.
 
     `curve` (a, b) is silent about its own origin - both an in-process fit
     and an applied persisted model produce the exact same tuple shape. Two
@@ -252,14 +269,14 @@ def _market_provenance(lg, prices, market, n_curve_obs):
         fitted_on = getattr(market, "fitted_on", None)
         evidence = getattr(market, "evidence", None) or {}
         n_obs = evidence.get("observations")
-        cross = (season != lg.season) if season is not None else None
+        cross = (season != board_season) if season is not None else None
         return True, season, fitted_on, n_obs, cross
     if prices is not None:
         # Fit in this run, from this run's own prices - by construction the
         # model's season IS this board's season, and it is not a cross-season
         # apply. Nothing here is assumed: load_prices refuses any prices file
         # whose own season or TQB-starter map disagrees with `--year`.
-        return False, lg.season, None, n_curve_obs, False
+        return False, board_season, None, n_curve_obs, False
     # A curve exists (the caller only reaches `gather`'s market block when it
     # does) but neither signal above fired - a --market apply whose loaded
     # MarketModel was not threaded through to `gather`. Still knowable as
@@ -322,7 +339,7 @@ def _history_facts(facts, history):
 
 
 def gather(lg, rows, pool=None, prices=None, curve=None, market=None,
-           history=None, bids_path=DEFAULT_BIDS):
+           history=None, bids_path=DEFAULT_BIDS, year=None):
     """Everything the intel sheet may state about THIS render.
 
     `pool` and `prices` come from the valuation run (`sffl.cli._value_pool`);
@@ -336,9 +353,17 @@ def gather(lg, rows, pool=None, prices=None, curve=None, market=None,
     for an in-process fit or when no curve was fitted at all. It is the only
     way this page can name an applied model's own season, fit date and
     observation count - see `_market_provenance`.
+
+    `year` is the season this run is pricing (`sffl render --year`). It
+    defaults to the league profile's own season, which is right for every
+    same-year run and wrong for exactly the run this branch exists to serve:
+    a pre-auction 2027 board built from the 2026 profile (there is no 2027
+    profile). Getting it from the caller is what keeps the page's
+    cross-season verdict identical to the one stdout prints.
     """
+    board_season = lg.season if year is None else int(year)
     facts = IntelFacts(total_capital=lg.total_capital(),
-                       league_name=lg.name, season=lg.season)
+                       league_name=lg.name, season=board_season)
 
     if lg.flat_priced_pools:
         facts.flat_pools = tuple(sorted(lg.flat_priced_pools))
@@ -374,7 +399,7 @@ def gather(lg, rows, pool=None, prices=None, curve=None, market=None,
     if facts.curve is not None:
         (facts.market_applied, facts.market_season, facts.market_fitted_on,
          facts.market_n_obs, facts.market_cross_season) = _market_provenance(
-            lg, prices, market, facts.n_curve_obs)
+            board_season, prices, market, facts.n_curve_obs)
 
     if history is None:
         try:
