@@ -15,6 +15,7 @@ evidence:
   projections_file_sha256: f1f820f13a0afa42b5d7f872f6ef0a53eb4d505093c7c78f9e1e794b71daf6a2
   projections_source: sources/draftsharks.yaml
   projections_year: 2026
+  projections_year_source: projections file path
   set: null
   tqb_starters: identity/tqb-2026-starters.yaml
 fitted_on: '2026-08-29'
