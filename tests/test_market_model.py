@@ -118,6 +118,17 @@ _PIN_FAILURE_HINT = (
 
 
 def test_the_committed_2026_artifact_is_pinned():
+    # Deliberately refit 2026-08-30: calibration/2025.yaml was regenerated to
+    # adopt build_curves_isotonic (built on the full dataset - build set plus
+    # the previously held-back weeks) for the five board-relevant stats
+    # (pass_cmp, pass_yds, rec_ct, rec_yds, rush_yds). See
+    # docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md
+    # (the gate that cleared) and
+    # .superpowers/sdd/2026-08-30-regularised-calibration-curves/task-5-report.md.
+    # def_pa/def_ya are unchanged (still build_curves on the build set only),
+    # so this is a genuine, measured refit of the curves this model depends
+    # on - not a hand-edit or a stray --force - and these expected values
+    # were updated deliberately to match, per this test's own failure hint.
     model = load(COMMITTED_MARKET_PATH)
 
     assert model.season == 2026, _PIN_FAILURE_HINT
@@ -126,8 +137,8 @@ def test_the_committed_2026_artifact_is_pinned():
     # Exact float equality, not approx: the whole point of persisting rather
     # than re-fitting is that these exact bits reach every render unchanged,
     # so a pinned test that tolerated drift would defeat its own purpose.
-    assert model.curve[0] == 2.0115481304265863, _PIN_FAILURE_HINT
-    assert model.curve[1] == 0.6620227660597623, _PIN_FAILURE_HINT
+    assert model.curve[0] == 2.0482551357513357, _PIN_FAILURE_HINT
+    assert model.curve[1] == 0.6459690793595126, _PIN_FAILURE_HINT
 
 
 def test_the_apply_paths_policy_list_matches_the_fitters():
