@@ -10,7 +10,8 @@ import os
 import sys
 
 from sffl.calibrate import load_curves
-from sffl.fit import DEFAULT_TQB_STARTERS, choose_policy, load_prices
+from sffl.fit import (DEFAULT_TQB_STARTERS, SeasonMismatchError, choose_policy,
+                      load_prices)
 from sffl.identity import NFL_TEAMS, normalize_name
 from sffl.league import load_league
 from sffl.market import assign_expected_prices, fit_price_curve
@@ -52,6 +53,15 @@ def _value_pool(lg, args):
     Returns (pool, curve, prices) on success. Returns None after printing why
     on the one recoverable failure (`--policy fit` without `--prices`) - the
     caller should print nothing further and return 1.
+
+    `--market <path>` APPLIES a model persisted earlier by `fit-market`
+    instead of fitting one from `--prices` in this run. The two are mutually
+    exclusive: one fits, one applies, and asking for both in a single run is
+    the exact confusion this split exists to end. With a model supplied, its
+    persisted policy is used (`choose_policy` never runs, so `--policy fit`
+    needs no prices at all) and its persisted curve is applied directly -
+    `prices` stays None, matching the "no --prices supplied" shape everywhere
+    downstream.
     """
     pool = build_pool(lg, args.source, args.file, args.year, args.set)
 
@@ -61,6 +71,30 @@ def _value_pool(lg, args):
             p.stats["_season_points"] = score_season_calibrated(lg, p, curves)
         pool.sort(key=lambda p: -p.stats["_season_points"])
 
+    market = None
+    if getattr(args, "market", None):
+        if args.prices:
+            raise SystemExit(
+                "--market and --prices are mutually exclusive: --market "
+                "APPLIES a model fitted earlier, --prices FITS one now. "
+                "Passing both is asking to fit and apply in the same run, "
+                "which is the confusion this split exists to end. Use "
+                "--prices with `sffl fit-market` to produce a model, then "
+                "--market to price a board with it.")
+        from sffl.market_model import describe
+        from sffl.market_model import load as load_market
+        market = load_market(args.market)
+        # ANNOUNCED EVERY RUN, and loudly when the seasons differ. A curve
+        # silently older than the board it prices is the failure this split
+        # was built to design out - permitting the cross-season apply is only
+        # safe because it is impossible to do accidentally.
+        print("  " + describe(market))
+        if market.season != args.year:
+            print("  NOTE: this is a CROSS-SEASON apply - a %d model pricing "
+                  "%d projections. That is intended (last year's model of how "
+                  "this room behaves), but it is not a year-matched fit."
+                  % (market.season, args.year))
+
     # Loaded whenever --prices is supplied, under any policy: --policy fit
     # needs it to choose a replacement level, and every policy needs it to
     # fit the market curve (_est_price) below. Without it there is nothing
@@ -69,16 +103,26 @@ def _value_pool(lg, args):
     if args.prices:
         # The guard now lives in fit.load_prices, so it cannot be bypassed by
         # a caller that reaches for the function directly. Converted to
-        # SystemExit here so the CLI keeps its clean single-line failure.
+        # SystemExit here so the CLI keeps its clean single-line failure -
+        # but only for the guard's OWN failure (SeasonMismatchError). Any
+        # other ValueError (a bad alias chain, an unrecognised franchise
+        # code, a malformed price cell) is a genuine data problem and must
+        # keep its traceback so the offending row can be located, not be
+        # flattened to this guard's single-line message.
         try:
             prices = load_prices(args.prices,
                                  tqb_starters_path=args.tqb_starters,
                                  season=args.year)
-        except ValueError as exc:
+        except SeasonMismatchError as exc:
             raise SystemExit(str(exc))
 
     policy = args.policy
-    if policy == "fit":
+    if market is not None:
+        # The persisted policy was chosen from year-matched prices when the
+        # model was fitted, so a pre-auction run needs no price file to know
+        # it - this is the deadlock closing.
+        policy = market.policy
+    elif policy == "fit":
         if not args.prices:
             print("error: --policy fit requires --prices with observed auction prices")
             return None
@@ -121,7 +165,10 @@ def _value_pool(lg, args):
     # _est_price is unaffected either way - assign_expected_prices applies
     # the same flat override to them regardless of what curve was fit.
     curve = None
-    if prices is not None:
+    if market is not None:
+        curve = market.curve
+        assign_expected_prices(lg, pool, curve)
+    elif prices is not None:
         priced = [(p.stats["_dollars"], prices[normalize_name(p.name)])
                   for p in pool if normalize_name(p.name) in prices
                   and _pool_of(p.pos) not in lg.flat_priced_pools]
@@ -320,7 +367,7 @@ def cmd_value(args):
                             n_sources])
         print("\nwrote %s" % args.out)
 
-    if curve is not None:
+    if curve is not None and prices is not None:
         # Restricted to the same non-flat population the curve was fit on
         # (see `priced` above): flat-priced K/DST all land in the $1-2 band
         # at exactly $1 MY$/EST$ regardless of what the curve does, so
@@ -470,11 +517,14 @@ def cmd_fit_market(args):
 
     # season=args.year is what makes this refuse every cross-season
     # combination it can detect - the TQB map's season and the prices file's
-    # own season column must both agree with the projections' year.
+    # own season column must both agree with the projections' year. Only the
+    # guard's own SeasonMismatchError becomes SystemExit here; any other
+    # ValueError (bad alias chain, unrecognised franchise code, malformed
+    # price cell) is a genuine data problem and keeps its traceback.
     try:
         prices = load_prices(args.prices, tqb_starters_path=args.tqb_starters,
                              season=args.year)
-    except ValueError as exc:
+    except SeasonMismatchError as exc:
         raise SystemExit(str(exc))
 
     policy, reports = choose_policy(lg, pool, prices)
@@ -1068,6 +1118,9 @@ def main(argv=None):
                       choices=["starter", "draftable", "fit"])
     val.add_argument("--prices", default=None,
                       help="observed auction prices CSV; required with --policy fit")
+    val.add_argument("--market", default=None,
+                      help="apply a persisted market model (see fit-market); "
+                           "mutually exclusive with --prices")
     val.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
                       help="year-bound map of starting QB name -> franchise code, "
                            "used to join --prices' Team QB rows to the pool "
@@ -1087,6 +1140,9 @@ def main(argv=None):
                       choices=["starter", "draftable", "fit"])
     ren.add_argument("--prices", default=None,
                       help="observed auction prices CSV; required with --policy fit")
+    ren.add_argument("--market", default=None,
+                      help="apply a persisted market model (see fit-market); "
+                           "mutually exclusive with --prices")
     ren.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
                       help="year-bound map of starting QB name -> franchise code, "
                            "used to join --prices' Team QB rows to the pool "

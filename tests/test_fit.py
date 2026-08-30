@@ -301,12 +301,22 @@ def test_loading_prices_from_the_wrong_season_is_refused(tmp_path):
     # HOLE 1: this configuration used to run to completion and silently
     # refit the artifact-era curve. The prices file now states its own
     # season, so the lie is detectable rather than proxied by the TQB map.
+    #
+    # The TQB map here is deliberately MATCHED (2026) so the map-season check
+    # passes cleanly and execution actually reaches the file-season check -
+    # only the prices file lies. That is the exact configuration that used
+    # to run to completion: mismatched prices with a matched map. Asserting
+    # on the distinctive "declares season" wording (rather than a bare year
+    # substring any of the three guards could produce) is what pins this
+    # test to the file-season check specifically.
     from sffl.fit import load_prices
     p = tmp_path / "prices.csv"
     p.write_text("player_as_written,price,season\nJA'MARR CHASE,42,2025\n")
     with pytest.raises(ValueError) as exc:
-        load_prices(str(p), season=2026)
-    assert "2025" in str(exc.value) and "2026" in str(exc.value)
+        load_prices(str(p), tqb_starters_path="identity/tqb-2026-starters.yaml",
+                    season=2026)
+    assert "declares season 2025" in str(exc.value)
+    assert "2026" in str(exc.value)
 
 
 def test_a_tqb_map_with_no_season_key_is_refused_when_a_season_is_asserted(tmp_path):
