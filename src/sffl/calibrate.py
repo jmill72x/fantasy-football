@@ -71,6 +71,49 @@ def build_curves(lg, lines, min_weeks=MIN_WEEKS):
     return curves
 
 
+def _pava(points):
+    """Pooled Adjacent Violators: the least-squares monotone fit to `points`.
+
+    `points` is [(x, y), ...] sorted by x. Returns the same x's with a
+    non-decreasing y. Where the input violates monotonicity, the violating run
+    is replaced by its average - which is exactly the regularisation this is
+    for: a dip caused by one player's noisy season gets pooled with its
+    neighbours instead of being drawn through.
+
+    Pure stdlib; numpy and scipy are not installed and must not be added.
+    """
+    blocks = []  # (sum_y, weight, last_x_index)
+    for i, (_x, y) in enumerate(points):
+        blocks.append([float(y), 1.0, i])
+        while len(blocks) > 1 and blocks[-2][0] / blocks[-2][1] > blocks[-1][0] / blocks[-1][1]:
+            s2, w2, _ = blocks.pop()
+            blocks[-1][0] += s2
+            blocks[-1][1] += w2
+            blocks[-1][2] = i
+    out = []
+    idx = 0
+    for total, weight, _last in blocks:
+        avg = total / weight
+        for _ in range(int(weight)):
+            out.append((points[idx][0], avg))
+            idx += 1
+    return out
+
+
+def build_curves_isotonic(lg, lines, min_weeks=MIN_WEEKS):
+    """Same input as build_curves, but fitted monotone rather than interpolated.
+
+    WHY. build_curves draws straight lines through every player's point, so each
+    additional player gives the curve one more noisy season to chase - which is
+    why adding the held-back data made it worse. Monotonicity is a regulariser
+    that costs nothing in truth: band() is non-decreasing, so E[band(X)] is
+    non-decreasing in E[X], and a curve that respects that cannot follow a dip
+    that only noise produced.
+    """
+    raw = build_curves(lg, lines, min_weeks)
+    return dict((stat, _pava(pairs) if pairs else []) for stat, pairs in raw.items())
+
+
 def expected_points(curve, mean):
     """Linear interpolation over the curve, clamped at both ends."""
     if not curve:
