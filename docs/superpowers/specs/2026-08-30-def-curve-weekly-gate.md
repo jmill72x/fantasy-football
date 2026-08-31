@@ -92,3 +92,40 @@ underpowered one.
    answer: another season of weekly data.
 3. **A candidate clears on one fold count and not the other.** Report both, adopt nothing, and
    record the instability.
+
+---
+
+## CORRECTION, 2026-08-30 — the sample is 22, not 26
+
+The repo owner asked why the count was 26 rather than 32. Checking rather than answering from
+memory: **it is 22.** The 4 defenses in the build set are a SUBSET of the 22 held-back ones, not
+additional to them — the overlap is all four, so the union is 22.
+
+```
+build set : 4 distinct (17 weeks each)
+held back : 22 distinct
+overlap   : 4  (all of them)
+union     : 22
+```
+
+Every statement of "26" above this line is wrong, including the one used to derive the
+threshold. Left in place rather than edited, so the correction is visible.
+
+**Consequence for the gate.** Spearman's standard error at n=22 is 1/sqrt(21) ≈ **0.218**, not
+the ≈0.20 quoted. The 0.15 threshold therefore sits BELOW one standard error, making it a
+weaker bar relative to noise than intended — so a bare clear at 0.15 is LESS meaningful, not
+more.
+
+**The threshold is NOT being raised.** Moving it after learning the sample size is the same
+error as moving it after seeing results, and this project has been burned by that once already.
+It stands at 0.15. The real protection was never the arithmetic: it is conditions 3 and 4 —
+the result must hold under both fold counts AND survive dropping each defense in turn — and
+those do not depend on the standard error at all. A candidate that clears 0.15 but fails either
+is discarded, exactly as written.
+
+**Why 22 and not 32, and what would fix it.** No principled reason. The August scrape captured
+22 of the 32 defenses — its own README records 84 players across WR/TE/DST/TQB, so it was a
+bounded pull rather than a filtered one. The missing 10 are not unavailable; nobody fetched
+them. Scraping them would take n from 22 to 32, cutting the standard error to about 0.18 —
+still not enough to resolve a small difference, but a real improvement, and the single cheapest
+thing that would make this question answerable.
