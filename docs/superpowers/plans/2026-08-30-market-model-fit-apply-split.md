@@ -339,6 +339,19 @@ which means editable, and an edited file never went through the fitter."
   - `fit.load_prices(path, alias_path=DEFAULT_ALIASES, tqb_starters_path=DEFAULT_TQB_STARTERS, season=None)` — **new keyword** `season`. When given, every season signal must agree with it.
   - `fit.prices_season(path)` → `int` or `None` — the season the CSV declares, if it carries a `season` column.
 
+> **CORRECTED 2026-08-30 (docs audit) — this interface is NOT what shipped, and the
+> difference is load-bearing, not cosmetic.** The function is
+> **`fit.prices_seasons(path)` — PLURAL** — and it returns **every distinct season the CSV
+> declares**, in first-seen order, not one `int` or `None`. The singular version specified
+> here was implemented, then found to be a real defect and replaced: it returned the FIRST
+> non-empty `season` cell and never looked at the rest, so a file whose first row said 2026
+> and whose remaining 155 rows said 2025 verified clean, and `fit-market --year 2026` wrote
+> an artifact stamped `season: 2026` carrying `a=2.4432 b=0.5308` from 123 observations —
+> the artifact-era curve, blessed once and believed by every season after. `src/sffl/fit.py`
+> carries the full reasoning on `prices_seasons`' own docstring ("PLURAL, and that is the
+> whole contract"). **Do not copy the singular signature, or the two test snippets naming
+> `prices_season` further down this plan, into new code.**
+
 **This closes all three holes.** Read the "three holes" section above before starting.
 
 - [ ] **Step 1: Add the season column to the 2026 prices file**

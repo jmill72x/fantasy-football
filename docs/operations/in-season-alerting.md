@@ -178,17 +178,35 @@ degraded and exits non-zero.
 
 ## "The alert lists players under NOT EVALUATED"
 
-Working as intended, and deliberately not phrased as advice. The projections page this
-job captures covers **RB/WR/TE only**, while CBS starts eight players, so the Team QB,
-the kicker and the defense are never scored and cannot appear in the optimal lineup. They
-used to fall out of the START/SIT diff into the SIT column every single week, which read
-as "bench your kicker". They are now named in their own section instead. Two different
-things are reported there and the distinction is the point:
+Working as intended, and deliberately not phrased as advice. Players that could not be
+scored used to fall out of the START/SIT diff into the SIT column every single week, which
+read as "bench your kicker". They are now named in their own section instead.
 
-- *Their position is not in the projections page this job captures* - a limit of the
-  tool, no reflection on the player. Expected every week for TQB/K/DST.
-- *Their position IS captured and they still had no projection* - a **data problem**.
-  Check the projections capture; a rostered RB/WR/TE should have a row.
+**Updated 2026-08-30 (full position coverage).** This section used to say the job captures
+"RB/WR/TE only", so "the Team QB, the kicker and the defense are never scored" and a
+TQB/K/DST line here is "expected every week". **That is no longer true and should not be
+used to dismiss one.** `sffl alert` now captures **four** pages - `RB-WR-TE`, `TQB`, `K`
+and `DST`, all four groups defined in `sources/cbs-weekly.yaml` - and scores all eight
+starting slots. A kicker under NOT EVALUATED is now a signal, not the weekly norm.
+
+**Four** distinct things are reported there, and telling them apart is the whole point of
+the section:
+
+- *Their position is not in the projections page this job captures* - a **permanent**
+  scope limit, no reflection on the player. With all four groups wired, no position on a
+  legal CBS roster should land here any more; if one does, a group is missing from
+  `sources/cbs-weekly.yaml`.
+- *Their position IS ordinarily captured, but that page failed to capture or parse on this
+  run* - **transient, this-run-only**. The digest also carries a `PROJECTIONS DEGRADED`
+  note. Check back next run; if it repeats, read `logs/alert-<kind>.err`.
+- *Their position IS captured, that page succeeded, and they still had no projection* - a
+  **data problem**. Check the projections capture; a rostered player should have a row.
+- *The roster row itself was ambiguous* - a **roster-parsing** problem, not a projections
+  problem at all: two roster rows resolved to the same identity key.
+
+The four reasons are `POSITION_NOT_CAPTURED`, `PROJECTION_PAGE_FAILED`,
+`PROJECTION_MISSING` and `ROSTER_NAME_AMBIGUOUS` in `src/sffl/alert.py`, which carries the
+full rationale for keeping them distinct.
 
 ## "The roster is wrong" (wrong manager's team)
 

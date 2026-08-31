@@ -33,13 +33,21 @@ interpolating 3.
 
 Held-back data available: `TQB.full.csv` 544 rows / **32 players**, `DST.full.csv` 374 / **22**,
 `WR.full.csv` 491 / **29**, `TE.full.csv` 204 / **12**. So `pass_*` can reach 36 players and
-
-**Corrected 2026-08-30 — every count in this section was inflated by one duplicate-entity
-id per file:** shipped/build-set is **46 players** (not 48), `rush_yds`'s build-set RB
-count is **34** (not 36), `TQB.full.csv` is **31 players** (not 32), `DST.full.csv` is
-**21** (not 22), `WR.full.csv` is **28** (not 29); `TE.full.csv`'s 12 is unaffected. See
-`NEXT.md`'s dedup note and `data/weekly/2025/_held_back/README.md`'s CORRECTION section.
 `def_*` 26.
+
+**Corrected 2026-08-30 — every count in the paragraph above was inflated by one
+duplicate-entity id per file.** (A previous correction pass inserted this block in the
+MIDDLE of that sentence, splitting "`pass_*` can reach 36 players and" from "`def_*` 26.";
+the sentence is rejoined and the block moved below it.) Real, deduped counts:
+shipped/build-set is **46 players / 777 player-weeks** (not 48/811); `rush_yds`'s build-set
+RB count is **34** (not 36); `TQB.full.csv` is **31 players / 527 rows** (not 32/544);
+`DST.full.csv` is **21 / 357** (not 22/374); `WR.full.csv` is **28 / 474** (not 29/491);
+`TE.full.csv`'s 12 / 204 is unaffected. So `pass_*` reaches **31**, not 36, and `def_*`
+reaches **21**, not 26 — the "26" was itself already wrong before the dedup fix (the 4
+build-set defenses are a SUBSET of the held-back ones, not additional to them; see
+`docs/superpowers/specs/2026-08-30-def-curve-weekly-gate.md`, which corrects 26 → 22 → 21
+in sequence). See `NEXT.md`'s dedup note and
+`data/weekly/2025/_held_back/README.md`'s CORRECTION section.
 
 **Report every stat separately. Never collapse the result to a single count** — that is
 precisely what hid the split last time.
