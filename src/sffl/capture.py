@@ -120,8 +120,9 @@ def _prefix_ids(full_text, rows):
     with an id at all. Losing one row's id to an unexpected layout quirk
     is far cheaper than losing (or corrupting) the whole page.
 
-    THE PREFIX LANDS RIGHT AFTER THE LAST NEWLINE IN THE ROW'S OWN TEXT,
-    not at its literal first character - verified necessary live,
+    THE PREFIX LANDS RIGHT AT THE START OF THE LAST NON-BLANK LINE IN THE
+    ROW'S OWN TEXT, not at its literal first character - verified necessary
+    live,
     2026-08-30: a `<tr>`'s `innerText` can start with a hidden cell's
     rendered content (whitespace, OR - confirmed on a real page, review
     round 1 - a short non-blank label like an action button's "Add")
@@ -141,11 +142,30 @@ def _prefix_ids(full_text, rows):
     the first non-blank segment and insert there, re-orphaning the id
     exactly as before, SILENTLY (no exception, no warning - a page in that
     shape parses every row with `player_id == ""` and nothing says so).
-    Anchoring on the LAST newline instead does not need to know or guess
-    WHAT is in any leading segment - blank, "Add", or anything else - it
-    is content-agnostic and correct for every shape observed so far, and a
-    row with no embedded newline at all (the ordinary case, no quirk)
-    still gets offset 0, unchanged from inserting at the literal start.
+    Anchoring on the START of the LAST NON-BLANK line instead does not need
+    to know or guess WHAT is in any leading segment - blank, "Add", or
+    anything else - it is content-agnostic and correct for every shape
+    observed so far, and a row with no embedded newline at all (the
+    ordinary case, no quirk) still gets offset 0, unchanged from inserting
+    at the literal start.
+
+    THIS MUST BE THE LAST NON-BLANK LINE, NOT SIMPLY THE LAST NEWLINE:
+    review round 2 caught the mirror-image bug an earlier version had - a
+    row's real content followed by a TRAILING empty or whitespace-only
+    cell (`"\\tChargers\\t18.4\\n"`, or `"\\tChargers\\t18.4\\n "`) puts a
+    "\\n" AFTER the content, so anchoring on the literal last "\\n" lands
+    the prefix past the row's own content entirely - either onto the START
+    OF THE NEXT ROW's text (a silent WRONG-PLAYER join: the id remains
+    present and unique, so neither `ID COVERAGE LOST` nor a duplicate-id
+    warning fires) or onto a trailing blank line of this row's own text
+    (a silent, total loss of this row's id - caught by `cbs_weekly`'s
+    unmatched-line watchdog but SILENT in `cbs_roster`, exactly as
+    described above for an all-blank row). Skipping backward past any
+    trailing blank line(s) to the last line that actually has content
+    fixes both: the row with no trailing quirk is unaffected (its last
+    line already has content, so behavior is unchanged), and a row with a
+    trailing blank line gets the prefix anchored on its real content,
+    never on a neighbor's.
 
     A ROW WHOSE OWN TEXT IS BLANK ON EVERY LINE (no real content anywhere,
     a genuinely degenerate row) IS SKIPPED ENTIRELY, not merely un-offset.
@@ -171,7 +191,16 @@ def _prefix_ids(full_text, rows):
         idx = full_text.find(row_text, search_from)
         if idx == -1:
             continue
-        offset = row_text.rfind("\n") + 1  # 0 when there is no "\n" at all
+        # Anchor on the START of the LAST NON-BLANK line, not merely the
+        # last "\n" - a trailing empty/whitespace-only cell puts a "\n"
+        # AFTER the real content, and anchoring on that literal last "\n"
+        # would land the prefix past the row's own content (see docstring).
+        lines = row_text.split("\n")
+        last_nonblank = 0
+        for i, line in enumerate(lines):
+            if line.strip():
+                last_nonblank = i
+        offset = sum(len(l) + 1 for l in lines[:last_nonblank])
         content_idx = idx + offset
         pieces.append(full_text[cursor:content_idx])
         pieces.append("id=%s\t" % row["id"])

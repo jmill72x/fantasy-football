@@ -403,12 +403,15 @@ def test_a_raw_roster_team_code_does_not_double_list_a_starter(
     assert code == 0
     slots_section = out[out.index("BEST LINEUP"):]
     assert "TQB    Chargers" in slots_section
-    # The core assertion: never in BOTH columns of the diff.
+    # The core assertion: never in BOTH columns of the diff. Unconditional -
+    # `sit_sit_block.split("SIT", 1)` always returns two pieces (the second
+    # is "" when "SIT" is absent, which trivially satisfies the assertion
+    # rather than skipping it), so this no longer needs to be guarded behind
+    # "did both column headers even appear".
     start = out.index("START / SIT vs your current CBS lineup:")
     sit_sit_block = out[start:out.index("\n\n", start)]
-    if "START" in sit_sit_block and "SIT" in sit_sit_block:
-        start_col, sit_col = sit_sit_block.split("SIT", 1)
-        assert "Chargers" not in start_col or "Chargers" not in sit_col
+    start_col, sit_col = sit_sit_block.split("SIT", 1)
+    assert "Chargers" not in start_col or "Chargers" not in sit_col
     # And no phantom recommendation to bench/start the same real player.
     assert sit_sit_block.count("Chargers") <= 1
 
