@@ -35,6 +35,7 @@ NO TEST HERE REACHES THE NETWORK OR LAUNCHES A BROWSER: `sffl.capture.capture`
 is monkeypatched exactly as `test_cli_alert.py` does it.
 """
 
+import re
 import shutil
 
 import pytest
@@ -480,7 +481,7 @@ def test_the_same_team_rostered_for_tqb_and_dst_never_silently_loses_a_slot(
     # rename that only changed the display name, leaving team "NE", would
     # NOT be a genuine collision under the fuller (name, pos, team) key -
     # the two rows would already differ by team).
-    collided.write_text(text.replace("Patriots DST • NE ", "Chargers DST • LAC "))
+    collided.write_text(_rename_patriots_dst_to_chargers(text))
     alert_env.set_path("roster", collided)
 
     code, out = alert_env.run(capsys)
@@ -508,7 +509,7 @@ def test_a_roster_collision_does_not_affect_an_unambiguous_teammate(
     collided = tmp_path / "roster_collision.txt"
     with open(ROSTER_FIXTURE) as fh:
         text = fh.read()
-    collided.write_text(text.replace("Patriots DST • NE ", "Chargers DST • LAC "))
+    collided.write_text(_rename_patriots_dst_to_chargers(text))
     alert_env.set_path("roster", collided)
 
     code, out = alert_env.run(capsys)
@@ -609,3 +610,177 @@ def test_a_residual_projection_duplicate_is_loud_and_degrades_the_run(
     # And the digest still produced a real, usable lineup - a residual
     # duplicate degrades the run, it does not blank it out.
     assert "BEST LINEUP" in out
+    # Minor review fix (c): the pushed body must carry this too, not only
+    # stdout - see test_the_degraded_banner_is_in_the_pushed_body... above
+    # for the same requirement on a group-capture failure.
+    assert len(alert_env.sent_calls) == 1
+    pushed_body = alert_env.sent_calls[0][2]
+    assert "residual projection duplicate" in pushed_body
+    assert "Ladd McConkey" in pushed_body
+
+
+# --- Task 3b: CBS player ids as the real CBS ↔ CBS join key ----------------
+
+def _rename_patriots_dst_to_chargers(text):
+    """Rename the fixture's real "Patriots DST • NE " starter row to
+    "Chargers DST • LAC ", reproducing a manager who rostered the SAME
+    real NFL team for both the TQB and DST slots.
+
+    The row's id is rewritten too - from Patriots' own real id (1931) to
+    the REAL Chargers DST id (1924), which is what `tests/fixtures/
+    cbs_weekly_dst.txt` (Task 3b regenerated both fixtures from the SAME
+    live capture, 2026-08-30) actually carries for that row. Carrying
+    Patriots' id forward unchanged would attach the WRONG entity's id to a
+    row that now DISPLAYS a different team - `identity.resolve_key` trusts
+    an id over the (renamed) composite fields, so it would look up
+    Patriots' real projection by id 1931 and never find "Chargers DST" at
+    all (UNFILLED, not resolved) - a mismatch a real capture could never
+    produce, since both pages' ids for the SAME entity are pulled from the
+    SAME `playerpage/<id>` link mechanism and always agree. Using the real
+    id 1924 keeps this reproduction internally consistent AND upgrades what
+    it proves: the Chargers TQB+DST case (Task 3's original bug) now
+    resolves via the id join, one step stronger than the composite
+    fallback it required before this task."""
+    return text.replace(
+        "id=1931\t\tDST\tPatriots DST • NE \t",
+        "id=1924\t\tDST\tChargers DST • LAC \t")
+
+
+_LEADING_ID = re.compile(r"^id=\d+\t")
+
+
+def _strip_any_id_prefix(line):
+    """Remove a leading "id=<digits>\\t" prefix, if `line` already has one.
+
+    Several fixtures now carry real ids from a live capture (Task 3b) - a
+    test that wants to attach its OWN synthetic id to a fixture row must
+    strip whatever real one is already there first, or the two concatenate
+    into a malformed double prefix that fails to parse at all.
+    """
+    return _LEADING_ID.sub("", line)
+
+
+def _replace_line_containing(text, needle, new_line):
+    lines = text.splitlines()
+    found = False
+    for i, line in enumerate(lines):
+        if needle in line:
+            lines[i] = new_line
+            found = True
+            break
+    assert found, "no line contains %r" % needle
+    return "\n".join(lines) + "\n"
+
+
+def test_a_roster_row_matches_a_projection_by_id_even_when_names_disagree(
+        alert_env, capsys, tmp_path):
+    """THE ID PATH, proven to matter rather than merely present: CBS
+    sometimes spells the same player's name differently across its own
+    pages (this project already normalizes punctuation for exactly that
+    reason) - here the projections page spells the roster's Ja'Marr Chase
+    as "Jamarr C.", a mismatch `identity.normalize_name` does NOT paper
+    over. The (name, team, pos) composite key would therefore fail to
+    match these two rows at all; the shared CBS id must still resolve them
+    to the SAME real player and score him at his real, unmistakable line
+    (8.01 pts, not zero and not "no projection")."""
+    with open("tests/fixtures/cbs_weekly_tab_rbwrte.txt") as fh:
+        proj_text = fh.read()
+    proj_text = _replace_line_containing(
+        proj_text, "Ja'Marr Chase",
+        "id=2966320\t\tTeam I...\tJamarr C. WR • CIN \tTB\t17\t6\t97\t96\t1\t"
+        "0.2\t1.1\t5.5\t0.0\t10.6\t7.3\t90.8\t12.4\t0.6\t0.0\t8.01")
+    proj = tmp_path / "rbwrte_id_name_mismatch.txt"
+    proj.write_text(proj_text)
+    alert_env.set_path("RB-WR-TE", proj)
+
+    with open(ROSTER_FIXTURE) as fh:
+        roster_text = fh.read()
+    roster_text = _replace_line_containing(
+        roster_text, "Ja'Marr Chase",
+        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t")
+    roster = tmp_path / "roster_id_name_mismatch.txt"
+    roster.write_text(roster_text)
+    alert_env.set_path("roster", roster)
+
+    code, out = alert_env.run(capsys)
+    assert code == 0
+    slots_section = out[out.index("BEST LINEUP"):]
+    # Scored under the PROJECTIONS page's own spelling - the id resolved
+    # the roster pick to this row, not a name-based match (which would have
+    # failed and left him unevaluated/data-problem instead).
+    assert "Jamarr C." in slots_section
+    assert "PROJECTIONS DEGRADED" not in out
+    # The real assertion the id path buys: he is not reported as
+    # unevaluated/a data problem. (The cosmetic START/SIT name diff below
+    # BEST LINEUP is a separate, purely-display comparison that is still
+    # name-based - see alert._start_sit_diff - and is out of this task's
+    # scope; it is not what this test is about.)
+    if "NOT EVALUATED for start/sit" in out:
+        unevaluated_section = out[out.index("NOT EVALUATED for start/sit"):]
+        assert "Chase" not in unevaluated_section.split("\n\n")[0]
+
+
+def test_two_same_name_team_position_rows_are_disambiguated_by_different_ids(
+        alert_env, capsys, tmp_path):
+    """THE RESIDUAL COLLISION THE COMPOSITE KEY COULD NEVER RESOLVE: two
+    rows identical on name, team, AND position (the one case
+    `_merge_projection_groups`'s own docstring names as unresolvable by
+    that key alone) - here told apart because they carry DIFFERENT CBS
+    ids. No warning, no degradation: this is the id path succeeding where
+    the composite fallback structurally cannot."""
+    with open("tests/fixtures/cbs_weekly_tab_rbwrte.txt") as fh:
+        proj_text = fh.read()
+    mcconkey_line = next(l for l in proj_text.splitlines()
+                         if "Ladd McConkey" in l)
+    # The fixture's own McConkey row already carries a REAL id (Task 3b
+    # regenerated it from a live capture) - strip it first so this test's
+    # own synthetic ids are the only ones on either constructed row.
+    mcconkey_content = _strip_any_id_prefix(mcconkey_line)
+    id_a = "id=1111111\t" + mcconkey_content
+    id_b = "id=2222222\t" + mcconkey_content
+    proj_text = proj_text.replace(mcconkey_line, id_a) + id_b + "\n"
+    proj = tmp_path / "rbwrte_two_ids_same_everything.txt"
+    proj.write_text(proj_text)
+    alert_env.set_path("RB-WR-TE", proj)
+
+    with open(ROSTER_FIXTURE) as fh:
+        roster_text = fh.read()
+    roster_text = _replace_line_containing(
+        roster_text, "Ladd McConkey",
+        "id=1111111\t\tWR\tLadd McConkey WR • LAC \tARI\t")
+    roster = tmp_path / "roster_two_ids.txt"
+    roster.write_text(roster_text)
+    alert_env.set_path("roster", roster)
+
+    code, out = alert_env.run(capsys)
+    assert code == 0
+    assert "WARNING" not in out
+    assert "residual projection duplicate" not in out
+    assert "BEST LINEUP" in out
+
+
+def test_two_rows_sharing_the_same_id_are_still_a_loud_residual_collision(
+        alert_env, capsys, tmp_path):
+    """THE ID COLLISION ITSELF IS NOT SILENTLY TRUSTED. Two rows claiming
+    the SAME CBS id (a genuine data anomaly CBS itself would presumably
+    never produce, but this project never assumes a heuristic - or an id -
+    holds without checking) must still be reported exactly like a
+    composite-key residual duplicate: named, degraded, in the pushed body,
+    non-zero exit."""
+    with open("tests/fixtures/cbs_weekly_tab_rbwrte.txt") as fh:
+        proj_text = fh.read()
+    mcconkey_line = next(l for l in proj_text.splitlines()
+                         if "Ladd McConkey" in l)
+    id_line = "id=5555555\t" + _strip_any_id_prefix(mcconkey_line)
+    proj_text = proj_text.replace(mcconkey_line, id_line) + id_line + "\n"
+    proj = tmp_path / "rbwrte_duplicate_id.txt"
+    proj.write_text(proj_text)
+    alert_env.set_path("RB-WR-TE", proj)
+
+    code, out = alert_env.run(capsys)
+    assert code == 1
+    assert "residual projection duplicate" in out
+    assert "Ladd McConkey" in out
+    assert "BEST LINEUP" in out
+    assert len(alert_env.sent_calls) == 1
+    assert "residual projection duplicate" in alert_env.sent_calls[0][2]

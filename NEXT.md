@@ -20,37 +20,48 @@ monotone-envelope fix). See the status table below and "What works today."
 and score all eight lineup slots, not five - see `docs/superpowers/specs/
 2026-08-30-full-position-coverage.md` and the plan alongside it.
 
-**THE MERGE/LOOKUP IDENTITY KEY IS A HEURISTIC, NOT A STABLE ID - record this so it is not
-re-discovered the hard way.** Merging TQB/K/DST meant a projection row and a roster row can
-now legitimately share a display name (CBS's TQB and DST pages both use the NFL TEAM
-NICKNAME as a row's "player name" - "Chargers" is a genuine row on both), and separately,
-two different real NFL players can share a name at the same position on different teams
-(this has actually happened - two players both named Mike Williams, both WRs, in the same
-season). `sffl.identity.player_key`'s (name, team, pos) triple - already used by every
-vendor source in this project - is what `_merge_projection_groups` and `_cmd_alert`'s own
-by_key now key on for the weekly path too, and `cbs_roster.parse_lineup_rows` carries a
-roster row's own (name, slot, team) so it is never collapsed by name alone. **This triple
-is a strong disambiguator, found sufficient for every real case encountered so far, but it
-is NOT provably unique** - nothing stops two same-named players at the same position on the
-SAME team from existing in CBS's data (a churn artifact, a data error). Both
-`_merge_projection_groups` and `_cmd_alert` detect a residual collision on this key and
-report it loudly (a WARNING, the pushed alert body, and a non-zero exit) rather than
-silently keeping one row and dropping the other - but they cannot MAGICALLY resolve it,
-because there is no fourth field visible on these pages to disambiguate with.
+**TASK 3b (2026-08-30) CLOSED THE CBS ↔ CBS IDENTITY GAP WITH REAL CBS PLAYER IDs -
+the composite key below is now only the FALLBACK, not the primary mechanism.**
+`sffl.capture.capture` no longer saves `page.inner_text("body")` verbatim: it pairs each
+`<tr>` it can with its own `playerpage/<id>` link (`tr a[href*='playerpage/']`) and
+prefixes that row's saved text with `id=<id>\t` (see `capture._prefix_ids`/
+`_capture_page_text`). `cbs_weekly.parse` and `cbs_roster.parse_lineup_rows` strip and
+carry that id onto `PlayerProjection.player_id`/`RosterRow.player_id`; `identity.
+resolve_key(player_id, name, team, pos)` is the join every CBS ↔ CBS lookup in
+`_merge_projection_groups` and `_cmd_alert` now uses - a real id when BOTH sides have
+one, `player_key`'s (name, team, pos) composite as the documented fallback otherwise.
+**A genuine surprise verified live 2026-08-30, correcting an assumption in this task's own
+brief: TQB and DST rows get an id too, not just individual players** - CBS gives each
+team's TQB unit and DST unit its own synthetic `playerpage/<id>` (Chargers' TQB unit is
+`1974`, its DST unit a DIFFERENT `1924` - never a shared team id that would re-collide the
+two). On a real live capture, 100/100 RB-WR-TE rows, 98/98 K, 32/32 TQB, and 32/32 DST all
+carried one; only page furniture and pre-existing hand-saved fixtures fall back to the
+composite. The Chargers TQB+DST case was re-verified live end to end: both slots resolve
+independently via id, no residual collision, no degradation.
 
-**THE DURABLE FIX WOULD BE CBS's OWN STABLE PLAYER IDs**, not a composite of visible
-fields. The roster page's player links carry one (`players/playerpage/<id>`, e.g. Ja'Marr
-Chase's); the projections pages almost certainly do too. **Not implemented, and not cheap
-to add**: `sffl.capture.capture` saves `page.inner_text("body")` - plain text - which
-discards every href on the page. Capturing IDs would mean changing the capture layer to
-read HTML or evaluate link hrefs in-page instead of `inner_text`, re-capturing and rebuilding
-every fixture this project's test suite depends on (`tests/fixtures/cbs_*`), and threading
-an ID field through `cbs_roster.py`/`cbs_weekly.py`/`PlayerProjection`/the scoring pipeline.
-That is a capture-layer change, larger than any single fix round taken on this branch so
-far - a real project, not a quick follow-up, and correctly out of scope for the
-position-coverage plan. If a residual-duplicate report is ever seen in production, THIS is
-the fix that actually closes the gap; the composite key is the interim, honestly-labelled
-heuristic standing in for it.
+**THE MERGE/LOOKUP IDENTITY KEY IS STILL A HEURISTIC WHEREVER AN ID IS ABSENT** - record
+this so it is not re-discovered the hard way. Merging TQB/K/DST meant a projection row and
+a roster row can legitimately share a display name (CBS's TQB and DST pages both use the
+NFL TEAM NICKNAME as a row's "player name"), and separately, two different real NFL
+players can share a name at the same position on different teams (two players both named
+Mike Williams, both WRs, in the same season, is real). `player_key`'s (name, team, pos)
+triple resolves both of those without an id, but **is still NOT provably unique** for two
+same-named players at the same position on the SAME team (a churn artifact, a data error) -
+`resolve_key`'s id-first preference actually closes that residual case wherever both rows
+carry an id (two different ids can never collide), but a row with NO id still falls all the
+way back to the composite. `_merge_projection_groups` and `_cmd_alert` detect a residual
+collision on this key (an id shared by two rows counts too) and report it loudly (a
+WARNING, the pushed alert body, and a non-zero exit) rather than silently keeping one row
+and dropping the other.
+
+**THE REMAINING HEURISTIC IS CBS ↔ STATSDECK INJURY MATCHING, NOT CBS ↔ CBS.**
+StatsDeck's injury feed uses nflverse ids (`00-0036900` for Ja'Marr Chase) - a different
+namespace CBS's `playerpage/<id>` has no relationship to - so `sffl.injuries.for_roster`
+stays name-based (`identity.normalize_name`), by design; see that module's own docstring
+for why this is judged an acceptable, narrower residual (wrong news beside a player, never
+a silently dropped lineup slot). Unifying that would need a cross-source id mapping (e.g.
+via nflverse's own CBS-id crosswalk, if one exists) - not attempted here, and not cheap:
+correctly out of scope, same reasoning as Task 3b's own brief.
 
 **Jeff is not attending the auction.** A surrogate drafts for him on 08-26. **Jeff owns the
 BID; the surrogate owns the SELECTION.** The Excel + `Key & Intel` sheet is the deliverable;

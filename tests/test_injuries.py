@@ -33,6 +33,20 @@ def test_a_clean_roster_yields_no_rows_rather_than_an_error():
     assert for_roster(reports, ["Bijan Robinson"]) == []
 
 
+def test_a_repeated_roster_name_does_not_duplicate_a_matching_report():
+    # Task 3b minor (d): `roster_names` CAN now legitimately contain repeats
+    # (`_cmd_alert` builds it from `RosterRow`s, which - since
+    # `parse_lineup_rows` stopped collapsing by name alone - carries the
+    # same display name twice for the Chargers TQB/DST shape). A matching
+    # `Report` must still be emitted only ONCE per roster, not once per
+    # occurrence of the name.
+    reports = load(FIXTURE)
+    once = for_roster(reports, ["Ja'Marr Chase"])
+    twice = for_roster(reports, ["Ja'Marr Chase", "Ja'Marr Chase"])
+    assert twice == once
+    assert len(twice) == 2
+
+
 def test_official_and_intel_are_kept_distinct():
     # The official report is the record; intel supplements and never
     # overrides. Collapsing them would let a beat writer outrank the report.

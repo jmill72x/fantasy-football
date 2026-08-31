@@ -9,9 +9,22 @@ kickoff time and the stat block trail on the lines that follow. A row line
 looks like (tabs shown as literal characters here, `\\xa0` elsewhere in the
 page is a stray non-breaking space, not part of a row):
 
-    \tTQB\tChargers TQB . LAC\tARI\t
-    \tWR\tJa'Marr Chase WR . CIN \tTB\t
+    id=1974\t\tTQB\tChargers TQB . LAC\tARI\t
+    id=2966320\t\tWR\tJa'Marr Chase WR . CIN \tTB\t
     \tRB\tTreVeyon Henderson RB . NE \t@SEA\t
+
+A row `sffl.capture.capture` could pair with a CBS `playerpage/<id>` link
+(see that module) carries an EXTRA leading `id=<digits>\t` segment, ahead
+of the row's own leading tab, as shown on both Chargers' and Chase's lines
+above. THIS INCLUDES TQB/DST TEAM-AGGREGATE ROWS, not just individuals -
+verified live 2026-08-30: CBS gives each team's TQB unit and DST unit its
+OWN synthetic `playerpage/<id>` (the Chargers' TQB unit is 1974, its DST
+unit a DIFFERENT 1924 - not a shared team id), a genuine surprise against
+an earlier assumption in this task's own brief. A row truly carries none
+only when it is page furniture, or from a page saved before this existed
+(Henderson's line above). `_iter_lines` strips this prefix (onto
+`player_id`) before `_ROW` ever sees the line, so `_ROW` itself never
+needs to know it exists.
 
 Field 1 is the position column. Field 2 is `NAME POS . TEAM`, where TEAM
 sometimes carries a TRAILING SPACE - that's where an injury glyph renders in
@@ -59,37 +72,39 @@ flagged as ambiguous. `find_name_position_collisions` is retained (it is
 directly tested and still correct on its own narrower terms) but is no
 longer `_cmd_alert`'s primary defense against this specific hazard.
 
-THE COMPOSITE KEY IS A HEURISTIC, NOT A STABLE ID. `parse_lineup_rows`
-returns (name, slot, team) - `_cmd_alert` joins this against
-`PlayerProjection`s via `identity.player_key`'s (name, team, pos) triple,
-the same identity every other vendor source in this project resolves
-through. That triple is a very strong disambiguator (the Chargers TQB/DST
-case, and a real NFL case of two different players named Mike Williams at
-WR on different teams, are both fully resolved by it) but IT IS NOT
-PROVABLY UNIQUE: nothing stops two same-named players at the same position
-on the SAME team from existing in CBS's data (a practice-squad churn
-artifact, a data-entry duplicate, or a genuine same-team same-name
+THE COMPOSITE KEY IS A HEURISTIC, NOT A STABLE ID - BUT IT IS NOW ONLY THE
+FALLBACK. `parse_lineup_rows` returns (name, slot, team, player_id) -
+`_cmd_alert` joins this against `PlayerProjection`s via
+`identity.resolve_key`, which prefers a real CBS `player_id` (see below)
+whenever one is present on BOTH sides and falls back to `player_key`'s
+(name, team, pos) composite only when it is not. The composite triple is
+still a very strong disambiguator on its own (the Chargers TQB/DST case,
+and a real NFL case of two different players named Mike Williams at WR on
+different teams, are both fully resolved by it even without an id) but IT
+IS NOT PROVABLY UNIQUE: nothing stops two same-named players at the same
+position on the SAME team from existing in CBS's data (a practice-squad
+churn artifact, a data-entry duplicate, or a genuine same-team same-name
 same-position pairing), and a key that cannot be proven unique must never
 silently resolve a collision by keeping one row and dropping the other -
 see `sffl.cli._merge_projection_groups` and `_cmd_alert`'s own by_key
 construction, both of which detect and LOUDLY report any row that still
-collides after this key is applied, rather than assuming the heuristic
-holds.
+collides after this key is applied (an id colliding with another id counts
+just as much as a composite collision), rather than assuming either
+heuristic holds.
 
-THE DURABLE FIX, NOT DONE HERE. CBS's OWN pages carry a genuinely unique
-identifier: the roster page's player links include a stable ID
-(`players/playerpage/<id>`, e.g. Ja'Marr Chase's), and the projections
-pages almost certainly do too. That ID, not any composite of visible
-fields, is the actual answer to "which real player is this." It is not
-captured today because `sffl.capture.capture` saves `page.inner_text("body")`
-- plain text - which discards every href on the page; extracting IDs would
-mean capturing HTML (or evaluating link hrefs in-page) instead, updating
-every fixture this project's test suite depends on, and updating
-`cbs_weekly.parse`/`cbs_roster.py` to read and thread IDs through the
-scoring pipeline. That is a capture-layer change, not a parser fix, and
-substantially larger than any single fix round has been so far - correctly
-out of scope here. (name, pos, team) is what this fix round implements
-instead: a heuristic, honestly labelled as one, not a stable ID.
+THE DURABLE FIX - CBS's OWN stable player IDs, from a `playerpage/<id>`
+link - IS NOW IN PLACE FOR CBS ↔ CBS MATCHING. `sffl.capture.capture` pairs
+each row it can with its own `playerpage/<id>` link and prefixes the row's
+saved text with `id=<id>\t` (see that module); `_iter_lines` here strips
+and threads it onto each row's `player_id`. This closes the gap for
+roster ↔ projections joins - which is what `identity.resolve_key` is for -
+but NOT for CBS ↔ StatsDeck injury matching: StatsDeck's feed uses nflverse
+ids (a different namespace entirely), so `sffl.injuries.for_roster` stays
+name-based, and correctly so - see that module's own docstring. A row with
+no `playerpage` link at all (page furniture, or a page saved before this
+existed) falls back to the (name, slot, team) composite, exactly as before
+this existed - genuinely rare on a live CBS page now: verified 2026-08-30,
+even TQB/DST team-aggregate rows carry their own synthetic id.
 """
 
 import re
@@ -116,20 +131,49 @@ _ROW = re.compile(
 
 _RESERVES_MARKER = "RESERVES"
 
-# name/slot/team, RAW off the page - `team` is NOT run through
-# `identity.normalize_team` here (a page-parsing module has no opinion on
-# identity normalization; `parse_lineup_rows`'s CALLERS do that, exactly
-# where they build the join key against a `PlayerProjection`, whose OWN
-# `.team` field is likewise normalized at parse time by `cbs_weekly.parse`
-# - see `sffl.identity.player_key`, the shared (name, team, pos) key format
-# both sides target).
-RosterRow = namedtuple("RosterRow", "name slot team")
+# An OPTIONAL leading "id=<digits>\t" prefix, put there by
+# `sffl.capture.capture` when it could pair a row with a CBS
+# `playerpage/<id>` link - see `sffl.cbs_weekly._ID_PREFIX`, the identical
+# format on the projections side. Stripped in `_iter_lines`, before `_ROW`
+# ever sees the line, so every existing `_ROW` match is unaffected by its
+# presence - only `parse_lineup_rows` (below) actually threads the id
+# through onto a `RosterRow`; every other function here discards it, same
+# as it always discarded everything past what `_ROW` itself captures.
+_ID_PREFIX = re.compile(r"^id=(?P<id>\d+)\t")
+
+# name/slot/team/player_id. `team` is RAW off the page - it is NOT run
+# through `identity.normalize_team` here (a page-parsing module has no
+# opinion on identity normalization; `parse_lineup_rows`'s CALLERS do that,
+# exactly where they build the join key against a `PlayerProjection`, whose
+# OWN `.team` field is likewise normalized at parse time by
+# `cbs_weekly.parse` - see `sffl.identity.resolve_key`, the shared join-key
+# function both sides target). `player_id` is CBS's own stable id lifted
+# from the row's `playerpage/<id>` link, "" when the row carried none (page
+# furniture, or a page saved before this existed - a TQB/DST team-aggregate
+# row gets its OWN id too, verified live 2026-08-30) - defaulted so every
+# pre-existing `RosterRow(name, slot, team)` construction
+# (this project's own tests included) still holds.
+RosterRow = namedtuple("RosterRow", "name slot team player_id",
+                       defaults=("",))
 
 
 def _iter_lines(path):
+    """Yield (player_id, line) - `line` with any leading id prefix removed.
+
+    `player_id` is "" for every line that carried no such prefix - which is
+    every line on a page saved before `sffl.capture.capture` grew this
+    feature, and every non-player line (nav, headers, RESERVES) on a page
+    saved after, since only a row `capture()` could pair with a
+    `playerpage/<id>` link ever gets one.
+    """
     with open(path) as fh:
         for raw_line in fh:
-            yield raw_line.rstrip("\n")
+            line = raw_line.rstrip("\n")
+            m = _ID_PREFIX.match(line)
+            if m:
+                yield m.group("id"), line[m.end():]
+            else:
+                yield "", line
 
 
 def _empty_roster_error(path):
@@ -152,7 +196,7 @@ def parse_roster(path):
     """
     names = []
     seen = set()
-    for line in _iter_lines(path):
+    for _player_id, line in _iter_lines(path):
         m = _ROW.match(line)
         if not m:
             continue
@@ -184,7 +228,7 @@ def parse_positions(path):
     and tests depend on, does not change shape.
     """
     positions = {}
-    for line in _iter_lines(path):
+    for _player_id, line in _iter_lines(path):
         m = _ROW.match(line)
         if not m:
             continue
@@ -216,7 +260,7 @@ def find_name_position_collisions(path):
     than silently scoring (or silently losing) one of the two real entries.
     """
     slots_by_name = {}
-    for line in _iter_lines(path):
+    for _player_id, line in _iter_lines(path):
         m = _ROW.match(line)
         if not m:
             continue
@@ -241,7 +285,7 @@ def parse_lineup(path):
     seen_marker = False
     names, seen = starters, seen_starters
 
-    for line in _iter_lines(path):
+    for _player_id, line in _iter_lines(path):
         if line == _RESERVES_MARKER:
             seen_marker = True
             names, seen = reserves, seen_reserves
@@ -267,8 +311,9 @@ def parse_lineup(path):
 
 
 def parse_lineup_rows(path):
-    """(starters, reserves) as `RosterRow(name, slot, team)` tuples - the
-    FULL-FIDELITY counterpart to `parse_lineup`, used by `_cmd_alert`.
+    """(starters, reserves) as `RosterRow(name, slot, team, player_id)`
+    tuples - the FULL-FIDELITY counterpart to `parse_lineup`, used by
+    `_cmd_alert`.
 
     `parse_lineup`/`parse_positions` collapse a row the moment its bare NAME
     collides with an earlier one - correct for the ordinary case (a real
@@ -291,13 +336,18 @@ def parse_lineup_rows(path):
     - the one combination that genuinely means "the same entity, rendered
     twice" (a page-layout repeat), never two different real entries. Each
     `RosterRow` keeps its own name AND slot AND team, so a caller can match
-    it against a `PlayerProjection` using the exact same (name, team, pos)
-    identity `identity.player_key` already builds for every other vendor
-    source in this project - see `_cmd_alert`.
+    it against a `PlayerProjection` using `identity.resolve_key` - the SAME
+    id-first, composite-fallback join every other CBS ↔ CBS lookup in this
+    project now uses - see `_cmd_alert`.
 
-    THIS COMPOSITE KEY IS A HEURISTIC, NOT A PROVEN-UNIQUE IDENTITY - see
-    the module docstring's "THE COMPOSITE KEY IS A HEURISTIC, NOT A STABLE
-    ID" note for why, and what would actually close that gap.
+    EACH ROW ALSO CARRIES `player_id` (CBS's own stable id, "" when the row
+    has none - page furniture, or a page saved before this existed; a
+    TQB/DST team-aggregate row gets its OWN id too, verified live
+    2026-08-30). This IS a genuinely unique key wherever both sides of a
+    join have one; the
+    (name, slot/pos, team) composite is the documented fallback for rows
+    that don't - see the module docstring's "THE DURABLE FIX" note and
+    `identity.resolve_key`.
     """
     starters = []
     reserves = []
@@ -306,7 +356,7 @@ def parse_lineup_rows(path):
     seen_marker = False
     rows, seen = starters, seen_starters
 
-    for line in _iter_lines(path):
+    for player_id, line in _iter_lines(path):
         if line == _RESERVES_MARKER:
             seen_marker = True
             rows, seen = reserves, seen_reserves
@@ -315,7 +365,7 @@ def parse_lineup_rows(path):
         if not m:
             continue
         row = RosterRow(m.group("name").strip(), m.group("slot"),
-                        m.group("team"))
+                        m.group("team"), player_id)
         if row in seen:
             continue
         seen.add(row)

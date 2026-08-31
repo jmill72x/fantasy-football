@@ -4,6 +4,22 @@ NO NETWORK I/O. The page is fetched by an operator (browser tools) and saved;
 this module parses the file. That keeps every test a fixture test and keeps the
 parser honest about a layout it cannot control.
 
+A ROW MAY CARRY A LEADING `id=<digits>\t` PREFIX, put there by
+`sffl.capture.capture` when it could pair that row with a CBS
+`playerpage/<id>` link (a genuinely unique join key - see `identity.
+resolve_key`). It is stripped off (`_strip_id_prefix`) before either
+delimiter path parses the rest of the line, so it can never affect
+`expect_tokens` or the stat-block slice. This covers TQB and DST rows too,
+not just individual players - verified live 2026-08-30, CBS gives each
+team's TQB unit and DST unit its own synthetic id (a genuine surprise
+against an earlier assumption; the Chargers' TQB unit and DST unit carry
+DIFFERENT ids, so this does not collide the two). Absent only on a row
+`capture()` truly could not pair with a link (page furniture) and on
+every row from any other source (a `--projections` fixture saved by hand,
+another vendor entirely) - `PlayerProjection.player_id` is `""` in both
+cases, and `resolve_key` falls back to the (name, team, pos) composite
+automatically.
+
 STAT NAMES IN A PROFILE'S `stats:` LIST MAY REPEAT. The list is positional -
 one token, one name - EXCEPT that a name appearing MORE THAN ONCE means those
 columns are SUMMED into that one key. This exists because CBS splits a single
@@ -122,6 +138,25 @@ _AVAIL_WAIVER = re.compile(r"^W(\s*\(.*\))?$")
 # plain module-level constant.
 _TAB_LINE = re.compile(
     r"^\t(?P<avail>[^\t]*)\t(?P<namecell>[^\t]+)\t(?P<rest>.+)$")
+
+# An OPTIONAL leading "id=<digits>\t" prefix, present only on a row
+# `sffl.capture.capture` was able to pair with a `playerpage/<id>` link (see
+# that module's docstring). Stripped BEFORE the row is matched against
+# `_TAB_LINE` or `build_line_re`'s pattern, so it can never shift or shorten
+# `tokens` (the fields counted by `expect_tokens`, the column-shift guard) -
+# `tokens` is derived entirely from `rest`, which starts well after this
+# prefix and the row's own leading tab. A row with no such prefix (page
+# furniture - a TQB/DST team-aggregate row gets its own id too, see the
+# module docstring) parses exactly as before this existed.
+_ID_PREFIX = re.compile(r"^id=(?P<id>\d+)\t")
+
+
+def _strip_id_prefix(line):
+    """(player_id, line) - `player_id` is "" when `line` carries no prefix."""
+    m = _ID_PREFIX.match(line)
+    if not m:
+        return "", line
+    return m.group("id"), line[m.end():]
 
 # The "Name POS • TEAM" cell, split out from the rest of the tab row.
 # Same status-tag handling as build_line_re's per-line pattern (captured in
@@ -269,7 +304,8 @@ def _load_owner_codes(profile_path):
 
 
 def _parse_row(line, line_re):
-    """One row's (avail, name, pos, team, status1, status2, tokens), or None.
+    """One row's (avail, name, pos, team, status1, status2, tokens,
+    player_id), or None.
 
     Dispatches PER LINE on whether it contains a tab: the Playwright
     `capture()` path used by the scheduled in-season job emits TAB-delimited
@@ -283,7 +319,16 @@ def _parse_row(line, line_re):
     split into individual fields - by tab on the tab path, by whitespace on
     the space path - so `expect_tokens`/the stat-block slice downstream work
     identically regardless of which path produced the row.
+
+    `player_id` is stripped off the FRONT of `line` first, via
+    `_strip_id_prefix`, before either delimiter path ever sees it - so
+    `tokens` (and therefore `expect_tokens`) is computed exactly as if the
+    prefix had never been there. "" when the line carries no such prefix
+    (only ever seen on the tab path in practice - see `_ID_PREFIX`'s
+    docstring - but stripped unconditionally so a future space-path capture
+    that grew one would not need this function changed again).
     """
+    player_id, line = _strip_id_prefix(line)
     if "\t" in line:
         m = _TAB_LINE.match(line)
         if not m:
@@ -302,14 +347,14 @@ def _parse_row(line, line_re):
         return (m.group("avail").strip(), name_m.group("name").strip(),
                 name_m.group("pos"), name_m.group("team"),
                 name_m.group("status1"), name_m.group("status2"),
-                m.group("rest").split("\t"))
+                m.group("rest").split("\t"), player_id)
     m = line_re.match(line)
     if not m:
         return None
     return (m.group("avail").strip(), m.group("name").strip(),
             m.group("pos"), m.group("team"),
             m.group("status1"), m.group("status2"),
-            m.group("rest").split())
+            m.group("rest").split(), player_id)
 
 
 def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
@@ -354,7 +399,7 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                 if " • " in line:
                     unmatched.append(line)
                 continue
-            avail, name, pos, team, status1, status2, tokens = parsed
+            avail, name, pos, team, status1, status2, tokens, player_id = parsed
             if expect_tokens is not None and len(tokens) != expect_tokens:
                 raise ValueError(
                     "%s: %r has %d tokens after the team code, expected %d - "
@@ -434,6 +479,7 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                 raw_name=name,
                 avail=avail,
                 status=status,
+                player_id=player_id,
             ))
 
     if unmatched:

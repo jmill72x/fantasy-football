@@ -405,6 +405,89 @@ def test_the_space_delimited_fixture_is_unaffected_by_the_tab_path():
     assert r.stats["rush_yds"] == 36.8
 
 
+# --- Task 3b: an optional leading "id=<digits>\t" prefix -------------------
+
+def test_a_leading_id_prefix_lands_on_player_id(tmp_path):
+    page = tmp_path / "tab_id.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("id=2966320\t\tTeam I...\tJa'Marr Chase WR • CIN\tTB\t%s\n"
+                    % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].name == "Ja'Marr Chase"
+    assert rows[0].player_id == "2966320"
+
+
+def test_a_row_with_no_id_prefix_falls_back_to_the_empty_string(tmp_path):
+    """THE DOCUMENTED FALLBACK PATH. A row `capture()` could not pair with a
+    `playerpage/<id>` link (page furniture, or any page saved before this
+    existed - a real live TQB/DST team-aggregate row DOES carry its own id,
+    see cbs_weekly's module docstring) carries no prefix at all -
+    `player_id` must default to "", never None or a missing attribute, so
+    `identity.resolve_key` can fall back to the (name, team, pos) composite
+    unconditionally."""
+    page = tmp_path / "tab_no_id.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("\tTeam A...\tChargers TQB • LAC\tARI\t%s\n" % stats)
+    rows = parse(str(page), group="TQB", week=1)
+    assert len(rows) == 1
+    assert rows[0].player_id == ""
+
+
+def test_an_id_prefix_does_not_change_expect_tokens_pass_or_fail(tmp_path):
+    """THE COLUMN-SHIFT GUARD MUST BE UNAFFECTED. `expect_tokens` counts
+    tokens AFTER the team code - the id prefix sits entirely before that,
+    stripped off before either delimiter path ever computes `tokens` (see
+    `_strip_id_prefix`/`_parse_row`). Two identical rows, one with the
+    prefix and one without, must both pass expect_tokens=17 (the real
+    RB-WR-TE width) and produce byte-identical stats."""
+    stats = "\t".join(str(n) for n in range(16))  # OPP + 16 = 17 tokens
+    row_no_id = "\tTeam A...\tNick Chubb RB • CLE\t@PIT\t%s\n" % stats
+    row_with_id = "id=12345\t" + row_no_id
+
+    plain = tmp_path / "plain.txt"
+    plain.write_text(row_no_id)
+    prefixed = tmp_path / "prefixed.txt"
+    prefixed.write_text(row_with_id)
+
+    rows_plain = parse(str(plain), group="RB-WR-TE", week=1)
+    rows_prefixed = parse(str(prefixed), group="RB-WR-TE", week=1)
+    assert len(rows_plain) == 1 and len(rows_prefixed) == 1
+    assert rows_plain[0].stats == rows_prefixed[0].stats
+    assert rows_plain[0].player_id == ""
+    assert rows_prefixed[0].player_id == "12345"
+
+
+def test_an_id_prefix_does_not_hide_a_real_column_shift(tmp_path):
+    """The inverse of the guarantee above: a TRUE width violation must still
+    raise, prefix or no prefix - the prefix must not accidentally widen or
+    narrow what expect_tokens sees."""
+    stats = "\t".join(str(n) for n in range(15))  # one short: 16, not 17
+    page = tmp_path / "short.txt"
+    page.write_text("id=12345\t\tTeam A...\tNick Chubb RB • CLE\t@PIT\t%s\n"
+                    % stats)
+    with pytest.raises(ValueError) as exc:
+        parse(str(page), group="RB-WR-TE", week=1)
+    assert "expected 17" in str(exc.value)
+
+
+def test_the_real_tab_fixture_carries_real_ids_on_nearly_every_row():
+    """This fixture was regenerated from a real live capture (2026-08-30,
+    Task 3b) - 99 of its 100 rows now carry a genuine CBS `player_id`. The
+    one holdout (Michael Wilson, ARI - no longer on the live page as of
+    this regeneration, most likely normal roster churn) exercises the
+    documented FALLBACK path naturally, on real data, rather than only in a
+    hand-constructed test - both paths matter and both must keep parsing."""
+    rows = parse(TAB_FIXTURE, group="RB-WR-TE", week=1)
+    assert len(rows) == 100
+    by_name = dict((r.name, r) for r in rows)
+    assert by_name["Ja'Marr Chase"].player_id == "2966320"
+    assert by_name["Puka Nacua"].player_id == "3121687"
+    assert by_name["Michael Wilson"].player_id == ""
+    with_id = [r for r in rows if r.player_id]
+    assert len(with_id) == 99
+
+
 def test_a_whitespace_only_tab_owner_cell_is_refused_not_called_owned(tmp_path):
     """M1. The tab path used to hand `avail` through unstripped while the
     space path stripped it, so a cell holding only spaces was a non-empty

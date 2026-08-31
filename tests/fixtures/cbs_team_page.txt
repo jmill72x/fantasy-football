@@ -42,56 +42,56 @@ FANTASY POINTS
 
 EDIT	POS	PLAYERS	OPP	GAME TIME	BYE	O/U	POSRNK	OVP	ROST	START	2025	3YR AVG	PROJ
 
-	TQB	Chargers TQB • LAC	ARI	
+id=1974		TQB	Chargers TQB • LAC	ARI	
 Sun 4:25pm EDT
 	7	47.5	---	---	85%	42%	222.00	161.00	137.57
 
-	RB	Cam Skattebo RB • NYG	DAL	
+id=26697012		RB	Cam Skattebo RB • NYG	DAL	
 Sun 8:20pm EDT
 	8	48.5	21	31	73%	42%	48.00	38.00	80.07
 
-	WR	Ja'Marr Chase WR • CIN 	TB	
+id=2966320		WR	Ja'Marr Chase WR • CIN 	TB	
 Sun 1:00pm EDT
 	6	50.5	1	17	97%	96%	126.00	87.00	85.19
 
-	WR	Ladd McConkey WR • LAC 	ARI	
+id=3163962		WR	Ladd McConkey WR • LAC 	ARI	
 Sun 4:25pm EDT
 	7	47.5	17	19	92%	68%	56.00	53.00	64.15
 
-	WR	Jameson Williams WR • DET	NO	
+id=3125968		WR	Jameson Williams WR • DET	NO	
 Sun 1:00pm EDT
 	6	49.5	27	10	90%	76%	77.00	46.00	62.15
 
-	TE	Brock Bowers TE • LV	MIA	
+id=26693971		TE	Brock Bowers TE • LV	MIA	
 Sun 4:25pm EDT
 	13	40.5	1	25	97%	77%	68.00	52.00	68.18
 
-	K	Evan McPherson K • CIN 	TB	
+id=2962681		K	Evan McPherson K • CIN 	TB	
 Sun 1:00pm EDT
 	6	50.5	7	20	64%	54%	135.00	61.00	76.00
 
-	DST	Patriots DST • NE 	@SEA	
+id=1931		DST	Patriots DST • NE 	@SEA	
 Wed 8:20pm EDT
 	11	44.5	8	13	84%	60%	122.00	105.00	143.00
 RESERVES
 
-	TQB	49ers TQB • SF 	@LAR	
+id=1975		TQB	49ers TQB • SF 	@LAR	
 Thurs 8:35pm EDT
 	8	48.5	---	---	92%	59%	274.00	211.00	158.63
 
-	RB	Rico Dowdle RB • PIT	ATL	
+id=2252798		RB	Rico Dowdle RB • PIT	ATL	
 Sun 1:00pm EDT
 	9	42.5	29	12	91%	47%	65.00	48.00	47.03
 
-	RB	TreVeyon Henderson RB • NE 	@SEA	
+id=26699547		RB	TreVeyon Henderson RB • NE 	@SEA	
 Wed 8:20pm EDT
 	11	44.5	30	11	92%	49%	90.00	65.00	57.02
 
-	RB	Rhamondre Stevenson RB • NE 	@SEA	
+id=3125832		RB	Rhamondre Stevenson RB • NE 	@SEA	
 Wed 8:20pm EDT
 	11	44.5	25	11	87%	32%	66.00	40.00	38.04
 
-	WR	Courtland Sutton WR • DEN	@KC	
+id=2218461		WR	Courtland Sutton WR • DEN	@KC	
 Mon 8:15pm EDT
 	10	43.5	34	15	87%	58%	77.00	62.00	55.14
 ACTIVE: 8 RESERVE: 5
