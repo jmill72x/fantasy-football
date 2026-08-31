@@ -33,7 +33,8 @@ made the curves **worse on 6 of 7 banded stats** and worsened the price fit
 recovered it. That measurement was real and should not be repeated as-is.
 
 **But the verdict was AGGREGATE, and the aggregate is dominated by the dense stats.**
-`rush_yds` already had 36 players; adding more gives the interpolation more individual
+`rush_yds` already had 36 players (**corrected 2026-08-30 to 34** — `RB.csv` carried a
+duplicate-entity pair under two `player_id`s; see `NEXT.md`); adding more gives the interpolation more individual
 variance to chase, and it gets worse. `def_pa` had **four**. Those are not the same regime,
 and a count of "6 of 7 stats" cannot distinguish them.
 
@@ -59,7 +60,8 @@ them without chasing noise.
 
 ## The three candidates
 
-**Baseline — what ships today.** 48 players, linear interpolation through every anchor.
+**Baseline — what ships today.** 48 players (**corrected 2026-08-30 to 46**, see
+`NEXT.md`'s dedup note), linear interpolation through every anchor.
 Every candidate must beat this or we keep it.
 
 **Candidate A — isotonic regression (PAVA).** Same one-point-per-player input, but fit a

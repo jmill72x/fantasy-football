@@ -3,9 +3,10 @@
 THE QUESTION. Fantasy scoring is BANDED, so E[band(X)] != band(E[X]). The
 shipped builder (`build_curves`) gives every qualifying player exactly one
 anchor - his own (mean, realized) pair - and interpolates straight lines
-through them: 36 players' worth of anchors for rush_yds, but only FOUR for
-each defensive stat, so a three-segment "curve" prices and start/sits every
-defense in the league.
+through them: 36 players' worth of anchors for rush_yds (corrected
+2026-08-30 to 34 - RB.csv carried a duplicate-entity pair under two
+player_ids; see NEXT.md), but only FOUR for each defensive stat, so a
+three-segment "curve" prices and start/sits every defense in the league.
 
 Adding the 84 held-back players was tried once (see
 data/weekly/2025/_held_back/README.md) and judged "worse on 6 of 7 stats".
