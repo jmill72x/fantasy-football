@@ -633,3 +633,27 @@ def test_k_score_deliberately_diverges_from_cbs_fpts_by_roughly_2x():
             "match CBS's flat convention, which would be wrong"
             % (row.name, ours, cbs_fpts, ratio))
 
+
+
+def test_every_projections_url_asks_for_more_than_one_page_of_rows():
+    # NOT cosmetic. CBS's default page size is 100 rows; without
+    # `print_rows` every rostered player outside CBS's top 100 comes back
+    # with no projection at all and the digest reports a "data problem"
+    # whose real cause is a page-size cap. Three of Jeff's thirteen were in
+    # exactly that state on 2026-08-30. Pinned for all four groups, not
+    # just the big one: K sits at 98 rows, two under the cap.
+    from sffl.cli import ALERT_GROUPS, _projections_url
+    for group in ALERT_GROUPS:
+        url = _projections_url(group, 1)
+        assert "print_rows=" in url, group
+        rows = int(url.split("print_rows=")[1].split("&")[0])
+        assert rows > 100, (group, rows)
+
+
+def test_the_projections_url_still_carries_scope_and_week():
+    # The row-count parameter must not have displaced anything: a URL that
+    # asks for 9999 rows of the WRONG WEEK is worse than a truncated one.
+    from sffl.cli import _projections_url
+    url = _projections_url("RB-WR-TE", 7)
+    assert "all:RB:WR:TE" in url
+    assert "/7:p/" in url

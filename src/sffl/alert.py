@@ -104,7 +104,18 @@ worth chasing). `_cmd_week` has handled it this way since it grew a
 --current flag; the language here mirrors its.
 """
 
+from collections import namedtuple
+
 from sffl.identity import normalize_name
+
+# One roster player as the digest sees him. `points` is None when he could
+# not be scored at all (no projection row, or his page failed) - which is a
+# DIFFERENT state from 0.00 and must never render as one: a genuine 0.00 is
+# a real projection saying "expect nothing", while None is "we do not know",
+# and confusing the two is how a healthy player gets benched by an absent
+# data file. `why` carries the reason for None (one of the reason constants
+# above), or None when he was scored.
+BoardRow = namedtuple("BoardRow", "name pos team points status why")
 
 # Past this many days, the roster file's age is called out as a problem rather
 # than merely stated. Visible staleness beats invisible staleness.
@@ -297,6 +308,17 @@ PROJECTION_PAGE_FAILED = "projection-page-failed"
 PROJECTION_MISSING = "projection-missing"
 ROSTER_NAME_AMBIGUOUS = "roster-name-ambiguous"
 
+# Short forms of the same reasons for the BENCH block, which is a table:
+# `_UNEVALUATED_REASONS`'s values are paragraph-length and end in ":" because
+# they are section HEADERS introducing a list of players. Reusing them per-row
+# would wrap a paragraph into every bench line.
+_BENCH_REASONS = {
+    POSITION_NOT_CAPTURED: "position not captured by this job",
+    PROJECTION_PAGE_FAILED: "that page failed this run",
+    PROJECTION_MISSING: "no projection row - data problem",
+    ROSTER_NAME_AMBIGUOUS: "name ambiguous on the roster page",
+}
+
 _UNEVALUATED_REASONS = {
     POSITION_NOT_CAPTURED: (
         "Their position is not in the projections page this job captures, so "
@@ -390,10 +412,54 @@ def _start_sit_diff(lineup_result, current_starters, sidelined, unevaluated):
     return start, sit
 
 
+def _bench_block(roster_board, lineup_result):
+    """The rostered players the optimal lineup did NOT start, with their points.
+
+    Keyed on `(normalize_name, pos, team)` - the same triple
+    `_start_sit_diff` uses, and for the same reproduced reason: a name-only
+    key cannot tell an NFL team rostered at both TQB and DST apart, so
+    "Chargers" started at TQB would wrongly suppress "Chargers" at DST from
+    this block, hiding a real rostered asset.
+
+    Sorted by points DESCENDING, because the only question this block
+    answers is "is someone on my bench out-projecting a starter?" - and the
+    answer is the top row or nowhere. Unscored players (`points is None`)
+    sort last under their own reason rather than being dropped: a player the
+    pipeline could not score is exactly the one worth eyeballing manually,
+    and silently omitting him is how a roster of thirteen renders as twelve.
+    """
+    started = set()
+    for _slot, pick in lineup_result.slots:
+        if pick is not None:
+            started.add((normalize_name(pick.name), pick.pos, pick.team))
+
+    bench = [r for r in roster_board
+             if (normalize_name(r.name), r.pos, r.team) not in started]
+
+    out = ["BENCH - rostered, not in the optimal lineup (%d):" % len(bench)]
+    if not bench:
+        out.append("  none - all %d rostered players are starting."
+                   % len(roster_board))
+        return out
+
+    scored = sorted((r for r in bench if r.points is not None),
+                    key=lambda r: -r.points)
+    unscored = [r for r in bench if r.points is None]
+    for r in scored:
+        note = "  (%s)" % r.status if r.status else ""
+        out.append("  %-6s %-20s %6.2f%s" % (r.pos or "?", r.name, r.points, note))
+    for r in unscored:
+        why = _BENCH_REASONS.get(r.why, r.why or "not scored")
+        out.append("  %-6s %-20s %6s  - %s"
+                   % (r.pos or "?", r.name, "--", why))
+    return out
+
+
 def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             capture_error=None, current_starters=None,
             unevaluated_starters=None, injury_error=None,
-            injuries_age_minutes=None, projections_capture_error=None):
+            injuries_age_minutes=None, projections_capture_error=None,
+            roster_board=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -435,6 +501,16 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     problem). Reusing `capture_error`'s roster-failure prose for this case
     - which `_cmd_alert` did before a reviewer caught it - tells the reader
     to re-run `cbs_login.py` when the login was never the problem.
+
+    `roster_board` is EVERY rostered player as a `BoardRow` - all thirteen,
+    not the eight the optimizer started. The optimizer has always CONSIDERED
+    all thirteen (`_cmd_alert` builds its candidate pool from starters plus
+    reserves), but the digest only ever NAMED the eight it picked, so the
+    bench's projections - the numbers that justify the pick, and the only
+    way to see a reserve out-projecting a starter the optimizer could not
+    legally slot - never reached the phone. `None` means the caller does not
+    know the full roster and the section is omitted entirely, which keeps
+    every pre-existing caller's output byte-identical.
     """
     if kind not in _KINDS:
         raise ValueError(
@@ -605,6 +681,13 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     lines.append("BEST LINEUP (%.2f pts, this league's scoring):" %
                  lineup_result.total)
     for slot, pick in lineup_result.slots:
-        lines.append("  %-6s %s" % (slot, pick.name if pick else "-- UNFILLED"))
+        if pick is None:
+            lines.append("  %-6s %s" % (slot, "-- UNFILLED"))
+        else:
+            lines.append("  %-6s %-20s %6.2f" % (slot, pick.name, pick.points))
+
+    if roster_board is not None:
+        lines.append("")
+        lines.extend(_bench_block(roster_board, lineup_result))
 
     return "\n".join(lines)

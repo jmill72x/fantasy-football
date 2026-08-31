@@ -252,9 +252,17 @@ _PRE_CURRENT_STARTERS_PINNED_OUTPUT = (
     "EXCLUDED from the lineup - will not play:\n"
     "  - Nick Chubb (O)\n\n"
     "BEST LINEUP (34.50 pts, this league's scoring):\n"
-    "  RB     Bijan Robinson\n"
-    "  WR/TE  Ja'Marr Chase"
+    "  RB     Bijan Robinson        18.00\n"
+    "  WR/TE  Ja'Marr Chase         16.50"
 )
+# AMENDED 2026-08-30, deliberately, for the roster_board change. Every
+# lineup row now carries its own projected points, so this literal moved by
+# exactly one column on two lines and NOTHING else - verified against the
+# failure diff before editing, not re-derived by pasting the new output.
+# The tests below still pin what they were written to pin: that each
+# OPTIONAL parameter, left at its default, adds no section. `roster_board`
+# defaulting to None is asserted the same way, in
+# test_roster_board_defaults_to_no_bench_section.
 
 
 def test_current_starters_none_renders_exactly_as_before():
@@ -691,3 +699,144 @@ def test_injury_data_not_from_this_run_says_so_loudly():
 def test_the_injury_parameters_default_so_existing_callers_are_unaffected():
     args = ("sunday", 2, [CHUBB_OUT], LINEUP, [("Nick Chubb", "O")])
     assert compose(*args) == _PRE_CURRENT_STARTERS_PINNED_OUTPUT
+
+
+# --------------------------------------------------------------- roster board
+#
+# The defect these cover, in one sentence: the optimizer always CONSIDERED
+# all thirteen rostered players, but the digest only ever NAMED the eight it
+# started, so every bench projection - the numbers that justify the pick -
+# was computed and then thrown away before the message was built.
+
+BOARD_LINEUP = LineupResult(
+    slots=[("RB", Candidate("Bijan Robinson", "RB", 18.0, "ATL")),
+           ("WR/TE", Candidate("Ja'Marr Chase", "WR", 16.5, "CIN"))],
+    total=34.5)
+
+
+def _board(*rows):
+    """BoardRow list; each row is (name, pos, team, points, status, why)."""
+    from sffl.alert import BoardRow
+    return [BoardRow(*r) for r in rows]
+
+
+def test_roster_board_defaults_to_no_bench_section():
+    # Same contract every other optional parameter here has: None means "the
+    # caller does not know the roster", which must render NOTHING rather
+    # than asserting an empty bench. This is what lets the pinned literal
+    # above stay meaningful.
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [])
+    assert "BENCH" not in msg
+    assert compose("sunday", 2, [], BOARD_LINEUP, [], roster_board=None) == msg
+
+
+def test_bench_names_every_rostered_player_the_lineup_did_not_start():
+    board = _board(
+        ("Bijan Robinson", "RB", "ATL", 18.0, "", None),
+        ("Ja'Marr Chase", "WR", "CIN", 16.5, "", None),
+        ("Rico Dowdle", "RB", "CAR", 9.25, "", None),
+        ("Tucker Kraft", "TE", "GB", 7.5, "", None),
+    )
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [], roster_board=board)
+    bench = _block(msg, "BENCH")
+    # The two started players are NOT repeated in the bench block...
+    assert "Bijan Robinson" not in bench
+    assert "Ja'Marr Chase" not in bench
+    # ...and both reserves appear, with their points.
+    assert "Rico Dowdle" in bench and "9.25" in bench
+    assert "Tucker Kraft" in bench and "7.50" in bench
+    assert "(2)" in bench
+
+
+def test_bench_sorts_by_points_descending_so_the_top_row_is_the_question():
+    board = _board(
+        ("Bijan Robinson", "RB", "ATL", 18.0, "", None),
+        ("Ja'Marr Chase", "WR", "CIN", 16.5, "", None),
+        ("Low Guy", "WR", "NYJ", 2.0, "", None),
+        ("High Guy", "WR", "SEA", 14.0, "", None),
+        ("Mid Guy", "TE", "DAL", 8.0, "", None),
+    )
+    bench = _block(compose("sunday", 2, [], BOARD_LINEUP, [],
+                           roster_board=board), "BENCH")
+    assert bench.index("High Guy") < bench.index("Mid Guy") < bench.index("Low Guy")
+
+
+def test_an_unscored_bench_player_is_named_with_a_reason_never_as_zero():
+    # 0.00 is a real projection meaning "expect nothing". None means "we do
+    # not know". Rendering the second as the first is how an absent data
+    # file turns into confident advice to bench a healthy player.
+    board = _board(
+        ("Bijan Robinson", "RB", "ATL", 18.0, "", None),
+        ("Ja'Marr Chase", "WR", "CIN", 16.5, "", None),
+        ("Genuine Zero", "WR", "NYJ", 0.0, "", None),
+        ("Unknown Guy", "K", "LAC", None, "", PROJECTION_PAGE_FAILED),
+    )
+    bench = _block(compose("sunday", 2, [], BOARD_LINEUP, [],
+                           roster_board=board), "BENCH")
+    assert "Genuine Zero" in bench and "0.00" in bench
+    assert "Unknown Guy" in bench
+    unknown_line = [l for l in bench.split("\n") if "Unknown Guy" in l][0]
+    assert "0.00" not in unknown_line
+    assert "--" in unknown_line
+    assert "failed" in unknown_line
+    # An unscored player sorts AFTER every scored one - he is not a 0.
+    assert bench.index("Genuine Zero") < bench.index("Unknown Guy")
+
+
+def test_bench_keys_on_name_pos_team_so_one_team_at_tqb_and_dst_survives():
+    # The reproduced hazard this whole module keys on triples for: an NFL
+    # team rostered at BOTH TQB and DST shares a display name. Started at
+    # TQB, the DST must still show on the bench - a name-only key would
+    # suppress a real, separately-rostered asset.
+    lineup = LineupResult(
+        slots=[("TQB", Candidate("Chargers", "TQB", 18.45, "LAC"))],
+        total=18.45)
+    board = _board(
+        ("Chargers", "TQB", "LAC", 18.45, "", None),
+        ("Chargers", "DST", "LAC", 6.10, "", None),
+    )
+    bench = _block(compose("sunday", 2, [], lineup, [], roster_board=board),
+                   "BENCH")
+    assert "6.10" in bench
+    assert "DST" in bench
+    assert "(1)" in bench
+
+
+def test_bench_notes_an_injury_status_next_to_the_points():
+    board = _board(
+        ("Bijan Robinson", "RB", "ATL", 18.0, "", None),
+        ("Ja'Marr Chase", "WR", "CIN", 16.5, "", None),
+        ("Nick Chubb", "RB", "CLE", 4.0, "O", None),
+    )
+    bench = _block(compose("sunday", 2, [], BOARD_LINEUP, [],
+                           roster_board=board), "BENCH")
+    chubb = [l for l in bench.split("\n") if "Nick Chubb" in l][0]
+    assert "(O)" in chubb
+
+
+def test_an_all_starting_roster_says_so_rather_than_printing_an_empty_block():
+    board = _board(
+        ("Bijan Robinson", "RB", "ATL", 18.0, "", None),
+        ("Ja'Marr Chase", "WR", "CIN", 16.5, "", None),
+    )
+    bench = _block(compose("sunday", 2, [], BOARD_LINEUP, [],
+                           roster_board=board), "BENCH")
+    assert "none" in bench
+    assert "(0)" in bench
+
+
+def test_every_lineup_row_carries_its_own_points():
+    # The other half of "projections for all thirteen": the eight that ARE
+    # started need their numbers too, or the bench block is the only place
+    # a number appears and there is nothing to compare it against.
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [])
+    lineup_block = _block(msg, "BEST LINEUP")
+    assert "18.00" in lineup_block
+    assert "16.50" in lineup_block
+
+
+def test_an_unfilled_slot_still_renders_without_a_points_column():
+    lineup = LineupResult(slots=[("RB", Candidate("Bijan Robinson", "RB", 18.0)),
+                                 ("K", None)], total=18.0)
+    block = _block(compose("sunday", 2, [], lineup, []), "BEST LINEUP")
+    assert "-- UNFILLED" in block
