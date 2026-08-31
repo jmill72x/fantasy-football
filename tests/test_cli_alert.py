@@ -125,6 +125,9 @@ def alert_env(tmp_path, monkeypatch):
         def set_projections(self, path, group="RB-WR-TE"):
             state["paths"][group] = str(path)
 
+        def set_roster(self, path):
+            state["paths"]["roster"] = str(path)
+
         def run(self, capsys, *extra):
             argv = ["alert", "--kind", "friday", "--week", "1",
                     "--out-dir", str(tmp_path / "out"),
@@ -357,6 +360,39 @@ def test_a_covered_position_with_no_projection_reads_as_a_data_problem(
     # And he is NOT in the SIT column.
     start = out.index("START / SIT vs your current CBS lineup:")
     assert "Jameson Williams" not in out[start:out.index("\n\n", start)]
+
+
+def test_a_raw_roster_team_code_does_not_double_list_a_starter(
+        alert_env, capsys):
+    """Task 3b minor (a). The roster fixture's Chargers TQB row carries
+    team "LAC" already, so this substitutes the OLD San Diego code CBS's
+    own `identity.TEAM_ALIASES` still maps ("SD" -> "LAC") to prove the
+    fix holds even when the roster page's raw code is not the canonical
+    one `cbs_weekly.parse` always normalizes projections to. Before the
+    fix (`current_starters` built from the RAW `RosterRow.team`), "SD" !=
+    "LAC" would make `_start_sit_diff` treat the Chargers TQB as BOTH a
+    START (the optimal LAC pick) and a SIT (the un-normalized SD one) -
+    the same real, single-slot starter recommended against himself.
+    """
+    with open(ROSTER_FIXTURE) as fh:
+        text = fh.read()
+    assert "Chargers TQB • LAC" in text
+    roster = alert_env.tmp / "roster_sd_code.txt"
+    roster.write_text(text.replace("Chargers TQB • LAC", "Chargers TQB • SD"))
+    alert_env.set_roster(roster)
+
+    code, out = alert_env.run(capsys)
+    assert code == 0
+    slots_section = out[out.index("BEST LINEUP"):]
+    assert "TQB    Chargers" in slots_section
+    # The core assertion: never in BOTH columns of the diff.
+    start = out.index("START / SIT vs your current CBS lineup:")
+    sit_sit_block = out[start:out.index("\n\n", start)]
+    if "START" in sit_sit_block and "SIT" in sit_sit_block:
+        start_col, sit_col = sit_sit_block.split("SIT", 1)
+        assert "Chargers" not in start_col or "Chargers" not in sit_col
+    # And no phantom recommendation to bench/start the same real player.
+    assert sit_sit_block.count("Chargers") <= 1
 
 
 # --- delivery and exit codes ----------------------------------------------

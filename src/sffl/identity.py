@@ -68,13 +68,54 @@ def normalize_team(s):
 
 
 def player_key(name, team, pos):
-    """Stable join key. Position is uppercased; DEF/D/DST all fold to DST."""
+    """Composite join key: (name, team, pos), heuristic, NOT provably unique.
+
+    Position is uppercased; DEF/D/DST all fold to DST. `"TD"` folds to DST
+    too - NOT a typo for `"D/ST"` (investigated via `git log -S`, not
+    guessed): `sources/footballguys.yaml`'s `filters.pos` list carries a
+    lowercase `"td"` as THAT VENDOR's own position code for a team defense
+    row (alongside `"qb"`, `"rb"`, `"wr"`, `"te"`), which reaches this
+    function uppercased. Removing this fold would silently zero out every
+    Footballguys defense's key. Load-bearing; left alone.
+
+    This is the FALLBACK path - see `resolve_key`, which every real caller
+    in this project should actually use. A composite of visible fields can
+    never be proven unique (nothing stops two same-named players at the
+    same position on the same team), which is exactly why `resolve_key`
+    prefers a real CBS player id whenever one is available and only falls
+    back to this.
+    """
     p = (pos or "").strip().upper()
     if p in ("DEF", "D", "D/ST", "DST", "TD"):
         p = "DST"
     if p in ("PK",):
         p = "K"
     return "%s|%s|%s" % (normalize_name(name), normalize_team(team), p)
+
+
+def resolve_key(player_id, name, team, pos):
+    """The join key this project should actually use: a real CBS player id
+    when one is present, `player_key`'s (name, team, pos) heuristic
+    otherwise.
+
+    CBS's roster and CBS ↔ CBS position-group projection pages both carry a
+    stable numeric id per individual player (lifted from a `playerpage/<id>`
+    link - see `sffl.capture` and `sffl.cbs_weekly`/`sffl.cbs_roster`). That
+    id, when both sides of a join have it, is a GENUINELY unique key - unlike
+    the composite, nothing about it depends on how CBS chose to spell a name
+    or abbreviate a team this week. It does NOT help any other join: no
+    non-CBS vendor (draftsharks, footballguys, StatsDeck's injury feed) ever
+    populates `player_id`, so those rows always fall through to the composite
+    key here, exactly as they always have.
+
+    The id is namespaced (`"id:<n>"`) so it can never collide with a
+    composite key's `"name|team|pos"` shape - a row with an id and a row
+    without one can never accidentally compare equal just because one
+    happens to look like the other's string.
+    """
+    if player_id:
+        return "id:%s" % player_id
+    return player_key(name, team, pos)
 
 
 FUZZY_ACCEPT = 92.0   # rapidfuzz WRatio; below this we ask rather than guess

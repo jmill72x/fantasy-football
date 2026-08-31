@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 from sffl.cbs_roster import (_ROW, RosterRow, find_name_position_collisions,
@@ -5,6 +7,16 @@ from sffl.cbs_roster import (_ROW, RosterRow, find_name_position_collisions,
                              parse_positions, parse_roster)
 
 FIXTURE = "tests/fixtures/cbs_team_page.txt"
+
+# Mirrors `cbs_roster._ID_PREFIX` - the fixture now carries real CBS ids
+# (Task 3b), so a test that re-derives page order by matching `_ROW`
+# directly against RAW file lines (bypassing `_iter_lines`, which strips
+# this prefix before `_ROW` ever sees a line) must strip it too.
+_STRIP_ID = re.compile(r"^id=\d+\t")
+
+
+def _strip_id(line):
+    return _STRIP_ID.sub("", line)
 
 
 def test_the_real_captured_page_yields_a_full_roster():
@@ -29,7 +41,7 @@ def test_names_are_unique_and_in_page_order():
     page_order = []
     with open(FIXTURE) as fh:
         for line in fh:
-            m = _ROW.match(line.rstrip("\n"))
+            m = _ROW.match(_strip_id(line.rstrip("\n")))
             if m:
                 name = m.group("name").strip()
                 if name not in page_order:
@@ -200,8 +212,9 @@ def test_parse_lineup_rows_matches_parse_lineup_when_there_is_no_collision():
     name_starters, name_reserves = parse_lineup(FIXTURE)
     assert [r.name for r in starters] == name_starters
     assert [r.name for r in reserves] == name_reserves
-    assert starters[0] == RosterRow("Chargers", "TQB", "LAC")
-    assert reserves[-1] == RosterRow("Courtland Sutton", "WR", "DEN")
+    assert starters[0] == RosterRow("Chargers", "TQB", "LAC", "1974")
+    assert reserves[-1] == RosterRow("Courtland Sutton", "WR", "DEN",
+                                     "2218461")
 
 
 def test_parse_lineup_rows_keeps_both_sides_of_a_real_collision(tmp_path):
@@ -233,3 +246,68 @@ def test_parse_lineup_rows_collapses_only_an_exact_triple_match(tmp_path):
     )
     starters, _reserves = parse_lineup_rows(str(p))
     assert starters == [RosterRow("Ja'Marr Chase", "WR", "CIN")]
+
+
+# --- Task 3b: an optional leading "id=<digits>\t" prefix -------------------
+
+def test_a_leading_id_prefix_lands_on_the_roster_rows_player_id(tmp_path):
+    p = tmp_path / "with_id.txt"
+    p.write_text(
+        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "RESERVES\n"
+    )
+    starters, _reserves = parse_lineup_rows(str(p))
+    assert starters == [RosterRow("Ja'Marr Chase", "WR", "CIN", "2966320")]
+    assert starters[0].player_id == "2966320"
+
+
+def test_a_roster_row_with_no_id_prefix_falls_back_to_the_empty_string(tmp_path):
+    """THE DOCUMENTED FALLBACK PATH. A row with no leading id prefix at all
+    (page furniture, or a page saved before this existed - a real live
+    Chargers TQB row DOES carry its own id, see the module docstring)
+    must default `player_id` to "" so `identity.resolve_key` falls back to
+    the (name, slot, team) composite unconditionally, exactly as it always
+    has."""
+    p = tmp_path / "no_id.txt"
+    p.write_text("\tTQB\tChargers TQB • LAC\tARI\t\nRESERVES\n")
+    starters, _reserves = parse_lineup_rows(str(p))
+    assert starters == [RosterRow("Chargers", "TQB", "LAC")]
+    assert starters[0].player_id == ""
+
+
+def test_an_id_prefix_does_not_change_ROW_matching_for_any_other_parser(tmp_path):
+    """`parse_roster`/`parse_positions`/`parse_lineup`/
+    `find_name_position_collisions` all strip-and-discard the id prefix via
+    `_iter_lines` - they must behave identically whether a row carries one
+    or not, since none of them consume `player_id`."""
+    p = tmp_path / "with_id.txt"
+    p.write_text(
+        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "RESERVES\n"
+    )
+    assert parse_roster(str(p)) == ["Ja'Marr Chase"]
+    assert parse_positions(str(p)) == {"Ja'Marr Chase": "WR"}
+    starters, reserves = parse_lineup(str(p))
+    assert starters == ["Ja'Marr Chase"]
+    assert reserves == []
+    assert find_name_position_collisions(str(p)) == {}
+
+
+def test_two_id_prefixed_rows_that_share_an_id_are_still_two_distinct_rows(tmp_path):
+    """The id prefix does not change `RosterRow` equality/uniqueness on its
+    own here - `parse_lineup_rows` only collapses a row when name, slot, AND
+    team all agree (see its own docstring); a shared id with a different
+    slot is exactly the Chargers TQB/DST shape and must still yield two
+    separate rows for `_cmd_alert` to resolve independently."""
+    p = tmp_path / "shared_id.txt"
+    # A hypothetical (not a real CBS shape) where a team's TQB and DST rows
+    # were BOTH paired with the same id by a capture quirk - still two rows.
+    p.write_text(
+        "id=999\t\tTQB\tChargers TQB • LAC\tARI\t\n"
+        "id=999\t\tDST\tChargers DST • LAC\tARI\t\n"
+        "RESERVES\n"
+    )
+    starters, _reserves = parse_lineup_rows(str(p))
+    assert len(starters) == 2
+    assert set(r.slot for r in starters) == {"TQB", "DST"}
+    assert all(r.player_id == "999" for r in starters)

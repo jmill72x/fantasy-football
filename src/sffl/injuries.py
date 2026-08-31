@@ -182,6 +182,22 @@ def for_roster(reports, roster_names):
     for r in reports:
         by_key.setdefault(normalize_name(r.name), []).append(r)
     out = []
+    # `roster_names` CAN now contain repeats (Task 3b): `_cmd_alert` builds
+    # it from `RosterRow`s, which - since `parse_lineup_rows` stopped
+    # collapsing by name alone - legitimately carries the same display name
+    # twice for the Chargers TQB/DST shape. Deduping the NAMES iterated here
+    # (not `by_key`, and not the reports themselves) keeps a matching
+    # `Report` from being emitted twice for one roster - harmless today
+    # (a team defense is never issued an individual injury designation, per
+    # this function's own docstring) but no longer structurally impossible,
+    # and a caller appending both copies straight into a digest is exactly
+    # the kind of silent doubling this project's other fixes have been
+    # about closing.
+    seen_names = set()
     for name in roster_names:
-        out.extend(by_key.get(normalize_name(name), []))
+        key = normalize_name(name)
+        if key in seen_names:
+            continue
+        seen_names.add(key)
+        out.extend(by_key.get(key, []))
     return out

@@ -340,6 +340,37 @@ def test_punctuation_differing_name_is_not_reported_as_a_change():
     assert "lineup is already optimal" in msg.lower()
 
 
+def test_current_starters_team_must_already_be_normalized_by_the_caller():
+    """Task 3b minor (a): `_start_sit_diff` (via `compose`) compares
+    `current_starters`' team against `lineup_result` picks' team with NO
+    normalization of its own - it trusts the caller to have already done
+    that (`sffl.cli._cmd_alert` now normalizes `RosterRow.team` before
+    building `current_starters`; see its comment). This test pins the
+    MECHANISM that fix depends on: an un-normalized team code ("JAX", CBS's
+    own raw roster-page spelling) does NOT match the canonical code
+    ("JAC") a `PlayerProjection`-derived `Candidate` always carries, so
+    the SAME real player renders as BOTH a START and a SIT - exactly the
+    double-listing bug the fix prevents by normalizing before this point.
+    """
+    thomas_lineup = LineupResult(
+        slots=[("WR/TE", Candidate("Brian Thomas Jr.", "WR", 10.0, "JAC"))],
+        total=10.0)
+
+    # Un-normalized team code reaching this function directly: the bug,
+    # reproduced at the unit level.
+    msg_raw = compose("friday", 2, [], thomas_lineup, [],
+                      current_starters=[("Brian Thomas Jr.", "WR", "JAX")])
+    assert "Brian Thomas Jr." in _start_sit_block(msg_raw)
+    assert "already optimal" not in msg_raw.lower()
+
+    # The SAME player, ALREADY normalized (what `_cmd_alert` now passes):
+    # correctly recognized as already optimal, no phantom start/sit.
+    msg_normalized = compose(
+        "friday", 2, [], thomas_lineup, [],
+        current_starters=[("Brian Thomas Jr.", "WR", "JAC")])
+    assert "already optimal" in msg_normalized.lower()
+
+
 # --- I2: a blank status is never rendered as data --------------------------
 
 # An official row whose status came back empty. The official-row field
