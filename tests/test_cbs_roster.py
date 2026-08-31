@@ -311,3 +311,34 @@ def test_two_id_prefixed_rows_that_share_an_id_are_still_two_distinct_rows(tmp_p
     assert len(starters) == 2
     assert set(r.slot for r in starters) == {"TQB", "DST"}
     assert all(r.player_id == "999" for r in starters)
+
+
+def test_parse_lineup_rows_collapses_a_repeat_even_when_only_one_side_has_an_id(
+        tmp_path):
+    # Review round 2: the SAME entity (identical name, slot, team) rendered
+    # twice, but only ONE occurrence paired with a `playerpage/<id>` link
+    # (a real, if unobserved, capture-timing possibility - `_prefix_ids`
+    # pairs by document-order text match, and a repeated `<tr>` need not
+    # repeat identically in every detail). Dedup must key on (name, slot,
+    # team) alone, per the function's own docstring - not on the full
+    # 4-tuple including `player_id` - or this would silently survive as TWO
+    # rows for one real roster slot.
+    p = tmp_path / "one_sided_id.txt"
+    p.write_text(
+        "\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "RESERVES\n"
+    )
+    starters, _reserves = parse_lineup_rows(str(p))
+    assert starters == [RosterRow("Ja'Marr Chase", "WR", "CIN", "2966320")]
+
+    # And the reverse order - id-bearing occurrence FIRST, id-less SECOND -
+    # must not let the id-less repeat blank out the id already captured.
+    p2 = tmp_path / "one_sided_id_reversed.txt"
+    p2.write_text(
+        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "RESERVES\n"
+    )
+    starters2, _reserves2 = parse_lineup_rows(str(p2))
+    assert starters2 == [RosterRow("Ja'Marr Chase", "WR", "CIN", "2966320")]

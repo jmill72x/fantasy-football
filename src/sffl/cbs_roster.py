@@ -348,11 +348,26 @@ def parse_lineup_rows(path):
     (name, slot/pos, team) composite is the documented fallback for rows
     that don't - see the module docstring's "THE DURABLE FIX" note and
     `identity.resolve_key`.
+
+    DEDUP KEY IS (name, slot, team) ONLY, NOT `player_id` - deliberately,
+    per review round 2. The docstring above says a row collapses "ONLY when
+    NAME, SLOT, AND TEAM all agree"; `player_id` never entered that
+    definition, so it must not silently widen it. If it did (dedup on the
+    full 4-tuple), the SAME page-layout repeat this function exists to
+    collapse could survive as two rows whenever only one of the two
+    renderings paired with its `playerpage/<id>` link (a real, if
+    unobserved, capture-timing possibility - `_prefix_ids` pairs by text
+    match in document order, and a repeated `<tr>` need not repeat
+    identically in every detail) - re-introducing exactly the kind of
+    silent double-count this function's whole docstring is about avoiding.
+    Whichever occurrence carries a real id WINS the merge (an id is more
+    informative than its absence, never less) - it does not matter whether
+    the id-bearing or the id-less rendering is seen first.
     """
     starters = []
     reserves = []
-    seen_starters = set()
-    seen_reserves = set()
+    seen_starters = {}   # (name, slot, team) -> index into `rows`
+    seen_reserves = {}
     seen_marker = False
     rows, seen = starters, seen_starters
 
@@ -364,11 +379,17 @@ def parse_lineup_rows(path):
         m = _ROW.match(line)
         if not m:
             continue
-        row = RosterRow(m.group("name").strip(), m.group("slot"),
-                        m.group("team"), player_id)
-        if row in seen:
+        key = (m.group("name").strip(), m.group("slot"), m.group("team"))
+        row = RosterRow(key[0], key[1], key[2], player_id)
+        if key in seen:
+            # Same entity, rendered twice - a page-layout repeat. Keep
+            # whichever occurrence carries a real id; the id-less one adds
+            # no information once we know its (name, slot, team) already
+            # matched an earlier row.
+            if player_id and not rows[seen[key]].player_id:
+                rows[seen[key]] = row
             continue
-        seen.add(row)
+        seen[key] = len(rows)
         rows.append(row)
 
     if not seen_marker:

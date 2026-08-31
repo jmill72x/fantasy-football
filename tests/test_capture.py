@@ -215,6 +215,50 @@ def test_prefix_ids_skips_a_row_whose_own_text_is_entirely_blank():
     assert id_line == "id=2966320\t" + next_row
 
 
+def test_prefix_ids_skips_past_a_trailing_empty_cell():
+    # Task 3b review round 2: the mirror image of the leading-blank bug.
+    # A row's REAL content followed by a trailing empty cell renders as
+    # `tr.innerText` ending in "\n" with nothing after it - e.g. the
+    # Chargers DST row: "\tChargers\t18.4\n". Anchoring on the literal
+    # LAST "\n" (the old `rfind` logic) lands the prefix AFTER this row's
+    # own text entirely - i.e. at the START of the very next row's text -
+    # attaching this row's id to the NEXT row's content. Silent: the id
+    # is still present and still unique, so neither `ID COVERAGE LOST`
+    # nor a duplicate-id warning fires - a wrong-player join with no
+    # signal anywhere.
+    chargers = "\tChargers\t18.4\n"
+    patriots = "\tPatriots\t10.2\n"
+    full = "nav\n" + chargers + patriots + "footer"
+    rows = [{"id": "1974", "text": chargers}, {"id": "1981", "text": patriots}]
+    out = capture._prefix_ids(full, rows)
+    # The old buggy behavior (regression pin): "id=1974" must NOT end up
+    # immediately before the Patriots row's content.
+    assert "id=1974\t\tPatriots" not in out
+    lines = out.splitlines()
+    chargers_line = next(l for l in lines if l.startswith("id=1974"))
+    assert chargers_line == "id=1974\t\tChargers\t18.4"
+    patriots_line = next(l for l in lines if l.startswith("id=1981"))
+    assert patriots_line == "id=1981\t\tPatriots\t10.2"
+
+
+def test_prefix_ids_skips_past_a_trailing_whitespace_only_cell():
+    # Task 3b review round 2, second shape: a trailing cell that is
+    # whitespace-only rather than empty - `tr.innerText` ending in
+    # "\n " (a real line, non-empty, but blank once stripped). Anchoring
+    # on the literal last "\n" orphans the id onto that trailing blank
+    # line - a TOTAL id loss for this row. `cbs_weekly`'s unmatched-line
+    # watchdog would catch this (the merged text still contains " • "),
+    # but `cbs_roster` has no such guard - silent on the roster page.
+    row_text = "\tChargers\t18.4\n "
+    full = "nav\n" + row_text + "\nfooter"
+    rows = [{"id": "1974", "text": row_text}]
+    out = capture._prefix_ids(full, rows)
+    assert "id=1974" in out
+    lines = out.splitlines()
+    id_line = next(l for l in lines if l.startswith("id=1974"))
+    assert id_line == "id=1974\t\tChargers\t18.4"
+
+
 def test_capture_page_text_calls_evaluate_once_and_prefixes_ids(monkeypatch):
     # `_capture_page_text` must do exactly ONE page.evaluate round trip
     # (see its own docstring on why a second, separate inner_text() call

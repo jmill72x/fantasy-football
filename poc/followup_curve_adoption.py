@@ -1,5 +1,26 @@
 """Curve-adoption follow-up: apply the PRE-REGISTERED gate, exactly as written.
 
+CORRECTED 2026-08-30 (final-branch review, review round 2): the CONDITION-3 table
+transcribed below (`WINNERS_UNDER_PREDICT_WEEKLY`) was sourced from a cross-validated
+comparison run BEFORE the duplicate-entity data-integrity fix (commit `a8584da`). A
+held-out player's byte-identical duplicate id sat in the fit set for some folds,
+letting interpolation (the baseline) "predict" it almost exactly - flattering the
+baseline and making isotonic's margin look bigger than it honestly was. Re-run clean
+on de-duplicated data (`predict_weekly`, the production weekly predictor - see
+NEXT.md's dedup note and `.superpowers/sdd/2026-08-30-full-position-coverage/
+dedup-report.md`), `pass_yds` FLIPS from a win (0.1524 vs 0.1659, leaked) to a LOSS
+(0.1572 vs 0.1520, deduped) and does NOT belong in the isotonic winner set. It was
+adopted anyway on the leaked numbers, then reverted (commit `e82d2e2`) once this was
+caught. The table and `WINNERS_UNDER_PREDICT_WEEKLY` below are updated to the deduped
+numbers so that re-running this script today does not re-recommend `pass_yds`.
+The isotonic winner set is now FOUR stats: `pass_cmp`, `rec_ct`, `rec_yds`, `rush_yds`.
+The `pooled` column/winner list below was NOT re-measured post-dedup (out of scope for
+the dedup fix) - it does not matter operationally, since `build_curves_pooled` was
+independently eliminated as a candidate method entirely by the later third-measurement
+gate (`poc/loo_top10_stability.py`; see NEXT.md): "failed the bundle gate outright...
+does not return as a candidate." Do not act on the `pooled` numbers below as current
+evidence for anything.
+
 Gate: docs/superpowers/specs/2026-08-30-curve-adoption-followup-preregistration.md
 (committed as c6dc0b7, BEFORE this script was run). This script does not
 choose, tune, or reinterpret anything the gate does not already say. It
@@ -9,11 +30,14 @@ FOUR CONDITIONS, per stat, ALL required for a candidate to be adopted:
   1. top10_cost improves by >= 1.00 absolute vs the shipped 15.168.
   2. Overall mae regresses by no more than $0.25 absolute vs the shipped 4.3392.
   3. The stat won its cross-validated held-out MAE in the FIRST experiment,
-     under predict_weekly (the production weekly predictor). Those numbers
-     are taken verbatim from
-     .superpowers/sdd/2026-08-30-regularised-calibration-curves/task-4-report.md
-     and are NOT re-run or re-derived here (see WINNERS_UNDER_PREDICT_WEEKLY
-     below, with the source table transcribed in a comment).
+     under predict_weekly (the production weekly predictor). The `isotonic`
+     numbers below are the 2026-08-30 de-duplicated re-measurement (see the
+     CORRECTED note above and `.superpowers/sdd/2026-08-30-full-position-
+     coverage/dedup-report.md`) - NOT the original leaked transcription from
+     .superpowers/sdd/2026-08-30-regularised-calibration-curves/task-4-report.md,
+     which is preserved only for the (moot) `pooled` column (see
+     WINNERS_UNDER_PREDICT_WEEKLY below, with the source table transcribed
+     in a comment).
   4. The replacement policy is HELD FIXED at "starter" for every candidate
      and the baseline. This script computes fit.score_fit(lg, pool, prices,
      "starter") directly and never calls fit.choose_policy for the reported
@@ -101,24 +125,43 @@ TOP10_COST_GATE = 1.00   # must IMPROVE by at least this much (absolute $)
 MAE_GUARD = 0.25         # must not REGRESS by more than this much (absolute $)
 
 # ---------------------------------------------------------------------------
-# CONDITION 3 - transcribed verbatim from the Task 4 report's "Dataset 2:
-# build-set + held-back / Predictor: predict_weekly" table (the file at
-# .superpowers/sdd/2026-08-30-regularised-calibration-curves/task-4-report.md,
-# lines 96-104). NOT re-run. NOT re-derived. A stat is a "winner" for a
-# method here iff that method's MAE beat the baseline's MAE in that table
-# (a tie would be a loss, but none of the rows below tie).
+# CONDITION 3 - the `isotonic` columns/rows below are the DE-DUPLICATED
+# re-measurement (`predict_weekly`, production weekly predictor; see
+# `.superpowers/sdd/2026-08-30-full-position-coverage/dedup-report.md` and
+# NEXT.md's dedup note) - corrected 2026-08-30, see the module docstring's
+# CORRECTED note above for why. The original transcription (from the Task 4
+# report at .superpowers/sdd/2026-08-30-regularised-calibration-curves/
+# task-4-report.md, lines 96-104) was measured on data with a leaked
+# duplicate-entity player_id and is preserved only in the `(leaked, NOT
+# re-verified)` rows/columns - do not treat those as current evidence.
 #
-# stat        baseline   isotonic   pooled     isotonic winsCond3?  pooled winsCond3?
-# def_pa      0.1740     0.2451     0.1701     no (worse)           yes (0.1701<0.1740)
-# def_ya      0.1408     0.5062     0.1232     no (worse)           yes (0.1232<0.1408)
-# pass_cmp    0.1199     0.1176     0.1235     yes (0.1176<0.1199)  no (worse)
-# pass_yds    0.1659     0.1524     0.1467     yes (0.1524<0.1659)  yes (0.1467<0.1659)
-# rec_ct      0.1155     0.0871     0.0845     yes (0.0871<0.1155)  yes (0.0845<0.1155, caveat)
-# rec_yds     0.0622     0.0492     0.0933     yes (0.0492<0.0622)  no (worse)
-# rush_yds    0.0908     0.0689     0.0771     yes (0.0689<0.0908)  yes (0.0771<0.0908)
+# A stat is a "winner" for a method here iff that method's MAE beat the
+# baseline's MAE (a tie would be a loss; none of the rows below tie).
+#
+# stat        baseline   isotonic   winsCond3?              source
+# pass_cmp    0.1333     0.1253     yes (0.1253<0.1333)      deduped
+# pass_yds    0.1520     0.1572     NO (0.1572>0.1520, LOSES) deduped - FLIPPED from the
+#                                                              leaked table's apparent win
+# rec_ct      0.1205     0.0864     yes (0.0864<0.1205)      deduped
+# rec_yds     0.0700     0.0588     yes (0.0588<0.0700)      deduped
+# rush_yds    0.0926     0.0718     yes (0.0718<0.0926)      deduped
+#
+# `pooled` column (leaked, NOT re-verified post-dedup - moot regardless, see
+# the module docstring: build_curves_pooled was independently eliminated as
+# a candidate method entirely by the later third-measurement gate):
+# stat        baseline   pooled     winsCond3?
+# def_pa      0.1740     0.1701     yes (0.1701<0.1740, leaked, not re-verified)
+# def_ya      0.1408     0.1232     yes (0.1232<0.1408, leaked, not re-verified)
+# pass_cmp    0.1199     0.1235     no (worse, leaked, not re-verified)
+# pass_yds    0.1659     0.1467     yes (leaked table only - pass_yds lost condition 3
+#                                    under isotonic post-dedup; pooled itself was never
+#                                    re-run post-dedup and is moot regardless)
+# rec_ct      0.1155     0.0845     yes (0.0845<0.1155, caveat, leaked, not re-verified)
+# rec_yds     0.0622     0.0933     no (worse, leaked, not re-verified)
+# rush_yds    0.0908     0.0771     yes (0.0771<0.0908, leaked, not re-verified)
 # ---------------------------------------------------------------------------
 WINNERS_UNDER_PREDICT_WEEKLY = {
-    "isotonic": ["pass_cmp", "pass_yds", "rec_ct", "rec_yds", "rush_yds"],
+    "isotonic": ["pass_cmp", "rec_ct", "rec_yds", "rush_yds"],
     "pooled": ["def_pa", "def_ya", "pass_yds", "rec_ct", "rush_yds"],
 }
 

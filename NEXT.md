@@ -62,12 +62,17 @@ default and what `score_week` actually calls): isotonic still beats the baseline
 (0.0588 vs 0.0700), and `rush_yds` (0.0718 vs 0.0926). **`pass_yds` FLIPS: isotonic now
 LOSES to the baseline (0.1572 vs 0.1520)** - under the leaked data it had appeared to win
 (0.1524 vs 0.1659). Under `predict_raw` (the auction-board predictor), all five still
-hold post-dedup, `pass_yds` included (0.1420 vs 0.1713). **Open item, not acted on here:**
-`pass_yds`'s isotonic adoption is no longer justified by an honest cross-validation under
-the predictor that actually matters for `sffl week`'s weekly path (`predict_weekly`), even
-though the shipped curve itself is byte-identical either way (isotonic vs interpolated
-differ negligibly at the small per-player anchor count `pass_yds` has). Full report:
-`.superpowers/sdd/2026-08-30-full-position-coverage/dedup-report.md`.
+hold post-dedup, `pass_yds` included (0.1420 vs 0.1713). **ACTED ON 2026-08-30 (commit
+`e82d2e2`):** `pass_yds`'s isotonic adoption was no longer justified by an honest
+cross-validation under the predictor that actually matters for `sffl week`'s weekly path
+(`predict_weekly`), so it was **reverted** to `build_curves`/interpolation — the shipped
+curve is NOT unaffected by this: `calibration/2025.yaml`, `market/2026.yaml`, and the
+adopted-stat list all changed (see the isotonic-adoption checklist item below for the
+current numbers). The adopted isotonic bundle is now four stats: `pass_cmp`, `rec_ct`,
+`rec_yds`, `rush_yds`. Full report:
+`.superpowers/sdd/2026-08-30-full-position-coverage/dedup-report.md` (the original
+measurement) and `.superpowers/sdd/2026-08-30-full-position-coverage/pass-yds-revert-
+report.md` (the revert).
 
 **TASK 3b (2026-08-30) CLOSED THE CBS ↔ CBS IDENTITY GAP WITH REAL CBS PLAYER IDs -
 the composite key below is now only the FALLBACK, not the primary mechanism.**
@@ -317,20 +322,28 @@ Update this block at the end of every session so the next one can resume blind.
       **BLOCKER when it is picked up: Draft Sharks — the production source — does not publish
       offensive fumbles at all** (only defensive `Fum Rec`/`Forced Fumble`). Footballguys has
       `fum-lost`. So adding the term needs an FBG join, not just a YAML line.
-- [x] **Isotonic calibration curves ADOPTED for 5 stats — DONE 2026-08-30.** The
+- [x] **Isotonic calibration curves ADOPTED for 4 stats — DONE 2026-08-30 (revised).** The
       fitted/regularised-curve follow-up TODO B called for actually ran and cleared its
-      gate. `pass_cmp`, `pass_yds`, `rec_ct`, `rec_yds`, `rush_yds` now ship from
-      `build_curves_isotonic` on the full dataset (build set + held-back, 132/2424 -
+      gate for five stats on the full dataset (build set + held-back, 132/2424 -
       **corrected 2026-08-30 to 127/2339**, four files carried duplicate entities;
       see the dedup note near the top of this file). `pass_yds`'s cross-validated win
-      over the baseline does NOT survive de-duplication under the weekly predictor -
-      see the same note; the shipped curve itself is unaffected.
-      `top10_cost` 15.1681 → 12.5436, `mae` 4.3392 → 4.4758, `top10_bias` +5.1042 →
-      +3.7312. `def_pa`/`def_ya` deliberately NOT adopted (DST is flat-priced, structurally
-      inert on the board; weekly path ungated). `market/2026.yaml` refit accordingly.
-      **Open items:** whether `def_pa`/`def_ya` should move to isotonic for the weekly
-      (`sffl week`) path is unmeasured; pooled residual estimation is eliminated, do not
-      revisit. See the full section further down and
+      over the baseline did NOT survive de-duplication under the weekly predictor
+      (`predict_weekly`: 0.1572 vs baseline 0.1520, a loss) and was **reverted**
+      (commit `e82d2e2`) - the shipped curve is back to interpolated, byte-identical to
+      the pre-adoption version. **The adopted set is four stats: `pass_cmp`, `rec_ct`,
+      `rec_yds`, `rush_yds`.** Re-measured with `pass_yds` removed: `top10_cost` 15.1681 →
+      13.2633, `mae` 4.3392 → 4.4154, `top10_bias` stays positive at +4.1025.
+      `def_pa`/`def_ya` deliberately NOT adopted (DST is flat-priced, structurally
+      inert on the board). `market/2026.yaml` refit accordingly: `a=2.028495994199789,
+      b=0.6511171620237226, mae=4.4154, top10_bias=4.1025`.
+      **Resolved:** whether `def_pa`/`def_ya` should move to isotonic for the weekly
+      (`sffl week`) path WAS measured (commit `9b2fcdc`, pre-registered gate,
+      `docs/superpowers/specs/2026-08-30-def-curve-weekly-gate.md`) - **underpowered at
+      n=21, keep the baseline.** No combination of `build_curves_isotonic`/
+      `build_curves_pooled` cleared the pre-registered +0.15 Spearman margin on both
+      k=5 and leave-one-out; this is underpowered evidence, not a claim the candidates
+      are worse. Pooled residual estimation is eliminated, do not revisit. See the full
+      section further down and
       `.superpowers/sdd/2026-08-30-regularised-calibration-curves/`.
 
 Work top to bottom. Each unchecked box is the next thing to do.
@@ -782,7 +795,15 @@ README repeating this reasoning. They are real and expensive to re-collect. **Th
 to use them is a fitted/regularised curve rather than raw interpolation — a genuine
 follow-up, and a good one, but not an auction-week change.**
 
-## THE FOLLOW-UP RAN — isotonic curves ADOPTED for 5 stats (2026-08-30)
+## THE FOLLOW-UP RAN — isotonic curves ADOPTED for 5 stats, later revised to 4 (2026-08-30)
+
+**REVISED 2026-08-30 (commit `e82d2e2`): `pass_yds` was REMOVED from the isotonic bundle
+after re-measurement on de-duplicated data showed it losing to the baseline under
+`predict_weekly` (0.1572 vs 0.1520). The section below is left as the historical record of
+the ORIGINAL five-stat adoption; wherever it describes what is currently shipped (the stat
+list, the `market/2026.yaml` coefficients, the "shipped curve is unaffected" claim, the test
+count), read the correction in the isotonic-adoption checklist item above instead — this
+section's numbers for those are stale.**
 
 **DONE.** The follow-up TODO B predicted ("a fitted/regularised curve rather than raw
 interpolation") was built, measured through three pre-registered gates, and adopted. Full
@@ -806,8 +827,11 @@ consistency" without a new gate:
 1. DST sits in `flat_priced_pools`, so its curve never reaches `_dollars` — structurally
    inert on the auction board.
 2. The weekly (in-season, `sffl week`) path where a DST curve DOES matter was never covered
-   by any pre-registered gate in this experiment. **Open item:** whether `def_pa`/`def_ya`
-   should also move to isotonic for the weekly path is unmeasured and undecided.
+   by any pre-registered gate in this experiment. **RESOLVED 2026-08-30 (commit `9b2fcdc`):**
+   a pre-registered gate (`docs/superpowers/specs/2026-08-30-def-curve-weekly-gate.md`) was
+   run — **underpowered at n=21, keep the baseline.** No candidate cleared the pre-registered
+   +0.15 Spearman margin on both k=5 and leave-one-out; this is underpowered evidence, not a
+   finding that the candidates are worse.
 
 **Pooled residual estimation (`build_curves_pooled`) was tried and eliminated** — it failed
 the bundle gate outright (`top10_cost` change of -0.05, i.e. no improvement) and does not
@@ -843,10 +867,14 @@ effect of +2.62** — the gain does not concentrate in one or two players.
   keeps the two files from drifting apart.
 - `market/2026.yaml` — refit with `sffl fit-market --force` against the same evidence
   (same extract, same prices, same league profile) recorded in its own `evidence` block,
-  since the curves it depends on changed. New curve: `a=2.0482551357513357,
-  b=0.6459690793595126` (was `a=2.0115481304265863, b=0.6620227660597623`). New
-  `diagnostics`: `mae=4.4758, top10_mae=8.8124, top10_bias=3.7312` (was `mae=4.3392,
-  top10_mae=10.0638, top10_bias=5.1042`).
+  since the curves it depends on changed. New curve (at the time, five-stat bundle):
+  `a=2.0482551357513357, b=0.6459690793595126` (was `a=2.0115481304265863,
+  b=0.6620227660597623`). New `diagnostics`: `mae=4.4758, top10_mae=8.8124,
+  top10_bias=3.7312` (was `mae=4.3392, top10_mae=10.0638, top10_bias=5.1042`).
+  **SUPERSEDED 2026-08-30 (commit `e82d2e2`, `pass_yds` reverted): the COMMITTED
+  `market/2026.yaml` today is the four-stat refit, `a=2.028495994199789,
+  b=0.6511171620237226`, `mae=4.4154, top10_bias=4.1025` — the numbers just above are
+  historical, not what is currently shipped.**
 - `tests/test_market_model.py::test_the_committed_2026_artifact_is_pinned` — updated to the
   new coefficients (a deliberate refit, not drift — see the test's own comment).
 - `tests/test_calibrate_eval.py::test_the_harness_reproduces_the_shipped_curves` — updated:
@@ -863,7 +891,9 @@ effect of +2.62** — the gain does not concentrate in one or two players.
   above, with a pointer back to the full experiment record.
 
 **Full test suite: 654 passed** (was 653 — one added, `test_every_curve_stat_has_
-provenance_and_vice_versa`).
+provenance_and_vice_versa`). **Stale as of 2026-08-30: the current full suite (after the
+`pass_yds` revert, the duplicate-entity fix, and full position coverage) is 770 passed —
+see the isotonic-adoption checklist item above and the top of this file.**
 
 ### Also found while checking the new data — a real scoring gap
 

@@ -129,3 +129,41 @@ bounded pull rather than a filtered one. The missing 10 are not unavailable; nob
 them. Scraping them would take n from 22 to 32, cutting the standard error to about 0.18 —
 still not enough to resolve a small difference, but a real improvement, and the single cheapest
 thing that would make this question answerable.
+
+---
+
+## CORRECTION, 2026-08-30 (final-branch review) — the sample is 21, not 22
+
+The duplicate-entity data-integrity fix (commit `a8584da`, `sffl.weekly.load_weekly` now
+collapses byte-identical-history duplicate ids at load) found that the held-back DST file
+itself carries the Vikings under two different CBS ids (`1916`/`1918`) with byte-identical
+weekly stats. **The 22 count above included this duplicate as two defenses; the real
+distinct count is 21.** Every statement of "22" above this line (including the one used to
+derive the ≈0.218 standard error) is left in place rather than edited, exactly as the "22, not
+26" correction above was — so both corrections stay visible in sequence.
+
+**Consequence for the gate.** Spearman's standard error at n=21 is 1/sqrt(20) ≈ **0.224**,
+marginally weaker still than the ≈0.218 quoted above — the same direction of consequence
+already noted there (the 0.15 threshold sits further below one standard error, so a bare
+clear is even less meaningful). The threshold is, again, NOT being raised for the same reason
+already given: moving it after learning the sample size is the same error as moving it after
+seeing results.
+
+**The gate was run on the corrected n=21** (commit `9b2fcdc`, `poc/measure_dst_ranking.py`,
+which loads through `load_weekly` and so gets the de-duplicated count automatically, with no
+script change needed): no candidate (`build_curves_isotonic` or `build_curves_pooled`) cleared
+the pre-registered ≥0.15 Spearman margin on both k=5 and leave-one-out. Per this document's own
+"Honest possible outcomes" #2 and the "underpowered... not... failed" instruction above: **the
+correct statement is that this measurement is underpowered at n=21, keeping the baseline for
+want of evidence, not that the candidates failed.**
+
+**Also correcting §"Out of scope" above ("The five stats adopted on 2026-08-30. Settled; not
+reopened.")** — that line is itself now stale, for an unrelated reason discovered later the
+same day: `pass_yds`'s cross-validated win was measured on data with the same duplicate-entity
+leak described above, and did not survive re-measurement on de-duplicated data under the
+production weekly predictor (0.1572 vs baseline 0.1520 — a loss). It was reverted (commit
+`e82d2e2`). **The adopted, currently-shipped set is four stats: `pass_cmp`, `rec_ct`,
+`rec_yds`, `rush_yds`.** This does not reopen anything in scope for THIS gate (`def_pa`/
+`def_ya` were never part of that adoption either way), but the line asserting "the five stats"
+as settled fact is no longer accurate and should not be relied on. See `NEXT.md`'s
+isotonic-adoption note for the current numbers.
