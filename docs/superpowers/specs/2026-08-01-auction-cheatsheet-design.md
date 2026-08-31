@@ -581,6 +581,11 @@ fpg) were both tried and neither recovered it.
 both held-out accuracy and price fit. The other 84 players' rows are kept (gitignored) at
 `data/weekly/2025/_held_back/` with a README.
 
+**Corrected 2026-08-30: the real count is 46 players / 777 player-weeks** — `RB.csv`
+carried a duplicate-entity pair (TreVeyon Henderson, Kyle Monangai) under two `player_id`s;
+see `NEXT.md`'s dedup note and `data/weekly/2025/_held_back/README.md`'s CORRECTION
+section. The shipped curve itself is unaffected.
+
 **The real remaining improvement is a fitted or regularised curve rather than raw
 interpolation.** With that in place the held-back data becomes an asset rather than noise.
 This is a genuine follow-up and a good one — it was simply not an auction-week change.

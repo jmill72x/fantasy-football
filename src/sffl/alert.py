@@ -252,38 +252,104 @@ def _is_changed(r):
     return bool(r.previous_status) and r.previous_status != r.status
 
 
-# Why a starter was never scored. These are NOT interchangeable: the first
-# is a known limitation of what this pipeline captures and says nothing at
-# all about the player; the second means a player who SHOULD have had a
-# projection did not, which is a data problem worth chasing. Rendering them
-# as one bucket - or worse, as a SIT recommendation - throws that signal away.
+# Why a starter was never scored. These are NOT interchangeable - each is a
+# genuinely different fact about the run, and rendering any two of them as
+# one bucket (or worse, as a SIT recommendation) throws away a real signal:
+#
+#   POSITION_NOT_CAPTURED - a PERMANENT scope limit. This pipeline never
+#     captures this position at all (no group in sources/cbs-weekly.yaml
+#     covers it). Says nothing about the player.
+#
+#   PROJECTION_PAGE_FAILED - a TRANSIENT, THIS-RUN-ONLY failure. The
+#     position IS ordinarily captured, but its page failed to capture or
+#     parse on this specific run (see the "!! PROJECTIONS DEGRADED" note
+#     elsewhere in the digest). Distinct from POSITION_NOT_CAPTURED on
+#     purpose: reusing that wording for a page that failed today would
+#     read as "this pipeline has never covered defenses," which is false
+#     and hides the actual, fixable, one-run failure - fixed 2026-08-30
+#     after a reviewer reproduced exactly this misreport with a K-page
+#     failure.
+#
+#   PROJECTION_MISSING - a DATA PROBLEM. The position IS captured, this
+#     run's page for it DID succeed, and this specific player still has no
+#     row - worth chasing, not a tool limit or a transient failure.
+#
+#   ROSTER_NAME_AMBIGUOUS - a ROSTER-PARSING PROBLEM, not a projections
+#     problem at all. This was `_cmd_alert`'s FIRST fix (2026-08-30) for a
+#     reviewer-reproduced bug: CBS's TQB and DST pages both use the NFL
+#     team nickname as a row's "player name", so nothing stops a manager
+#     from rostering the SAME real team for both slots - "Chargers" TQB
+#     and "Chargers" DST are both legitimate, independent picks - and the
+#     old `parse_lineup`/`parse_positions` (name-only) silently lost the
+#     second row entirely, rendering its slot `-- UNFILLED` at exit 0 with
+#     no mention anywhere. `sffl.cbs_roster.find_name_position_collisions`
+#     found this collision; the fix at the time was to exclude both names
+#     from scoring and report them here instead. SUPERSEDED, the same day,
+#     by a more complete fix: `cbs_roster.parse_lineup_rows` now keeps each
+#     row's own (name, slot, team) from the start, so this ambiguity never
+#     arises - both entries resolve correctly and independently, and
+#     `_cmd_alert` no longer produces this reason. Kept here (and still
+#     rendered correctly by `compose` below) as a supported, tested part of
+#     this function's CONTRACT, in case a future caller ever needs it -
+#     removing it outright would be presuming no one else ever will.
 POSITION_NOT_CAPTURED = "position-not-captured"
+PROJECTION_PAGE_FAILED = "projection-page-failed"
 PROJECTION_MISSING = "projection-missing"
+ROSTER_NAME_AMBIGUOUS = "roster-name-ambiguous"
 
 _UNEVALUATED_REASONS = {
     POSITION_NOT_CAPTURED: (
         "Their position is not in the projections page this job captures, so "
         "they were never scored. This says NOTHING about whether to start "
         "them - it is a limit of the tool, not a judgement on the player:"),
+    PROJECTION_PAGE_FAILED: (
+        "Their position IS ordinarily captured, but that page's capture or "
+        "parse FAILED on this specific run (see the PROJECTIONS DEGRADED "
+        "note in this digest) - so they were not scored today. This is NOT "
+        "a permanent limit of the tool; check back next run:"),
     PROJECTION_MISSING: (
         "Their position IS captured and they still had no projection - so "
         "this is a DATA PROBLEM, not advice. Check the projections capture "
         "for these names:"),
+    ROSTER_NAME_AMBIGUOUS: (
+        "This name appears on your CBS roster page more than once, for "
+        "DIFFERENT positions - most likely the same NFL team rostered for "
+        "both TQB and DST. This pipeline cannot tell the two roster slots "
+        "apart from the page alone, so NEITHER was scored; check your "
+        "roster manually for these names (position shown is one of the "
+        "colliding ones, not necessarily the right one):"),
 }
 
 
 def _start_sit_diff(lineup_result, current_starters, sidelined, unevaluated):
     """(start, sit) display names: optimal lineup vs the CBS current one.
 
-    Compared on `normalize_name`, never on raw strings - the roster page and
-    the projections page disagree about punctuation, and a literal
-    comparison would invent a phantom move for the same player.
+    `current_starters` is a list of `(name, pos, team)` triples, NOT bare
+    names - see `compose`'s docstring for why. Compared on
+    `(normalize_name(name), pos, team)`, never on name alone: the roster
+    page and the projections page disagree about punctuation ("Ja'Marr
+    Chase" vs "JaMarr Chase" - `normalize_name` handles that), but a
+    name-only key ALSO cannot tell two rostered picks with the SAME
+    display name apart - an NFL team rostered for both TQB and DST
+    ("Chargers" is a real row on both CBS pages) is a reproduced case; two
+    different NFL players sharing a name at the same position on different
+    teams is a real one too (see `sffl.cli._merge_projection_groups`'s
+    docstring for both). A name-only diff would collapse either pair into
+    one dict entry and silently drop half of a real start/sit comparison.
 
     `sidelined` names are dropped from the optimal side before the diff runs
     at all, so a player excluded because he will not play can never be
     reported as a "start" - regardless of how he got into `lineup_result`
     (the optimizer's own candidate pool already omits Out players, but this
     is the one place that guarantees it rather than assuming it).
+    Name-only, a narrower heuristic than the (name, pos, team) key used
+    everywhere else here - `sidelined` is `(name, status)` pairs with no
+    position attached (see `_cmd_alert`), and upgrading its shape too was
+    judged disproportionate for a residual this narrow: the practical
+    effect of a false-positive match here is a HEALTHY player's start
+    getting incorrectly suppressed, which is a strictly smaller harm than
+    what this whole fix round targets (a real player's SLOT silently
+    vanishing or being filled by the wrong data).
 
     `unevaluated` names are dropped from the CURRENT side before the diff,
     for the same class of reason and with more urgency: a starter who was
@@ -296,23 +362,26 @@ def _start_sit_diff(lineup_result, current_starters, sidelined, unevaluated):
     has done exactly this since it grew a --current flag; its comment says a
     player who quietly vanishes reads as "no longer on your roster" rather
     than "ruled out", and the same applies to one who quietly appears under
-    SIT.
+    SIT. Matched on (normalize_name, pos) - `unevaluated` carries a position
+    but no team, matching how far `_cmd_alert` can currently take it.
     """
     sidelined_keys = set(normalize_name(name) for name, _status in sidelined)
-    unevaluated_keys = set(normalize_name(name) for name, _pos, _why
+    unevaluated_keys = set((normalize_name(name), pos) for name, pos, _why
                            in unevaluated)
 
     optimal_by_key = {}
     for _slot, pick in lineup_result.slots:
         if pick is None:
             continue
-        key = normalize_name(pick.name)
-        if key in sidelined_keys:
+        if normalize_name(pick.name) in sidelined_keys:
             continue
+        key = (normalize_name(pick.name), pick.pos, pick.team)
         optimal_by_key[key] = pick.name
 
-    current_by_key = dict((normalize_name(n), n) for n in current_starters
-                          if normalize_name(n) not in unevaluated_keys)
+    current_by_key = dict(
+        ((normalize_name(name), pos, team), name)
+        for name, pos, team in current_starters
+        if (normalize_name(name), pos) not in unevaluated_keys)
 
     start = sorted(optimal_by_key[k] for k in optimal_by_key
                    if k not in current_by_key)
@@ -324,21 +393,28 @@ def _start_sit_diff(lineup_result, current_starters, sidelined, unevaluated):
 def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             capture_error=None, current_starters=None,
             unevaluated_starters=None, injury_error=None,
-            injuries_age_minutes=None):
+            injuries_age_minutes=None, projections_capture_error=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
-    for roster players excluded from the lineup. `current_starters` is the
-    list of names CBS currently has starting, if known - `None` means
-    unknown (no diff is rendered); `[]` means known-and-empty (a real state,
-    which CAN render a diff recommending every optimal starter).
+    for roster players excluded from the lineup. `current_starters` is a
+    list of `(name, pos, team)` triples for who CBS currently has starting,
+    if known - `None` means unknown (no diff is rendered); `[]` means
+    known-and-empty (a real state, which CAN render a diff recommending
+    every optimal starter). NOT bare names: see `_start_sit_diff`'s
+    docstring for why name alone cannot tell two rostered picks that share
+    a display name apart (an NFL team rostered for both TQB and DST; two
+    different NFL players sharing a name at the same position on different
+    teams), both of which are real, reproduced hazards, not hypotheticals.
 
     `unevaluated_starters` is a list of (name, position, reason) for current
-    starters that were never scored, `reason` being POSITION_NOT_CAPTURED or
-    PROJECTION_MISSING. They are excluded from the SIT column and named in
-    their own section instead - see `_start_sit_diff`. It defaults to `None`
-    (treated as empty) so a caller that does not know is not forced to lie
-    about it; `_cmd_alert` always passes it.
+    starters that were never scored - see `POSITION_NOT_CAPTURED`,
+    `PROJECTION_PAGE_FAILED`, `PROJECTION_MISSING` and
+    `ROSTER_NAME_AMBIGUOUS` above for what each `reason` means and how they
+    differ. They are excluded from the SIT column and named in their own
+    section instead - see `_start_sit_diff`. It defaults to `None` (treated
+    as empty) so a caller that does not know is not forced to lie about it;
+    `_cmd_alert` always passes it.
 
     `injury_error` is why the injury feed could not be read, if it could
     not. It is NOT the same state as `reports=[]`, which means the feed was
@@ -346,6 +422,19 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     is that the two used to render identically. `injuries_age_minutes` is
     how old the injuries file was when it was read, or `None` if there was
     no file to age.
+
+    `capture_error` and `projections_capture_error` are BOTH "nothing here
+    can be trusted, short-circuit the whole digest" states, and are
+    DELIBERATELY NOT interchangeable, even though both suppress the same
+    downstream content. `capture_error` means the ROSTER could not be read
+    - nothing at all is known, including who Jeff even rosters, so the fix
+    is CBS login. `projections_capture_error` means the roster WAS read
+    successfully but every one of the four projection pages failed, so no
+    lineup could be SCORED - a completely different failure with a
+    completely different fix (a projections-page problem, not a login
+    problem). Reusing `capture_error`'s roster-failure prose for this case
+    - which `_cmd_alert` did before a reviewer caught it - tells the reader
+    to re-run `cbs_login.py` when the login was never the problem.
     """
     if kind not in _KINDS:
         raise ValueError(
@@ -363,6 +452,20 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
                      "an unverified capture parses to an EMPTY roster, and a "
                      "lineup built from that would be confidently wrong.")
         lines.append("Fix: ./.venv/bin/python ops/cbs_login.py")
+        return "\n".join(lines)
+
+    if projections_capture_error:
+        lines.append("!! ALL PROJECTIONS CAPTURE FAILED: %s"
+                     % projections_capture_error)
+        lines.append("")
+        lines.append("Your ROSTER was read successfully, but none of the "
+                     "four position-group projection pages could be "
+                     "captured or parsed this run, so no lineup can be "
+                     "scored. This is a projections-page problem, NOT a "
+                     "login problem - the roster capture above worked fine.")
+        lines.append("Fix: check CBS's stats-main pages directly (they may "
+                     "be down or slow), or re-run this job again shortly; "
+                     "re-running cbs_login.py will not help here.")
         return "\n".join(lines)
 
     lines.append(_roster_age_line(roster_age_days))
@@ -410,7 +513,8 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             # here says what was NOT done, never what to do.
             lines.append("NOT EVALUATED for start/sit - these are NOT "
                          "recommendations to bench anyone:")
-            for why in (POSITION_NOT_CAPTURED, PROJECTION_MISSING):
+            for why in (POSITION_NOT_CAPTURED, PROJECTION_PAGE_FAILED,
+                       PROJECTION_MISSING, ROSTER_NAME_AMBIGUOUS):
                 rows = sorted(r for r in unevaluated if r[2] == why)
                 if not rows:
                     continue

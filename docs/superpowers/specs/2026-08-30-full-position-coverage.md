@@ -1,7 +1,11 @@
 # Full Position Coverage: TQB, K and DST Weekly Projections — Design
 
 **Date:** 2026-08-30
-**Status:** proposed
+**Status:** **IMPLEMENTED** on branch `position-coverage` (unmerged as of 2026-08-30).
+All four groups — `RB-WR-TE`, `TQB`, `DST`, `K` — are defined in `sources/cbs-weekly.yaml`
+with measured column maps and `expect_tokens`; `sffl week` takes `--projections-tqb/-k/-dst`
+and `sffl alert` builds all four page URLs from `--week`. (This line read "proposed" until
+the 2026-08-30 docs audit.)
 
 ## The problem
 
@@ -37,6 +41,13 @@ quarterbacks.
 
 **And the calibration work just merged was largely for TQB:** `pass_yds` went from 4 anchors to
 31 and `pass_cmp` from 4 to 29. The scoring is ready and waiting.
+
+> **Corrected 2026-08-30 (later the same day):** `pass_yds` is back to **4 anchors**. Its
+> isotonic adoption was reverted (commit `e82d2e2`) after re-measurement on de-duplicated
+> data showed it losing to the baseline under `predict_weekly` — see
+> `calibration/2025.provenance.yaml`, which is the authority. `pass_cmp`'s 4 → 29 stands.
+> This does not change anything in this spec: TQB scoring never depended on which builder
+> produced `pass_yds`'s curve, only on the curve existing.
 
 ## The measured column maps
 

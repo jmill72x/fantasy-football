@@ -1,9 +1,13 @@
+import warnings
+
 import pytest
 
-from sffl.weekly import load_weekly
+from sffl.weekly import DuplicateEntityWarning, load_weekly
 
 FIXTURE = "tests/fixtures/weekly_sample.csv"
 FIXTURE_BLANKS = "tests/fixtures/weekly_blanks.csv"
+FIXTURE_DUPLICATE_ENTITY = "tests/fixtures/weekly_duplicate_entity.csv"
+FIXTURE_SAME_NAME = "tests/fixtures/weekly_same_name_different_history.csv"
 
 
 def test_reads_every_row():
@@ -102,6 +106,63 @@ def test_blank_week_raises():
             os.unlink(path)
         except OSError:
             pass
+
+
+def test_duplicate_entity_with_identical_stat_history_is_collapsed():
+    """Two player_ids whose complete week-by-week stat history is
+    byte-identical are the SAME ENTITY (this is exactly the real bug found
+    in RB.csv/TQB.full.csv/WR.full.csv/DST.full.csv - see sffl.weekly's
+    module docstring). load_weekly must collapse them to one id so a
+    fit/holdout split (calibrate_eval.player_folds) can never separate a
+    player's own weeks into two different folds.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        rows = load_weekly(FIXTURE_DUPLICATE_ENTITY)
+
+    ids = {r.player_id for r in rows}
+    # 1001 and 2002 collapse to one; 3003 (a genuinely different, unrelated
+    # player) survives untouched.
+    assert ids == {"1001", "3003"}
+    assert len([r for r in rows if r.player_id == "1001"]) == 3
+    assert len([r for r in rows if r.player_id == "3003"]) == 1
+
+
+def test_duplicate_entity_collapse_is_loud():
+    """Collapsing must never be silent: a DuplicateEntityWarning fires,
+    naming the file, the ids involved, and the player - a bare count is
+    not enough (a human must be able to see WHO was collapsed).
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        load_weekly(FIXTURE_DUPLICATE_ENTITY)
+
+    dup_warnings = [w for w in caught if issubclass(w.category, DuplicateEntityWarning)]
+    assert len(dup_warnings) == 1
+    msg = str(dup_warnings[0].message)
+    assert FIXTURE_DUPLICATE_ENTITY in msg
+    assert "Test Duplicate" in msg
+    assert "1001" in msg
+    assert "2002" in msg
+
+
+def test_same_name_different_history_is_not_collapsed():
+    """Two DIFFERENT real players who merely share a name and position must
+    survive as two players. The test is identical STAT HISTORY, never
+    identical name - real case: two players named Mike Williams, both WRs,
+    on different teams, with different weekly lines.
+    """
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        rows = load_weekly(FIXTURE_SAME_NAME)
+
+    ids = {r.player_id for r in rows}
+    assert ids == {"4001", "5002"}
+    assert len([r for r in rows if r.player_id == "4001"]) == 2
+    assert len([r for r in rows if r.player_id == "5002"]) == 2
+
+    dup_warnings = [w for w in caught if issubclass(w.category, DuplicateEntityWarning)]
+    assert dup_warnings == []
 
 
 def test_malformed_week_raises():

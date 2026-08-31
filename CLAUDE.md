@@ -1,6 +1,8 @@
 # fantasy-football
 
-Auction cheatsheet pipeline for the STRIPES Fantasy Football League on CBS.
+Auction cheatsheet pipeline for the STRIPES Fantasy Football League on CBS, plus a
+read-only in-season path: `sffl week` (waivers, start/sit) and `sffl alert` (the scheduled
+Friday/Sunday phone digest — runbook at `docs/operations/in-season-alerting.md`).
 
 **Read `NEXT.md` first.** It carries the current state, what to work on next, and the
 facts you must not re-derive.
@@ -25,7 +27,7 @@ facts you must not re-derive.
 | `leagues/sffl/2026.yaml` | Every scoring band and roster rule, versioned per season |
 | `sources/*.yaml` | One profile per vendor — adding a vendor should cost no Python |
 | `identity/aliases.yaml` | Player-name fixes; grows every year |
-| `src/sffl/` | league, scoring, schema, identity, ingest, tqb, pool, cli |
+| `src/sffl/` | auction path: league, scoring, schema, identity, ingest, tqb, pool, value, fit, market, market_model, plan, silent, consensus, lineup, render, cli. In-season path (merged 2026-08-29): weekly, calibrate, calibrate_eval, capture, cbs_weekly, cbs_roster, injuries, alert, notify |
 | `poc/` | Validation scripts, each carrying the real CBS data it checks against |
 | `docs/superpowers/specs/` | Design spec — league rules, findings, open questions |
 | `docs/superpowers/plans/` | Implementation plans |

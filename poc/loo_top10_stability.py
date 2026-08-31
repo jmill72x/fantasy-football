@@ -5,6 +5,22 @@ Gate: docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md
 it was seen). This script does not choose, tune, or reinterpret anything the
 gate does not already say.
 
+RE-RUN 2026-08-30 with FOUR stats, not five: pass_yds was reverted out of
+the bundle (it failed condition 3 of this same gate under de-duplicated
+data - see .superpowers/sdd/2026-08-30-full-position-coverage/
+pass-yds-revert-report.md). Removing a stat changes the bundle, so the
+PRIMARY/guard numbers below are re-measured, not assumed to carry over from
+the five-stat run.
+
+IMPORTANT: `calibration/2025.yaml` is no longer a stand-in for "the shipped,
+never-isotonic baseline" - it now itself contains the four-stat isotonic
+bundle (this script's own candidate). Loading it as `baseline_curves` would
+silently turn every "swap" below into a no-op for stats already isotonic in
+that file. `baseline_curves` is therefore rebuilt HERE, fresh, from
+`build_curves` on the build set only - the literal pre-adoption curve the
+gate's hardcoded SHIPPED_* constants below describe - never loaded from the
+committed file.
+
 THE DECISIVE NEW TEST (guard 4). `top10_mae`/`top10_bias` are computed over
 TEN observations - so a 2.62-point top10_cost improvement could be produced
 by one or two players and would be indistinguishable, at n=10, from a
@@ -25,10 +41,12 @@ Machinery reused verbatim from prior measurements rather than rebuilt:
     as a side diagnostic, per condition 4 / the spec's policy-held-fixed
     requirement).
 
-THE BUNDLE. Five board-relevant isotonic winners only - pass_cmp, pass_yds,
-rec_ct, rec_yds, rush_yds. def_pa/def_ya are EXCLUDED FROM ADOPTION
-ENTIRELY per the spec: DST sits in `flat_priced_pools`, so its curve never
-reaches `_dollars` and swapping it is structurally inert on the board.
+THE BUNDLE. Four board-relevant isotonic winners - pass_cmp, rec_ct,
+rec_yds, rush_yds. pass_yds is EXCLUDED (reverted 2026-08-30: it lost
+condition 3 of this gate on de-duplicated data). def_pa/def_ya are EXCLUDED
+FROM ADOPTION ENTIRELY per the spec: DST sits in `flat_priced_pools`, so its
+curve never reaches `_dollars` and swapping it is structurally inert on the
+board.
 
 NOTHING IS TUNED: no floor, grid, fold count, or builder parameter is
 touched, no new candidate methods. Curves are written to scratch paths only
@@ -43,7 +61,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from sffl.calibrate import build_curves_isotonic, load_curves, save_curves  # noqa: E402
+from sffl.calibrate import build_curves, build_curves_isotonic, save_curves  # noqa: E402
 from sffl.fit import choose_policy, load_prices, score_fit, top10_cost      # noqa: E402
 from sffl.identity import normalize_name                                   # noqa: E402
 from sffl.league import load_league                                        # noqa: E402
@@ -76,9 +94,10 @@ SHIPPED_TOP10_COST = round(SHIPPED_TOP10_MAE + abs(SHIPPED_TOP10_BIAS), 4)  # 15
 TOP10_COST_GATE = 1.00
 MAE_GUARD = 0.25
 
-# The five board-relevant isotonic winning stats. def_pa/def_ya excluded per
-# the spec (structurally inert on the board - DST is flat-priced).
-BUNDLE_STATS = ["pass_cmp", "pass_yds", "rec_ct", "rec_yds", "rush_yds"]
+# The four board-relevant isotonic winning stats. pass_yds excluded 2026-08-30
+# (reverted - lost condition 3 on de-duplicated data). def_pa/def_ya excluded
+# per the spec (structurally inert on the board - DST is flat-priced).
+BUNDLE_STATS = ["pass_cmp", "rec_ct", "rec_yds", "rush_yds"]
 
 POLICY = "starter"
 
@@ -193,8 +212,14 @@ def main():
         len(combined_lines), len({ln.player_id for ln in combined_lines})))
     print()
 
-    # Literal shipped curve, read-only, never written to.
-    baseline_curves = load_curves(os.path.join(ROOT, "calibration", "2025.yaml"))
+    # The literal pre-adoption shipped curve - build_curves on the build set
+    # only, for every stat. Rebuilt fresh here rather than loaded from
+    # calibration/2025.yaml: that file now itself ships the four-stat
+    # isotonic bundle (this script's own candidate), so loading it as
+    # "baseline" would make every swap below a no-op for the four already-
+    # isotonic stats. This is exactly what the hardcoded SHIPPED_* constants
+    # above describe, and the sanity check below confirms it reproduces them.
+    baseline_curves = build_curves(lg, build_set_lines)
 
     isotonic_full_buildset = build_curves_isotonic(lg, build_set_lines)
     isotonic_full_combined = build_curves_isotonic(lg, combined_lines)
@@ -288,7 +313,7 @@ def main():
     # ------------------------------------------------------------------
     print("=" * 100)
     print("GUARD 4 (DECISIVE): leave-one-out top10_cost stability, ship-regime bundle")
-    print("(build-set + held-back isotonic curves for the 5 board stats)")
+    print("(build-set + held-back isotonic curves for the 4 board stats)")
     print("=" * 100)
 
     shipped_pairs = dollar_price_pairs(lg, pool, prices, baseline_curves)

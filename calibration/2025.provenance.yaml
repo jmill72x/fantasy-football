@@ -23,24 +23,28 @@ pass_cmp:
   anchor_count: 29
   dataset: build_set_plus_held_back
   method: build_curves_isotonic
-  player_count: 32
+  player_count: 31
 pass_yds:
-  anchor_count: 31
-  dataset: build_set_plus_held_back
-  method: build_curves_isotonic
-  player_count: 32
+  anchor_count: 4
+  dataset: build_set_only
+  method: build_curves
+  note: 'REVERTED 2026-08-30: adopted for isotonic on a leaked cross-validation (a
+    duplicate-entity id''s identical twin sat in the fit set - commit a8584da). Re-run
+    on de-duplicated data under predict_weekly, isotonic loses condition 3 of the
+    third-measurement gate (0.1572 vs baseline 0.1520) - see .superpowers/sdd/2026-08-30-full-position-coverage/pass-yds-revert-report.md'
+  player_count: 4
 rec_ct:
   anchor_count: 52
   dataset: build_set_plus_held_back
   method: build_curves_isotonic
-  player_count: 77
+  player_count: 74
 rec_yds:
   anchor_count: 73
   dataset: build_set_plus_held_back
   method: build_curves_isotonic
-  player_count: 77
+  player_count: 74
 rush_yds:
   anchor_count: 79
   dataset: build_set_plus_held_back
   method: build_curves_isotonic
-  player_count: 109
+  player_count: 105
