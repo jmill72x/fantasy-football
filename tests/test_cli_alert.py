@@ -32,6 +32,24 @@ this file exists to pin - fails loudly here rather than only in production.
 `alert_env.fail_group(group, exc)` lets a test fail exactly one page while
 the rest still succeed; `alert_env.fail_capture(exc)` still fails EVERY
 call, for the pre-existing "nothing could be verified at all" scenarios.
+
+TASK 4 UPDATE. Four tasks after the "TQB/K/DST render UNFILLED" defect was
+opened, this adds the regression guard the plan calls for: an end-to-end
+test proving all EIGHT lineup slots fill from one alert run (not just a
+count of eight - a count still passes if two flex slots double up while a
+named position sits empty, so TQB/K/DST are each asserted BY NAME), plus a
+scoring sanity check comparing our computed score against CBS's own FPTS
+column on the same captured row for TQB and DST (both newly reachable and
+banded, so a mis-mapped column would produce a plausible-but-wrong number,
+not a crash). K is deliberately EXCLUDED from that sanity check and instead
+has its divergence from CBS's FPTS pinned as expected: CBS pays a flat 1
+point per made FG (verified 98/98 rows: FPTS == TOTAL_FG + XP_made) while
+this league pays 2/3/4/5/8 by distance - see sources/cbs-weekly.yaml's K
+group comment. Tolerances are not guesses: a prior review measured our
+score minus CBS's FPTS across ALL 32 rows of a real 2026-08-30 capture at
+-0.05 to +0.98 for TQB and 0.00 to +0.80 for DST; this file's fixtures are
+a same-capture subset (see test_cbs_weekly_groups.py's module docstring),
+so the same bounds must hold here.
 """
 
 import json
@@ -436,3 +454,179 @@ def test_the_injuries_fixture_is_the_shape_fetch_injuries_writes():
         raw = json.load(fh)
     assert isinstance(raw["report"], list)
     assert isinstance(raw["intel"], list)
+
+
+# --- TASK 4: the all-eight-slots regression guard --------------------------
+
+# The fixture roster's own current K and DST starters (see
+# tests/fixtures/cbs_team_page.txt) - real CBS player ids, lifted from the
+# same 2026-08-30 capture this whole branch is built on. Neither name is on
+# the committed K_FIXTURE/DST_FIXTURE (those two fixtures were captured with
+# only 3 rows each - see test_cbs_weekly_groups.py), which is WHY every
+# other test in this file (e.g.
+# test_a_covered_positions_player_with_no_row_is_a_data_problem_not_a_scope_
+# limit) sees them as a DATA PROBLEM rather than a filled slot. This test
+# needs them actually filled, so it adds one real-shaped row for each,
+# cloned from an existing fixture row (same tab count, so `expect_tokens`
+# still accepts it) with only the id/name/team substituted - never a
+# hand-invented row shape.
+_EVAN_MCPHERSON_K_ROW = (
+    "id=2962681\t\tTeam C...\tEvan McPherson K • CIN \tTB\t21\t6\t84\t75\t12"
+    "\t2.1\t2.6\t0.0\t0.0\t0.5\t0.5\t0.7\t0.7\t0.7\t0.8\t0.3\t0.7\t3.5\t3.6"
+    "\t5.60\n")
+_PATRIOTS_DST_ROW = (
+    "id=1931\t\tTeam A...\tPatriots DST • NE\t@SEA\t12\t10\t100\t92\t4.4"
+    "\t0.3\t0.8\t0.7\t0.1\t0.0\t248.00\t248\t19.60\t19.6\t9.70\n")
+
+
+def _fixture_plus_row(tmp_path, name, base_fixture, extra_row):
+    path = tmp_path / name
+    with open(base_fixture) as fh:
+        text = fh.read()
+    path.write_text(text + extra_row)
+    return str(path)
+
+
+def test_all_eight_slots_fill_with_a_tqb_a_k_and_a_dst_on_the_roster(
+        alert_env, capsys):
+    """THE deliverable this task exists to pin: with all four projection
+    pages present and a roster carrying a TQB, a K and a DST, every one of
+    the league's eight lineup slots (leagues/sffl/2026.yaml: TQB, RB,
+    WR/TE, FLEX1-3, K, DST) fills - none renders `-- UNFILLED`.
+
+    A bare count of eight would be a WEAKER guard than this: it would still
+    pass if, say, K and DST both stayed empty while two RBs doubled up
+    across FLEX1 and FLEX2. So TQB, K and DST are each asserted BY NAME,
+    not just counted - the exact three positions this whole branch exists
+    to make reachable (see docs/superpowers/specs/
+    2026-08-30-full-position-coverage.md).
+
+    The fixture roster (tests/fixtures/cbs_team_page.txt) already starts a
+    TQB (Chargers), a K (Evan McPherson) and a DST (Patriots) - see
+    test_a_now_captured_tqb_starter_is_scored_not_left_unevaluated and
+    test_a_covered_positions_player_with_no_row_is_a_data_problem_not_a_
+    scope_limit above. The committed K/DST fixtures don't carry those two
+    names (they're 3-row samples), which is exactly why THAT test sees them
+    as unfilled data problems - so this test adds one real-shaped row for
+    each (see _EVAN_MCPHERSON_K_ROW/_PATRIOTS_DST_ROW above) to prove the
+    FULL pipeline, not just the three already-covered positions, actually
+    fills all eight when the data is there.
+    """
+    k_path = _fixture_plus_row(alert_env.tmp, "k_plus.txt", K_FIXTURE,
+                               _EVAN_MCPHERSON_K_ROW)
+    dst_path = _fixture_plus_row(alert_env.tmp, "dst_plus.txt", DST_FIXTURE,
+                                 _PATRIOTS_DST_ROW)
+    alert_env.set_projections(k_path, group="K")
+    alert_env.set_projections(dst_path, group="DST")
+
+    code, out = alert_env.run(capsys)
+    assert code == 0
+
+    slots_section = out[out.index("BEST LINEUP"):out.index("[dry run")]
+    # No slot anywhere renders as unfilled - the failure mode being guarded
+    # against is exactly one quietly reverting to this, at exit 0.
+    assert "UNFILLED" not in slots_section
+    # And the three previously-broken positions are named, not merely
+    # counted - see the docstring above for why a count of eight is weaker.
+    assert "TQB    Chargers" in slots_section
+    assert "K      Evan McPherson" in slots_section
+    assert "DST    Patriots" in slots_section
+    # All eight slot labels from the league file are present in the
+    # section at all (belt and braces on the "eight slots" claim itself).
+    for slot in ("TQB", "RB", "WR/TE", "FLEX1", "FLEX2", "FLEX3", "K",
+                "DST"):
+        assert ("\n  %-6s " % slot) in slots_section
+    # Bonus: Evan McPherson and the Patriots are no longer DATA PROBLEMs
+    # now that their positions have real rows for them.
+    assert "NOT EVALUATED for start/sit" not in out or (
+        "Evan McPherson" not in out[out.index("NOT EVALUATED"):]
+        and "Patriots" not in out[out.index("NOT EVALUATED"):])
+
+
+# --- TASK 4: scoring sanity, TQB/DST against CBS's own FPTS ----------------
+
+def _rows_with_cbs_fpts(path, group):
+    """Parse `path` and pair each row with CBS's own trailing FPTS column
+    from that SAME raw line. These fixtures are pure one-row-per-team text
+    (no header, no blank lines - see test_cbs_weekly_groups.py), so
+    parse-order and file-order line up 1:1; asserting the lengths match
+    before zipping catches it if that ever stops being true."""
+    from sffl.cbs_weekly import parse as parse_weekly
+    rows = parse_weekly(path, group=group, week=1)
+    with open(path) as fh:
+        lines = [line for line in fh if line.strip()]
+    assert len(rows) == len(lines)
+    return [(row, float(line.rstrip("\n").split("\t")[-1]))
+            for row, line in zip(rows, lines)]
+
+
+def test_tqb_score_agrees_with_cbs_fpts_within_the_measured_tolerance():
+    """TQB is banded and newly reachable - a mis-mapped column would give a
+    PLAUSIBLE but wrong number, not a crash, so this checks the actual
+    magnitude against CBS's own FPTS column on the same captured row.
+
+    Tolerance -0.05 to +0.98 is measured, not guessed: a prior review
+    checked our score minus CBS's FPTS across ALL 32 TQB rows of the real
+    2026-08-30 capture and found exactly that range (see
+    test_cbs_weekly_groups.py's Chargers reconciliation, 18.40 vs 18.45,
+    for one row of the same measurement). This fixture's 4 rows are a
+    subset of that same capture, so the same bounds must hold.
+    """
+    from sffl.league import load_league
+    from sffl.pool import score_week
+    lg = load_league("leagues/sffl/2026.yaml")
+    pairs = _rows_with_cbs_fpts(TQB_FIXTURE, "TQB")
+    assert len(pairs) == 4
+    for row, cbs_fpts in pairs:
+        ours = score_week(lg, row, None)
+        diff = ours - cbs_fpts
+        assert -0.05 <= diff <= 0.98, (
+            "%s: ours=%.2f cbs=%.2f diff=%.2f outside the measured "
+            "[-0.05, +0.98] TQB tolerance" % (row.name, ours, cbs_fpts, diff))
+
+
+def test_dst_score_agrees_with_cbs_fpts_within_the_measured_tolerance():
+    """Same check as TQB's, for DST - also banded, also newly reachable.
+
+    Tolerance 0.00 to +0.80 is measured the same way: a prior review
+    checked our score minus CBS's FPTS across ALL 32 DST rows of the real
+    2026-08-30 capture and found exactly that range.
+    """
+    from sffl.league import load_league
+    from sffl.pool import score_week
+    lg = load_league("leagues/sffl/2026.yaml")
+    pairs = _rows_with_cbs_fpts(DST_FIXTURE, "DST")
+    assert len(pairs) == 3
+    for row, cbs_fpts in pairs:
+        ours = score_week(lg, row, None)
+        diff = ours - cbs_fpts
+        assert 0.00 <= diff <= 0.80, (
+            "%s: ours=%.2f cbs=%.2f diff=%.2f outside the measured "
+            "[0.00, +0.80] DST tolerance" % (row.name, ours, cbs_fpts, diff))
+
+
+def test_k_score_deliberately_diverges_from_cbs_fpts_by_roughly_2x():
+    """NOT a bug, and must never be "fixed" to match CBS: CBS's FPTS column
+    for kickers pays a flat 1 point per made field goal, verified on 98/98
+    rows of the real 2026-08-30 capture to equal exactly TOTAL_FG +
+    XP_made. This league instead pays 2/3/4/5/8 points by distance (see
+    sources/cbs-weekly.yaml's K group comment and poc/validate_k_weekly.py,
+    exact on 17/17 real scored weeks), so our score legitimately runs
+    roughly double CBS's FPTS. K is deliberately excluded from the
+    agrees-with-CBS checks above; this test asserts the divergence itself,
+    so nobody mistakes it for the same class of bug those checks catch.
+    """
+    from sffl.league import load_league
+    from sffl.pool import score_week
+    lg = load_league("leagues/sffl/2026.yaml")
+    pairs = _rows_with_cbs_fpts(K_FIXTURE, "K")
+    assert len(pairs) == 3
+    for row, cbs_fpts in pairs:
+        ours = score_week(lg, row, None)
+        ratio = ours / cbs_fpts
+        assert 1.5 <= ratio <= 2.5, (
+            "%s: ours=%.2f cbs=%.2f ratio=%.2f is no longer ~2x - if this "
+            "moved toward 1x, someone may have 'fixed' the kicker table to "
+            "match CBS's flat convention, which would be wrong"
+            % (row.name, ours, cbs_fpts, ratio))
+
