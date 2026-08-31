@@ -33,6 +33,12 @@ interpolating 3.
 
 Held-back data available: `TQB.full.csv` 544 rows / **32 players**, `DST.full.csv` 374 / **22**,
 `WR.full.csv` 491 / **29**, `TE.full.csv` 204 / **12**. So `pass_*` can reach 36 players and
+
+**Corrected 2026-08-30 — every count in this section was inflated by one duplicate-entity
+id per file:** shipped/build-set is **46 players** (not 48), `rush_yds`'s build-set RB
+count is **34** (not 36), `TQB.full.csv` is **31 players** (not 32), `DST.full.csv` is
+**21** (not 22), `WR.full.csv` is **28** (not 29); `TE.full.csv`'s 12 is unaffected. See
+`NEXT.md`'s dedup note and `data/weekly/2025/_held_back/README.md`'s CORRECTION section.
 `def_*` 26.
 
 **Report every stat separately. Never collapse the result to a single count** — that is

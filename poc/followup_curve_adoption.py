@@ -24,7 +24,9 @@ FOUR CONDITIONS, per stat, ALL required for a candidate to be adopted:
 BASELINE FOR NON-SWAPPED STATS: the LITERAL shipped curve,
 `calibration/2025.yaml` (read-only - never written to). Verified byte-for-
 -content equal to `build_curves(lg, build-set-only lines)`: 811 player-weeks,
-48 players, the same data `market/2026.yaml` was fit against. This is what
+48 players (corrected 2026-08-30 to 777 player-weeks / 46 players - RB.csv
+carried a duplicate-entity pair; see NEXT.md - the curve itself, and this
+script's conclusions, are unaffected), the same data `market/2026.yaml` was fit against. This is what
 "the shipped build_curves for every other stat" means here: not a curve
 rebuilt on more data by the same builder, but the actual thing that ships
 today, so that swapping zero stats reproduces the shipped mae/top10 numbers

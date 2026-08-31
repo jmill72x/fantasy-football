@@ -20,6 +20,55 @@ monotone-envelope fix). See the status table below and "What works today."
 and score all eight lineup slots, not five - see `docs/superpowers/specs/
 2026-08-30-full-position-coverage.md` and the plan alongside it.
 
+**DUPLICATE-ENTITY DATA-INTEGRITY FIX — DONE 2026-08-30 — every stated weekly player
+count above and below this note was WRONG until today.** Four gitignored weekly-data
+files carried the SAME real entity under two different `player_id`s, with byte-identical
+week-by-week stats under both: `data/weekly/2025/RB.csv` (TreVeyon Henderson, Kyle
+Monangai - two separate pairs), `_held_back/TQB.full.csv` (Eagles), `_held_back/
+WR.full.csv` (Jaxon Smith-Njigba), `_held_back/DST.full.csv` (Vikings, ids 1916/1918).
+**The corrected real per-file player counts are TQB 31 (not 32), DST 21 (not 22), WR 28
+(not 29), RB 34 (not 36), TE 12 (unaffected).** The build-set total is **46 players / 777
+player-weeks** (was quoted as 48/811) and the full dataset (build set + held-back) is
+**127 players / 2,339 player-weeks** (was quoted as 132/2424) - see `calibration/
+2025.provenance.yaml`'s corrected `player_count` fields and `data/weekly/2025/
+_held_back/README.md`'s CORRECTION section.
+**Why it mattered:** `calibrate_eval.player_folds` splits fit/holdout by `player_id`
+specifically so a player's own weeks can never land on both sides of a cross-validation -
+but the duplicate ids were genuinely distinct, so the splitter separated them into
+different folds while the held-out id's identical twin sat in the fit set, letting
+interpolation "predict" it almost exactly. This flattered the BASELINE in the isotonic-
+adoption comparison below (leaked measurements favor whichever candidate looks most like
+raw interpolation).
+**The fix:** `sffl.weekly.load_weekly` now collapses byte-identical-history duplicate
+ids at load - the one chokepoint every caller (`poc/build_calibration.py`, `poc/
+compare_calibration_methods.py`, `poc/measure_dst_ranking.py`, `calibrate_eval`'s own
+tests) already goes through, so this cannot be silently bypassed by a future script. Every
+collapse fires a `DuplicateEntityWarning` naming the file/ids/player AND prints to stderr -
+never a silent drop. Tested in `tests/test_weekly.py` (collapse fires; two real players who
+merely SHARE A NAME with different stat histories are proven to survive uncollapsed).
+**`calibration/2025.yaml` is UNCHANGED and NOT to be regenerated as part of this fix** -
+`build_curves`/`build_curves_isotonic` merge anchors by rounded mean, so a duplicate
+pair's identical rows were already landing on one anchor; every adopted stat's anchor list
+was verified byte-identical with and without the duplicates. Its own header COMMENT (the
+"132 distinct players... 48 distinct players..." lines) is now stale versus the corrected
+counts above and will self-correct the next time `poc/build_calibration.py` is
+legitimately re-run for an unrelated reason - do not re-run it just to refresh this
+comment, since re-running it is exactly the kind of unforced artifact churn this task was
+told to avoid.
+**The cross-validated isotonic-adoption comparison was re-run on de-duplicated data**
+(`poc/compare_calibration_methods.py`, full dataset, `predict_weekly` - the harness's
+default and what `score_week` actually calls): isotonic still beats the baseline
+(`build_curves`) for `pass_cmp` (0.1253 vs 0.1333), `rec_ct` (0.0864 vs 0.1205), `rec_yds`
+(0.0588 vs 0.0700), and `rush_yds` (0.0718 vs 0.0926). **`pass_yds` FLIPS: isotonic now
+LOSES to the baseline (0.1572 vs 0.1520)** - under the leaked data it had appeared to win
+(0.1524 vs 0.1659). Under `predict_raw` (the auction-board predictor), all five still
+hold post-dedup, `pass_yds` included (0.1420 vs 0.1713). **Open item, not acted on here:**
+`pass_yds`'s isotonic adoption is no longer justified by an honest cross-validation under
+the predictor that actually matters for `sffl week`'s weekly path (`predict_weekly`), even
+though the shipped curve itself is byte-identical either way (isotonic vs interpolated
+differ negligibly at the small per-player anchor count `pass_yds` has). Full report:
+`.superpowers/sdd/2026-08-30-full-position-coverage/dedup-report.md`.
+
 **TASK 3b (2026-08-30) CLOSED THE CBS ↔ CBS IDENTITY GAP WITH REAL CBS PLAYER IDs -
 the composite key below is now only the FALLBACK, not the primary mechanism.**
 `sffl.capture.capture` no longer saves `page.inner_text("body")` verbatim: it pairs each
@@ -168,7 +217,9 @@ Update this block at the end of every session so the next one can resume blind.
 - [x] **TODO B — DONE 2026-08-18, and the answer is NO.** Scraped 1,428 more weekly rows
       (84 players: WR/TE/DST/TQB) via Chrome, hitting the ~120-player target. **The wider
       curves measured WORSE and are not shipped.** Full reasoning below under *TODO B —
-      ANSWERED*. Shipping 48 players / 811 player-weeks (18 seed + 30 stratified RB).
+      ANSWERED*. Shipping 48 players / 811 player-weeks (18 seed + 30 stratified RB) -
+      **corrected 2026-08-30 to 46/777**, RB.csv carried a duplicate-entity pair; see
+      the dedup note near the top of this file.
 - [x] **DATA REFRESH — DONE 2026-08-23.** Fresh Draft Sharks extract pulled and installed
       at `data/extracts/Draft Sharks/2026/rankings-2026-08-23.csv` (552 players, page stamped
       Aug 23 7:15pm). Both artifacts regenerated. 324 tests pass.
@@ -269,7 +320,11 @@ Update this block at the end of every session so the next one can resume blind.
 - [x] **Isotonic calibration curves ADOPTED for 5 stats — DONE 2026-08-30.** The
       fitted/regularised-curve follow-up TODO B called for actually ran and cleared its
       gate. `pass_cmp`, `pass_yds`, `rec_ct`, `rec_yds`, `rush_yds` now ship from
-      `build_curves_isotonic` on the full dataset (build set + held-back, 132/2424).
+      `build_curves_isotonic` on the full dataset (build set + held-back, 132/2424 -
+      **corrected 2026-08-30 to 127/2339**, four files carried duplicate entities;
+      see the dedup note near the top of this file). `pass_yds`'s cross-validated win
+      over the baseline does NOT survive de-duplication under the weekly predictor -
+      see the same note; the shipped curve itself is unaffected.
       `top10_cost` 15.1681 → 12.5436, `mae` 4.3392 → 4.4758, `top10_bias` +5.1042 →
       +3.7312. `def_pa`/`def_ya` deliberately NOT adopted (DST is flat-priced, structurally
       inert on the board; weekly path ungated). `market/2026.yaml` refit accordingly.
@@ -299,7 +354,9 @@ that printed the board (`src/sffl/render/intel.py`); a figure the run cannot pro
 as the board's (41 of 45 rows used on the production extract) and `render_xlsx` raises rather
 than spilling onto a fourth page. Only three numbers are hardcoded — the 48 players/811
 player-weeks behind the calibration curves (a *comment* in `calibration/2025.yaml`, pinned by
-a test) and the direction of the TQB residuals (BAL/WAS/PHI under, DAL/CIN/MIN over).
+a test - **that comment is stale as of 2026-08-30, real count 46/777, and is left
+unregenerated on purpose; see the dedup note near the top of this file**) and the
+direction of the TQB residuals (BAL/WAS/PHI under, DAL/CIN/MIN over).
 
 **Excel — 2 pages**, the 2022 template's shape. **126 rows is the budget**: 63 rows/page at
 the template's 9.95pt row height, landscape letter, 97% scale. Jeff's 2022 file is 118 rows —
@@ -452,7 +509,10 @@ player data) generated by `poc/build_calibration.py`.
 1. **`consensus.py` is written, tested, and wired to nothing.** The `value` command reads
    one extract. Merging Draft Sharks + Footballguys into a consensus with the spread
    preserved is the single biggest remaining edge and is not yet reachable from the CLI.
-2. **The calibration curves rest on 48 players** (811 player-weeks). **This is settled —
+2. **The calibration curves rest on 48 players** (811 player-weeks) - **corrected
+   2026-08-30 to 46 players / 777 player-weeks, see the dedup note near the top of
+   this file; `calibration/2025.yaml`'s own header comment is left stale on purpose.**
+   **This is settled —
    widening it was tried and measured worse; see TODO B — ANSWERED.** `expected_points`
    still clamps silently outside the observed range. The remaining improvement is a
    *fitted* curve, not more points.
@@ -711,7 +771,11 @@ usage-filtering (floors of 0/2/4 fpg) were both tried and neither recovered it.
 
 **Shipped: 48 players, 811 player-weeks** — the 18 seed plus 30 stratified RBs. Best on
 BOTH accuracy (0.683 vs 0.693 held out) and price fit. `calibration/2025.yaml`'s header
-comment records this and a test pins it.
+comment records this and a test pins it. **Corrected 2026-08-30: the real count is 46
+players / 777 player-weeks — RB.csv carried a duplicate-entity pair (TreVeyon
+Henderson, Kyle Monangai); see the dedup note near the top of this file. The shipped
+curve itself is unaffected; only the header comment (left unregenerated) and this
+count are stale.**
 
 The 84 extra players' rows are kept at `data/weekly/2025/_held_back/` (gitignored) with a
 README repeating this reasoning. They are real and expensive to re-collect. **The right way
@@ -729,12 +793,15 @@ task reports). Do not re-run this experiment; read the record instead.
 **What changed.** `calibrate.build_curves_isotonic` (monotone/PAVA fit, already in
 `src/sffl/calibrate.py` and untouched by this adoption) replaces `build_curves`
 (interpolation) for exactly five stats, built on the FULL dataset — the original 48-player
-build set plus this held-back data folded in (132 distinct players, 2,424 player-weeks):
+build set plus this held-back data folded in (132 distinct players, 2,424 player-weeks -
+**corrected 2026-08-30 to 127/2339**, three held-back files carried a duplicate entity
+each; see the dedup note near the top of this file):
 
     pass_cmp, pass_yds, rec_ct, rec_yds, rush_yds
 
 **`def_pa` and `def_ya` are explicitly NOT adopted** and remain `build_curves` on the
-build-set-only 48/811. Two independent, binding reasons — do not revisit this "for
+build-set-only 48/811 (**corrected 2026-08-30 to 46/777**). Two independent, binding
+reasons — do not revisit this "for
 consistency" without a new gate:
 1. DST sits in `flat_priced_pools`, so its curve never reaches `_dollars` — structurally
    inert on the auction board.
@@ -1182,7 +1249,8 @@ The design spec's case for `score_week` rests on +4.88 across eight **hand-picke
 low-projection lines (band edges bite hardest there). `poc/measure_weekly_calibration.py`
 measures the same comparison — `scoring.score_game` (CBS's banded point estimate) against
 `pool.score_week` (the calibrated expectation, `calibration/2025.yaml`, 48 players / 811
-player-weeks) — on real data instead of a chosen sample.
+player-weeks — **corrected 2026-08-30 to 46/777**, see the dedup note near the top of
+this file) — on real data instead of a chosen sample.
 
 **The input is 8 fixture rows from one saved CBS week-1 projections page
 (`tests/fixtures/cbs_weekly_rbwrte.txt`), not a real full page.** It is the only real
