@@ -1210,11 +1210,23 @@ def _cmd_week(args):
                     current_by_key[normalize_name(name)] = name
 
             # --current is documented as the whole eight-player lineup set
-            # on CBS, but sources/cbs-weekly.yaml only defines the RB-WR-TE
-            # group - a TQB, K or DST name has no projection and was never
-            # in by_key at all. Excluded from SIT here, same as `missing`
-            # excludes it from the roster above; named so the exclusion is
-            # visible rather than reading as "bench your kicker."
+            # on CBS. A name with no projection was never in by_key at all,
+            # so it is excluded from SIT here, same as `missing` excludes it
+            # from the roster above - and NAMED, so the exclusion is visible
+            # rather than reading as "bench your kicker."
+            #
+            # CORRECTED 2026-08-30: this comment used to justify the
+            # exclusion with "sources/cbs-weekly.yaml only defines the
+            # RB-WR-TE group - a TQB, K or DST name has no projection." That
+            # reason is dead. Four groups are defined now (RB-WR-TE, TQB,
+            # DST, K) and `week` takes --projections-tqb/-k/-dst, so a
+            # TQB/K/DST name DOES resolve whenever its page was supplied.
+            # The exclusion itself still stands, for the general reason
+            # above: it now fires when a page was not passed, or a player
+            # genuinely has no row - which is a signal worth seeing, not the
+            # weekly norm it used to be. `sffl alert` distinguishes those
+            # cases explicitly (see alert.POSITION_NOT_CAPTURED and
+            # friends); `week` states the fact without classifying it.
             not_evaluated = sorted(current_by_key[k] for k in current_by_key
                                    if k not in by_key)
             for name in not_evaluated:
