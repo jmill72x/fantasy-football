@@ -88,3 +88,46 @@ the curve file must record which method produced each stat's curve.
 3. **The gain disappears under a fixed policy, or per-stat.** Do not adopt. That is the most
    informative outcome of the three, because it would mean the first measurement was reading a
    policy flip or an interaction rather than a curve.
+
+---
+
+## CORRECTION 2026-08-30 (appended after the measurement; nothing above is edited)
+
+This document is a **pre-registration** — committed before the follow-up ran, and left
+word-for-word intact. Everything below is dated, appended, and later.
+
+**The gate was applied and four candidates were adopted, not five.** `poc/followup_curve_
+adoption.py` implements the four conditions above verbatim. Its condition-3 table was
+originally transcribed from a cross-validated comparison run on data carrying a
+**duplicate-entity leak**: four weekly files held the same real entity under two different
+`player_id`s with byte-identical histories, so `calibrate_eval.player_folds` put a held-out
+id in one fold while its identical twin sat in the fit set. Interpolation — **the baseline**
+— was the beneficiary.
+
+Re-measured on de-duplicated data under `predict_weekly` (the production weekly predictor
+condition 3 names), `pass_yds` **flips from a win to a loss**: 0.1572 isotonic vs 0.1520
+baseline, where the leaked run had shown 0.1524 vs 0.1659. It was adopted on the leaked
+numbers and then **reverted** (commit `e82d2e2`). `pass_cmp` (0.1253 vs 0.1333), `rec_ct`
+(0.0864 vs 0.1205), `rec_yds` (0.0588 vs 0.0700) and `rush_yds` (0.0718 vs 0.0926) all hold
+post-dedup. **The adopted set is four stats: `pass_cmp`, `rec_ct`, `rec_yds`, `rush_yds`.**
+
+**The motivating table in §"Why this document exists" is superseded as a description of what
+ships.** Those rows (`shipped` 4.3392 / 10.0638 / +5.1042 / 15.168; `isotonic` 4.4691 /
+8.9531 / +3.8560 / 12.809; `pooled` 4.4405 / 9.4305 / +3.8304 / 13.261) were measured
+pre-dedup across five stats. The committed `market/2026.yaml` today carries
+`a=2.028495994199789`, `b=0.6511171620237226`, `mae=4.4154`, `top10_mae=9.1609`,
+`top10_bias=4.1025`, fit on 130 observations. The `pooled` row is doubly moot:
+`build_curves_pooled` was independently eliminated as a candidate method by the later
+third-measurement gate and was never re-measured post-dedup. **Do not cite the `pooled`
+numbers as current evidence for anything.**
+
+**Still true and worth keeping:** the argument in §"The argument for `top10_cost` as primary"
+stands unchanged, including "63 of 130 fitted observations sit in the $1–2 band" — the
+observation count is still 130 in `market/2026.yaml`'s own `evidence` block. And the
+document's opening warning — that reinterpreting an ambiguous gate after seeing which way the
+numbers fell "is exactly the move that produced this project's phantom +$13.2 bias" — is what
+the withdrawal above honours rather than contradicts: condition 3 was applied unchanged to
+corrected data, and it removed a stat that had already been adopted.
+
+Full report:
+`.superpowers/sdd/2026-08-30-full-position-coverage/pass-yds-revert-report.md`.

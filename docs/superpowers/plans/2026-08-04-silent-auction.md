@@ -425,6 +425,12 @@ Give `render_pdf` an optional `outcomes=None` parameter, threaded to `management
 
 Add `cmd_plan` to `src/sffl/cli.py` printing the same table to stdout, and wire `--outcomes` into `cmd_render` so the rendered PDF carries it.
 
+> **Note added 2026-08-30 (docs audit):** this shipped as **`--bids`**, not `--outcomes` —
+> on both `sffl plan` and `sffl render`, defaulting to
+> `data/league/silent-auction-bids.csv`. No `--outcomes` flag exists on any subcommand.
+> (Every step in this plan is left unchecked, as in the other merged plans here; the work
+> itself is merged.)
+
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `./.venv/bin/pytest tests/test_plan_render.py -v`

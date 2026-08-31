@@ -1,10 +1,10 @@
 curve:
-  a: 2.0482551357513357
-  b: 0.6459690793595126
+  a: 2.028495994199789
+  b: 0.6511171620237226
 diagnostics:
-  mae: 4.4758
-  top10_bias: 3.7312
-  top10_mae: 8.8124
+  mae: 4.4154
+  top10_bias: 4.1025
+  top10_mae: 9.1609
 evidence:
   curves_file: calibration/2025.yaml
   league_profile: leagues/sffl/2026.yaml

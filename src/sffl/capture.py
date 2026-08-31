@@ -66,6 +66,165 @@ _SETTLE_WAIT_MS = 6000
 _NAV_TIMEOUT_MS = 30000
 
 
+# Pulls, per `<tr>`, the row's own rendered text (`tr.innerText`, the exact
+# per-element algorithm `page.inner_text("body")` also uses, just scoped to
+# one subtree) and the CBS id lifted from a `playerpage/<id>` link inside
+# it - `tr a[href*='playerpage/']`, verified live 2026-08-30 to pair 100 of
+# 107 rows on the RB-WR-TE page, 98/98 on K, and - genuinely surprising,
+# corrected from an earlier assumption baked into this task's brief - ALSO
+# 32/32 on BOTH the TQB and DST pages. A TQB/DST "player" IS an NFL team's
+# aggregate unit, not a person, but CBS still gives each one its own
+# synthetic `playerpage/<id>` - and, confirmed on the live Chargers rows,
+# its TQB unit (1974) and DST unit (1924) get DIFFERENT ids, so this is a
+# genuinely distinguishing id per (team, unit-type), not a shared team id
+# that would collide the two. A `<tr>` with no such link (page furniture,
+# an ad) is simply absent from the returned list - `_prefix_ids` below
+# treats "no entry for this row" identically to "this row's own text could
+# not be found," i.e. it is emitted unchanged.
+_ID_EXTRACT_JS = """
+() => {
+  const rows = [];
+  document.querySelectorAll('tr').forEach(tr => {
+    const a = tr.querySelector("a[href*='playerpage/']");
+    if (!a) return;
+    const href = a.getAttribute('href') || '';
+    const m = href.match(/playerpage\\/(\\d+)/);
+    if (!m) return;
+    const text = tr.innerText;
+    if (!text) return;
+    rows.push({id: m[1], text: text});
+  });
+  return {full: document.body.innerText, rows: rows};
+}
+"""
+
+
+def _prefix_ids(full_text, rows):
+    """Insert `"id=<id>\\t"` immediately before each identified row's own
+    text within `full_text`, leaving every other character - including
+    every id-less row (page furniture; a TQB/DST row DOES normally get an
+    id too, see `_ID_EXTRACT_JS`'s comment above) - byte-for-byte unchanged.
+
+    `rows` is `[{"id": ..., "text": ...}, ...]` in DOCUMENT ORDER (as
+    `document.querySelectorAll('tr')` returns them) - assumed to also be
+    the order those rows' own text appears in `full_text`, which holds for
+    ordinary top-to-bottom table layout (no CSS reordering of table rows).
+    Pure and independent of Playwright/the DOM, so it is unit-testable
+    without a browser - see `_ID_EXTRACT_JS` above for how `rows` and
+    `full_text` are actually produced from a live page.
+
+    A row whose own text cannot be located (verbatim, at or after where
+    the previous row's search left off) is skipped rather than raising -
+    the row's untouched text still reaches the output via the final
+    `full_text[cursor:]` append, exactly as if it had never been paired
+    with an id at all. Losing one row's id to an unexpected layout quirk
+    is far cheaper than losing (or corrupting) the whole page.
+
+    THE PREFIX LANDS RIGHT AT THE START OF THE LAST NON-BLANK LINE IN THE
+    ROW'S OWN TEXT, not at its literal first character - verified necessary
+    live,
+    2026-08-30: a `<tr>`'s `innerText` can start with a hidden cell's
+    rendered content (whitespace, OR - confirmed on a real page, review
+    round 1 - a short non-blank label like an action button's "Add")
+    followed by a line break BEFORE the row's real content - e.g.
+    `" \n\tSgt Hu...\t..."` for the Chargers TQB row. Inserting at the
+    literal start would put `"id=1974\t"` on its OWN throwaway line
+    ("id=1974\t "), orphaned from the actual content line the parser reads
+    next - a silent, total loss of every id on every page this happens on.
+
+    GENERAL ON PURPOSE, NOT "SKIP LEADING BLANK SEGMENTS": an earlier
+    version of this function only skipped past a leading segment if it was
+    blank once stripped, which is exactly wrong for a leading NON-blank
+    cell ("Add\n\t..." - confirmed live, this shape already exists on real
+    pages: the roster page's rows have no leading blank at all, while the
+    DST projections page's rows have `' '` on 32 of 32 - one CBS layout
+    tweak away from a THIRD shape appearing) - that version would stop at
+    the first non-blank segment and insert there, re-orphaning the id
+    exactly as before, SILENTLY (no exception, no warning - a page in that
+    shape parses every row with `player_id == ""` and nothing says so).
+    Anchoring on the START of the LAST NON-BLANK line instead does not need
+    to know or guess WHAT is in any leading segment - blank, "Add", or
+    anything else - it is content-agnostic and correct for every shape
+    observed so far, and a row with no embedded newline at all (the
+    ordinary case, no quirk) still gets offset 0, unchanged from inserting
+    at the literal start.
+
+    THIS MUST BE THE LAST NON-BLANK LINE, NOT SIMPLY THE LAST NEWLINE:
+    review round 2 caught the mirror-image bug an earlier version had - a
+    row's real content followed by a TRAILING empty or whitespace-only
+    cell (`"\\tChargers\\t18.4\\n"`, or `"\\tChargers\\t18.4\\n "`) puts a
+    "\\n" AFTER the content, so anchoring on the literal last "\\n" lands
+    the prefix past the row's own content entirely - either onto the START
+    OF THE NEXT ROW's text (a silent WRONG-PLAYER join: the id remains
+    present and unique, so neither `ID COVERAGE LOST` nor a duplicate-id
+    warning fires) or onto a trailing blank line of this row's own text
+    (a silent, total loss of this row's id - caught by `cbs_weekly`'s
+    unmatched-line watchdog but SILENT in `cbs_roster`, exactly as
+    described above for an all-blank row). Skipping backward past any
+    trailing blank line(s) to the last line that actually has content
+    fixes both: the row with no trailing quirk is unaffected (its last
+    line already has content, so behavior is unchanged), and a row with a
+    trailing blank line gets the prefix anchored on its real content,
+    never on a neighbor's.
+
+    A ROW WHOSE OWN TEXT IS BLANK ON EVERY LINE (no real content anywhere,
+    a genuinely degenerate row) IS SKIPPED ENTIRELY, not merely un-offset.
+    Review round 1 caught the alternative: anchoring on the last newline of
+    an all-blank `row_text` still lands somewhere WITHIN that blank span,
+    which can sit at or past the boundary where the NEXT row's own text
+    begins in `full_text` - migrating this row's id prefix onto the
+    FOLLOWING row's line (`"id=A\tid=B\t..."`), which then fails to parse
+    as ANY recognized row - loud (raises) in `cbs_weekly` (the merged
+    text still contains " • ", so it is caught as an unmatched line), but
+    a SILENT drop in `cbs_roster` (`_ROW` has no such watchdog - a line
+    that fails to match is simply skipped, no warning). A row with nothing
+    to identify is skipped up front instead, leaving its own (blank, inert)
+    text untouched and never touching its neighbor's.
+    """
+    cursor = 0        # up to here, `pieces` already accounts for `full_text`
+    search_from = 0   # where the NEXT row's `.find` should start looking
+    pieces = []
+    for row in rows:
+        row_text = row["text"]
+        if not row_text or not row_text.strip():
+            continue
+        idx = full_text.find(row_text, search_from)
+        if idx == -1:
+            continue
+        # Anchor on the START of the LAST NON-BLANK line, not merely the
+        # last "\n" - a trailing empty/whitespace-only cell puts a "\n"
+        # AFTER the real content, and anchoring on that literal last "\n"
+        # would land the prefix past the row's own content (see docstring).
+        lines = row_text.split("\n")
+        last_nonblank = 0
+        for i, line in enumerate(lines):
+            if line.strip():
+                last_nonblank = i
+        offset = sum(len(l) + 1 for l in lines[:last_nonblank])
+        content_idx = idx + offset
+        pieces.append(full_text[cursor:content_idx])
+        pieces.append("id=%s\t" % row["id"])
+        cursor = content_idx
+        search_from = idx + len(row_text)
+    pieces.append(full_text[cursor:])
+    return "".join(pieces)
+
+
+def _capture_page_text(page):
+    """The page's body text, with each identifiable player row prefixed by
+    its own `id=<id>\\t` - see `_ID_EXTRACT_JS` and `_prefix_ids` above.
+
+    One `page.evaluate` round trip per page: extracting `rows` and
+    `full_text` together, rather than a separate `page.inner_text("body")`
+    call plus N separate `tr.inner_text()` calls, avoids a race where the
+    page could re-render (client-side, as CBS's pages do - see
+    `_SETTLE_WAIT_MS`) between the two and produce a `full_text` that no
+    longer matches the `rows` extracted from a different render pass.
+    """
+    data = page.evaluate(_ID_EXTRACT_JS)
+    return _prefix_ids(data["full"], data["rows"])
+
+
 class CaptureError(Exception):
     """A page was fetched but must not be used."""
 
@@ -87,7 +246,17 @@ def check_page_text(text, url, title=""):
     """Raise unless `text` is plausibly the real page for `url`.
 
     Arguments:
-      text: the body text of the page
+      text: the body text of the page - Task 3b review round 1 note: this
+        is called on the ALREADY id-PREFIXED text (see `capture()` below,
+        which runs `_capture_page_text` before this), so the
+        `_MIN_PLAUSIBLE_CHARS` floor is technically measured on text a
+        little LONGER than the raw page (every `id=<id>\t` prefix adds a
+        handful of characters, once per identifiable row - a few hundred
+        to low thousands of characters on a real page with ~100 rows).
+        Negligible against a 1000-character floor and a real page that is
+        thousands of characters either way, so this is not a correctness
+        issue - noted here so nobody re-derives the discrepancy from
+        scratch on a future pass through this file.
       url: the final URL (after redirects), to detect /login redirects
       title: the HTML page title (the <title> tag), to detect CBS login pages
 
@@ -121,8 +290,19 @@ def check_page_text(text, url, title=""):
 def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS):
     """Fetch each url with the stored login and save its text. Returns {url: path}.
 
-    NOT UNIT TESTED ON PURPOSE - it launches a browser. The logic worth testing
-    is `check_page_text`, which is pure and called here on every page.
+    Each PLAYER ROW's saved text is prefixed with its own CBS
+    `id=<id>\\t`, when the row could be paired with a `playerpage/<id>`
+    link - see `_capture_page_text`/`_prefix_ids` above, and
+    `sffl.cbs_weekly`/`sffl.cbs_roster` for where that prefix is parsed
+    back out. This covers not just individual players but also TQB/DST
+    team-aggregate rows (verified live 2026-08-30 - see `_ID_EXTRACT_JS`'s
+    comment). A row with no such link (page furniture, an ad) is saved
+    completely unchanged - nothing that parsed this page's text before
+    this existed stops parsing it now.
+
+    NOT UNIT TESTED ON PURPOSE - it launches a browser. The logic worth
+    testing is pure and called here on every page: `check_page_text` and
+    `_prefix_ids` (see their own tests).
     """
     from playwright.sync_api import sync_playwright
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -156,7 +336,7 @@ def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS):
                 # Blind settle wait: the DOM is ready but CBS renders the
                 # roster client-side afterward. See _SETTLE_WAIT_MS comment.
                 page.wait_for_timeout(_SETTLE_WAIT_MS)
-                text = page.inner_text("body")
+                text = _capture_page_text(page)
                 # Pass the final URL (after redirects) and page title, not the
                 # requested URL. A redirect to /login is invisible in requested URL
                 # but visible in page.url. Title never appears in body text.

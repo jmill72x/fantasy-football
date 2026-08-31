@@ -300,3 +300,39 @@ merge in Task 3 consumes exactly that.
 **4. Known risk.** Task 2 depends on a working authenticated capture. If the CBS session has
 expired, `capture()` raises `SessionExpired` naming the fix (`ops/cbs_login.py`) — re-run it
 and continue.
+
+---
+
+## Task 3b: CBS player IDs as the real join key
+
+**Added 2026-08-30**, at the repo owner's insistence and correctly: `(name, position, team)`
+is a heuristic, not a key. Nothing stops one team fielding two players of the same name at the
+same position. Deferring this to `NEXT.md` is how it never gets done, and the capture and parse
+layers are open and freshly reviewed right now — revisiting them cold in October costs more.
+
+**VERIFIED FEASIBLE before this task was written:** on the live projections page, **100 of 107
+`<tr>` elements pair cleanly to a CBS player ID** — Ja'Marr Chase `2966320`, Puka Nacua
+`3121687` — via `tr a[href*='playerpage/<id>']`. The roster page carries the same IDs.
+
+**Scope, and its honest limit.** This yields a genuinely unique key for **CBS ↔ CBS** matching:
+roster to projections, which is the Chargers TQB/DST collision and the two-same-named-players
+case. It does **NOT** help CBS ↔ StatsDeck injury matching — StatsDeck uses nflverse IDs
+(`00-0036900` for Chase), a different namespace. That match stays name-based, and its failure
+mode is milder: wrong news beside a player, not a silently dropped lineup slot.
+
+- [ ] **Step 1:** `capture()` emits each player row prefixed with its CBS id (e.g. `id=2966320\t`),
+  derived from the row's own `playerpage` link. Rows with no id — page furniture, header rows —
+  are emitted unchanged, so nothing that parses today stops parsing.
+- [ ] **Step 2:** the parser accepts an optional leading `id=<digits>\t` and puts it on
+  `PlayerProjection.player_id`, defaulting to `""`. `expect_tokens` counts tokens after the team
+  code and must be unaffected — confirm.
+- [ ] **Step 3:** regenerate every affected fixture from a real capture, preserving the existing
+  placeholdering of fantasy team names.
+- [ ] **Step 4:** make `player_id` the join key wherever one is present, with
+  `identity.player_key(name, team, pos)` as the documented fallback for rows without one. Both
+  paths must be exercised by tests.
+- [ ] **Step 5:** a residual collision — two rows sharing an id, or two id-less rows sharing the
+  composite key — stays LOUD exactly as it is today: named, degraded, in the pushed body.
+- [ ] **Step 6:** re-verify the Chargers TQB+DST case and a real live `--dry-run` filling all
+  eight slots. Update `NEXT.md`: the durable fix is no longer a follow-up for CBS↔CBS, and the
+  remaining heuristic is CBS↔StatsDeck only.

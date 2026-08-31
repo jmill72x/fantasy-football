@@ -53,3 +53,226 @@ def test_a_plausible_page_passes():
 
 def test_session_expiry_is_a_capture_error_so_one_handler_catches_both():
     assert issubclass(capture.SessionExpired, capture.CaptureError)
+
+
+# --- Task 3b: _prefix_ids, the pure logic behind capture()'s id prefix ----
+
+def test_prefix_ids_inserts_id_before_the_rows_own_text():
+    full = "nav\n\tWR\tJa'Marr Chase WR . CIN \tTB\t\nfooter"
+    row_text = "\tWR\tJa'Marr Chase WR . CIN \tTB\t"
+    rows = [{"id": "2966320", "text": row_text}]
+    out = capture._prefix_ids(full, rows)
+    assert out == "nav\nid=2966320\t" + row_text + "\nfooter"
+
+
+def test_prefix_ids_leaves_a_page_with_no_ided_rows_byte_for_byte_unchanged():
+    full = "nav\n\tTQB\tChargers TQB . LAC\tARI\t\nfooter"
+    assert capture._prefix_ids(full, []) == full
+
+
+def test_prefix_ids_handles_multiple_rows_in_document_order():
+    row1 = "\tWR\tPuka Nacua WR . LAR \tSF\t"
+    row2 = "\tWR\tJa'Marr Chase WR . CIN \tTB\t"
+    full = "nav\n" + row1 + "\n" + row2 + "\nfooter"
+    rows = [{"id": "3121687", "text": row1}, {"id": "2966320", "text": row2}]
+    out = capture._prefix_ids(full, rows)
+    assert out == ("nav\nid=3121687\t" + row1 + "\nid=2966320\t" + row2
+                  + "\nfooter")
+
+
+def test_prefix_ids_skips_a_row_between_two_ided_ones_that_has_no_id():
+    # A row with no playerpage link at all (page furniture) sitting
+    # between two real players is emitted completely unchanged - only the
+    # id-bearing rows either side get prefixed.
+    row1 = "\tWR\tPuka Nacua WR . LAR \tSF\t"
+    furniture = "\tTQB\tChargers TQB . LAC\tARI\t"
+    row2 = "\tWR\tJa'Marr Chase WR . CIN \tTB\t"
+    full = "\n".join([row1, furniture, row2])
+    rows = [{"id": "3121687", "text": row1}, {"id": "2966320", "text": row2}]
+    out = capture._prefix_ids(full, rows)
+    assert out == "\n".join(
+        ["id=3121687\t" + row1, furniture, "id=2966320\t" + row2])
+
+
+def test_prefix_ids_does_not_corrupt_the_page_when_a_rows_text_cannot_be_found():
+    # A defensive case: `rows` names text that (for whatever reason) is not
+    # actually present in `full_text`. The row is simply not prefixed -
+    # the page is returned unmangled, not raised on or truncated.
+    full = "nav\n\tWR\tJa'Marr Chase WR . CIN \tTB\t\nfooter"
+    rows = [{"id": "9999999", "text": "\tWR\tSome Other Guy WR . XYZ \tAB\t"}]
+    assert capture._prefix_ids(full, rows) == full
+
+
+def test_prefix_ids_search_advances_past_a_matched_row_so_it_is_not_reused():
+    # Two DISTINCT rows that happen to share identical rendered text (e.g. a
+    # genuine data anomaly) must each get their OWN id, not both collapse
+    # onto the first match.
+    row_text = "\tDST\tSame Text DST . XX \tYY\t"
+    full = row_text + "\n" + row_text
+    rows = [{"id": "111"}, {"id": "222"}]
+    rows[0]["text"] = row_text
+    rows[1]["text"] = row_text
+    out = capture._prefix_ids(full, rows)
+    assert out == "id=111\t" + row_text + "\nid=222\t" + row_text
+
+
+def test_prefix_ids_skips_past_a_leading_blank_line_within_the_rows_own_text():
+    # REAL SHAPE, verified live 2026-08-30: a hidden action-buttons cell
+    # renders as a lone space followed by a line break before the row's
+    # actual tab-delimited content - the Chargers TQB row's own
+    # `tr.innerText` is exactly this: " \n\tSgt Hu...\tChargers TQB • LAC "
+    # "...\tARI\t...\t18.45". Inserting the prefix at the literal start
+    # would orphan "id=1974\t " on its own throwaway line, never reaching
+    # the actual content line a line-based parser reads - this is the bug
+    # that made every id vanish on first regeneration; this test pins the
+    # fix.
+    content = "\tSgt Hu...\tChargers TQB • LAC \tARI\t---\t18.45"
+    row_text = " \n" + content
+    full = "nav\n\n" + row_text + "\n\nfooter"
+    rows = [{"id": "1974", "text": row_text}]
+    out = capture._prefix_ids(full, rows)
+    assert out == "nav\n\n \nid=1974\t" + content + "\n\nfooter"
+    # And the content line, once split out, is exactly what a line-based
+    # parser needs: the id prefix immediately followed by the row's own
+    # leading tab, with nothing orphaned on the line above.
+    lines = out.splitlines()
+    id_line = next(l for l in lines if l.startswith("id=1974"))
+    assert id_line == "id=1974\t" + content
+
+
+def test_prefix_ids_handles_multiple_leading_blank_segments():
+    content = "\tW (9/16)\tTitans TQB • TEN \tNYJ\t15.74"
+    row_text = " \n\n" + content
+    full = "nav\n" + row_text + "\nfooter"
+    rows = [{"id": "1978", "text": row_text}]
+    out = capture._prefix_ids(full, rows)
+    lines = out.splitlines()
+    id_line = next(l for l in lines if l.startswith("id=1978"))
+    assert id_line == "id=1978\t" + content
+
+
+def test_prefix_ids_skips_past_a_leading_NON_BLANK_cell_too():
+    # Task 3b review round 1 Important 2, reproduced: a leading segment
+    # that is a real, non-blank label ("Add" - an action-button cell's
+    # text) followed by a newline BEFORE the row's actual content. The
+    # earlier "skip only blank segments" version stopped at this segment
+    # and inserted right before it - re-orphaning the id exactly like the
+    # original blank-segment bug, only SILENTLY (no exception anywhere).
+    content = "\tSgt Hu...\tChargers TQB • LAC \tARI\t---\t18.45"
+    row_text = "Add\n" + content
+    full = "nav\n\n" + row_text + "\n\nfooter"
+    rows = [{"id": "1974", "text": row_text}]
+    out = capture._prefix_ids(full, rows)
+    lines = out.splitlines()
+    id_line = next(l for l in lines if l.startswith("id=1974"))
+    assert id_line == "id=1974\t" + content
+    # "Add" itself is untouched, on its own line, with no id attached.
+    assert "Add" in out
+    assert "id=1974\tAdd" not in out
+
+
+def test_prefix_ids_is_content_agnostic_about_the_leading_segment():
+    # The fix is general, not a second special case bolted onto the first:
+    # ANY leading segment - blank, a word, punctuation, digits - must be
+    # skipped past uniformly, because the function has no way to know (and
+    # must not need to guess) what CBS puts in a hidden cell.
+    for leading in (" ", "Add", "***", "12", "Trade"):
+        content = "\tRow\tContent • XX \tYY\t1.23"
+        row_text = leading + "\n" + content
+        full = "nav\n" + row_text + "\nfooter"
+        rows = [{"id": "42", "text": row_text}]
+        out = capture._prefix_ids(full, rows)
+        id_line = next(l for l in out.splitlines() if l.startswith("id=42"))
+        assert id_line == "id=42\t" + content, "failed for leading=%r" % leading
+
+
+def test_prefix_ids_skips_a_row_whose_own_text_is_entirely_blank():
+    # Task 3b review round 1 Important 2, second half: a row with NO real
+    # content anywhere in its own text must not be prefixed at all -
+    # anchoring on its last newline would land somewhere inside its own
+    # blank span, which can coincide with (or precede) where the NEXT
+    # row's real text begins, migrating THIS row's id onto that row's line
+    # ("id=A\tid=B\t...") - loud in cbs_weekly (still contains " • ", so
+    # it is caught as an unmatched line) but a SILENT DROP in cbs_roster
+    # (`_ROW` has no such watchdog - a non-matching line just vanishes).
+    blank_row = " \n \n "
+    next_row = "\tWR\tJa'Marr Chase WR • CIN \tTB\t"
+    # A real newline-separated page - `full`'s own structure separates
+    # every row onto its own line(s) regardless of what any one row's
+    # `tr.innerText` contains; this test's `blank_row` is deliberately
+    # entirely blank content WITHIN that structure, not a missing
+    # separator between rows (a different, unrelated concern).
+    full = "nav\n" + blank_row + "\n" + next_row + "\nfooter"
+    rows = [{"id": "AAA", "text": blank_row},
+           {"id": "2966320", "text": next_row}]
+    out = capture._prefix_ids(full, rows)
+    # The blank row contributed NOTHING - no "id=AAA" anywhere in the
+    # output, and it never merges onto the next row's line.
+    assert "id=AAA" not in out
+    assert "id=AAAid=2966320" not in out
+    lines = out.splitlines()
+    id_line = next(l for l in lines if l.startswith("id=2966320"))
+    assert id_line == "id=2966320\t" + next_row
+
+
+def test_prefix_ids_skips_past_a_trailing_empty_cell():
+    # Task 3b review round 2: the mirror image of the leading-blank bug.
+    # A row's REAL content followed by a trailing empty cell renders as
+    # `tr.innerText` ending in "\n" with nothing after it - e.g. the
+    # Chargers DST row: "\tChargers\t18.4\n". Anchoring on the literal
+    # LAST "\n" (the old `rfind` logic) lands the prefix AFTER this row's
+    # own text entirely - i.e. at the START of the very next row's text -
+    # attaching this row's id to the NEXT row's content. Silent: the id
+    # is still present and still unique, so neither `ID COVERAGE LOST`
+    # nor a duplicate-id warning fires - a wrong-player join with no
+    # signal anywhere.
+    chargers = "\tChargers\t18.4\n"
+    patriots = "\tPatriots\t10.2\n"
+    full = "nav\n" + chargers + patriots + "footer"
+    rows = [{"id": "1974", "text": chargers}, {"id": "1981", "text": patriots}]
+    out = capture._prefix_ids(full, rows)
+    # The old buggy behavior (regression pin): "id=1974" must NOT end up
+    # immediately before the Patriots row's content.
+    assert "id=1974\t\tPatriots" not in out
+    lines = out.splitlines()
+    chargers_line = next(l for l in lines if l.startswith("id=1974"))
+    assert chargers_line == "id=1974\t\tChargers\t18.4"
+    patriots_line = next(l for l in lines if l.startswith("id=1981"))
+    assert patriots_line == "id=1981\t\tPatriots\t10.2"
+
+
+def test_prefix_ids_skips_past_a_trailing_whitespace_only_cell():
+    # Task 3b review round 2, second shape: a trailing cell that is
+    # whitespace-only rather than empty - `tr.innerText` ending in
+    # "\n " (a real line, non-empty, but blank once stripped). Anchoring
+    # on the literal last "\n" orphans the id onto that trailing blank
+    # line - a TOTAL id loss for this row. `cbs_weekly`'s unmatched-line
+    # watchdog would catch this (the merged text still contains " • "),
+    # but `cbs_roster` has no such guard - silent on the roster page.
+    row_text = "\tChargers\t18.4\n "
+    full = "nav\n" + row_text + "\nfooter"
+    rows = [{"id": "1974", "text": row_text}]
+    out = capture._prefix_ids(full, rows)
+    assert "id=1974" in out
+    lines = out.splitlines()
+    id_line = next(l for l in lines if l.startswith("id=1974"))
+    assert id_line == "id=1974\t\tChargers\t18.4"
+
+
+def test_capture_page_text_calls_evaluate_once_and_prefixes_ids(monkeypatch):
+    # `_capture_page_text` must do exactly ONE page.evaluate round trip
+    # (see its own docstring on why a second, separate inner_text() call
+    # would race a client-side re-render) and feed the result straight
+    # through `_prefix_ids`.
+    row_text = "\tWR\tJa'Marr Chase WR . CIN \tTB\t"
+    full = "nav\n" + row_text + "\nfooter"
+    calls = []
+
+    class _FakePage(object):
+        def evaluate(self, js):
+            calls.append(js)
+            return {"full": full, "rows": [{"id": "2966320", "text": row_text}]}
+
+    out = capture._capture_page_text(_FakePage())
+    assert len(calls) == 1
+    assert out == "nav\nid=2966320\t" + row_text + "\nfooter"

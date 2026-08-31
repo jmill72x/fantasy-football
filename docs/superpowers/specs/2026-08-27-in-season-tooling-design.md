@@ -3,6 +3,23 @@
 **Date:** 2026-08-27
 **Status:** approved in brainstorming; data sources VERIFIED 2026-08-28, not yet planned
 
+> **Updated 2026-08-30 (docs audit) — this was planned and largely built; the module names
+> below were not what shipped.** The read path merged to `main` on 2026-08-29 (`09e1b0d`,
+> plan `docs/superpowers/plans/2026-08-28-in-season-core.md`), and scheduled alerting merged
+> the same day (`93314a1`, plan `2026-08-29-in-season-automation.md`). The proposed module
+> table below is a design sketch, not a map of the tree — nothing named `weekly_proj.py`,
+> `roster.py` or `waiver.py` exists. What shipped instead:
+>
+> | proposed here | shipped as |
+> |---|---|
+> | `src/sffl/weekly_proj.py` | `src/sffl/cbs_weekly.py` (parse) + `src/sffl/weekly.py` (weekly stat lines) |
+> | `src/sffl/roster.py` | `src/sffl/cbs_roster.py` (parse) + `src/sffl/capture.py` (Playwright fetch) |
+> | `src/sffl/waiver.py` | **NOT BUILT.** The write path is deliberately deferred — `sffl alert` recommends, it never acts. See the runbook's "What is deliberately NOT automated". |
+>
+> Also shipped and not anticipated here: `src/sffl/alert.py`, `src/sffl/notify.py`,
+> `src/sffl/injuries.py`, and the `sffl week` / `sffl alert` subcommands.
+> `--trade` (the third of the three questions below) is **not built.**
+
 ## Goal
 
 Answer three in-season questions in this league's actual scoring — **who to start, who to

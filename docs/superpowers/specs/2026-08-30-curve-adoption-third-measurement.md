@@ -104,3 +104,74 @@ a finding about data volume rather than about the method.
    Record it and close the question.
 3. **It clears on one dataset regime and not the other.** Report which, adopt nothing, and
    record that the effect is contingent on data volume.
+
+---
+
+## CORRECTION 2026-08-30 (appended after the measurement; nothing above is edited)
+
+This document is a **pre-registration**. Its value is that it was fixed before the
+measurement, so not one word above has been altered. Everything that follows is dated,
+appended, and later — read it as the outcome, not as a revision of the gate.
+
+**Outcome 1 fired, then partly unwound.** The bundle cleared, isotonic was adopted for its
+five board-relevant stats, `calibration/2025.yaml` was regenerated and the board re-verified
+— exactly as §"Honest possible outcomes" #1 prescribes. **Then one of the five was
+withdrawn the same day.**
+
+**Why.** The cross-validated held-out MAE that condition 3 relies on ("the stat won its
+cross-validated held-out MAE in the FIRST experiment, under `predict_weekly`") was measured
+on data carrying a **duplicate-entity leak**. Four weekly-data files held the same real
+entity under two different `player_id`s with byte-identical stat histories.
+`calibrate_eval.player_folds` splits by `player_id` precisely so a player's own weeks cannot
+straddle a fold — but the two ids were genuinely distinct, so the splitter separated them
+while the held-out id's identical twin sat in the fit set. Interpolation drew its line
+through the twin and "predicted" the held-out id almost exactly. **The leak flattered the
+BASELINE**, which makes it the conservative direction for four of the five stats and the
+decisive direction for the fifth.
+
+Re-measured on de-duplicated data under `predict_weekly` (commit `a8584da` fixed the leak at
+load; `poc/compare_calibration_methods.py` re-run):
+
+| stat | isotonic | baseline | condition 3 |
+|---|---:|---:|---|
+| `pass_cmp` | 0.1253 | 0.1333 | holds |
+| `rec_ct`   | 0.0864 | 0.1205 | holds |
+| `rec_yds`  | 0.0588 | 0.0700 | holds |
+| `rush_yds` | 0.0718 | 0.0926 | holds |
+| `pass_yds` | 0.1572 | 0.1520 | **FAILS** (had appeared to win 0.1524 vs 0.1659 under the leak) |
+
+`pass_yds` was **reverted** to `build_curves` (commit `e82d2e2`). A tie would already fail
+condition 3 as written; this is not a tie. **The adopted, currently-shipped set is FOUR
+stats: `pass_cmp`, `rec_ct`, `rec_yds`, `rush_yds`.**
+
+**The numbers in §"The measured position, for the record" are the five-stat bundle's and are
+superseded.** Removing a stat changes the bundle, so the gate was re-measured rather than
+assumed to carry over (`poc/loo_top10_stability.py`, re-run for four stats):
+
+| | recorded above (5 stats) | re-measured (4 stats, shipped) |
+|---|---:|---:|
+| `top10_cost` | 12.544 | **13.2633** (vs shipped 15.1681) |
+| `mae` | 4.4758 | **4.4154** |
+| `top10_bias` | +3.7312 | **+4.1025** |
+
+The PRIMARY gate (`top10_cost` improves by ≥ 1.00 against 15.168) still clears at 4 stats:
+15.1681 − 13.2633 = 1.905. GUARD 1 (`mae` regresses by ≤ $0.25) clears more comfortably than
+before: +0.0762, was +0.1366. `market/2026.yaml` was refit and carries
+`a=2.028495994199789`, `b=0.6511171620237226`.
+
+**Also correcting §"Why the second gate was wrong"**, which reasons over "five stats" and "a
+total achievable gain of 2.62". Both were accurate when written. The argument itself is
+untouched by the revision — a per-stat ≥1.00 bar against a distributed gain is incoherent at
+four contributors just as at five — but the specific counts in that paragraph are the
+five-stat ones.
+
+**§"Declared contamination" said "if this measurement fails, the question is closed. No
+fourth analysis."** The re-measurement above is NOT a fourth analysis of the same data
+seeking a better answer. It is the same gate, condition 3 unchanged, applied to data with a
+correctness bug removed — and it made the result STRICTER, dropping a stat that had been
+adopted. That is the direction that distinguishes a bug fix from a fishing expedition.
+
+Full report:
+`.superpowers/sdd/2026-08-30-full-position-coverage/pass-yds-revert-report.md`.
+`calibration/2025.provenance.yaml` is the authority on method-per-stat, and
+`tests/test_docs_match_artifacts.py` fails if `NEXT.md` drifts from it.

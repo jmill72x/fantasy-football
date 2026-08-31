@@ -118,17 +118,29 @@ _PIN_FAILURE_HINT = (
 
 
 def test_the_committed_2026_artifact_is_pinned():
-    # Deliberately refit 2026-08-30: calibration/2025.yaml was regenerated to
-    # adopt build_curves_isotonic (built on the full dataset - build set plus
-    # the previously held-back weeks) for the five board-relevant stats
-    # (pass_cmp, pass_yds, rec_ct, rec_yds, rush_yds). See
+    # Deliberately refit 2026-08-30 (first time): calibration/2025.yaml was
+    # regenerated to adopt build_curves_isotonic (built on the full dataset -
+    # build set plus the previously held-back weeks) for five board-relevant
+    # stats (pass_cmp, pass_yds, rec_ct, rec_yds, rush_yds). See
     # docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md
     # (the gate that cleared) and
     # .superpowers/sdd/2026-08-30-regularised-calibration-curves/task-5-report.md.
-    # def_pa/def_ya are unchanged (still build_curves on the build set only),
-    # so this is a genuine, measured refit of the curves this model depends
-    # on - not a hand-edit or a stray --force - and these expected values
-    # were updated deliberately to match, per this test's own failure hint.
+    #
+    # Deliberately re-refit 2026-08-30 (second time, same day): pass_yds was
+    # REVERTED out of the isotonic bundle back to build_curves/build-set-only.
+    # It had been adopted on a LEAKED cross-validation (a duplicate-entity id's
+    # identical twin sat in the fit set - commit a8584da); re-run clean under
+    # predict_weekly, isotonic loses condition 3 of the gate for pass_yds
+    # (0.1572 vs baseline 0.1520). The four-stat bundle (pass_cmp, rec_ct,
+    # rec_yds, rush_yds) was re-measured on its own - removing a stat changes
+    # the bundle - and still clears the gate (top10_cost 15.168 -> 13.263,
+    # mae 4.3392 -> 4.4154). See
+    # .superpowers/sdd/2026-08-30-full-position-coverage/
+    # pass-yds-revert-report.md. def_pa/def_ya are unchanged throughout
+    # (still build_curves on the build set only). This is a genuine, measured
+    # refit of the curves this model depends on - not a hand-edit or a stray
+    # --force - and these expected values were updated deliberately to match,
+    # per this test's own failure hint.
     model = load(COMMITTED_MARKET_PATH)
 
     assert model.season == 2026, _PIN_FAILURE_HINT
@@ -137,8 +149,8 @@ def test_the_committed_2026_artifact_is_pinned():
     # Exact float equality, not approx: the whole point of persisting rather
     # than re-fitting is that these exact bits reach every render unchanged,
     # so a pinned test that tolerated drift would defeat its own purpose.
-    assert model.curve[0] == 2.0482551357513357, _PIN_FAILURE_HINT
-    assert model.curve[1] == 0.6459690793595126, _PIN_FAILURE_HINT
+    assert model.curve[0] == 2.028495994199789, _PIN_FAILURE_HINT
+    assert model.curve[1] == 0.6511171620237226, _PIN_FAILURE_HINT
 
 
 def test_the_apply_paths_policy_list_matches_the_fitters():

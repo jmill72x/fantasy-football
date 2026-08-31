@@ -124,6 +124,51 @@ def test_a_column_removed_from_the_stat_block_raises(tmp_path):
         parse(str(bad), group="RB-WR-TE", week=1)
 
 
+def test_a_repeated_stat_name_sums_its_columns(tmp_path):
+    # fg_u30 is CBS's 1-19 plus its 20-29 column - rec_yds/rec_td here are
+    # just two arbitrary real STAT_KEYS standing in for that mechanism
+    # (post-IMPORTANT-3, a synthetic name like "a" would be refused at load).
+    prof = tmp_path / "p.yaml"
+    prof.write_text(
+        "owner_codes: [ZZ]\n"
+        "groups:\n"
+        "  T:\n"
+        "    stats: [rec_yds, rec_yds, rec_td]\n"
+        "    expect_tokens: 4\n")
+    page = tmp_path / "page.txt"
+    # Tab-delimited row shape: leading tab, then owner cell, then namecell -
+    # see _TAB_LINE's docstring and the real TAB_FIXTURE rows, which all
+    # start with an (empty) leading cell the same way.
+    page.write_text("\tFA\tNick Chubb RB • CLE\tOPP\t1.5\t2.5\t9.0\n")
+    from sffl.cbs_weekly import parse
+    row = parse(str(page), group="T", week=1, profile_path=str(prof))[0]
+    assert row.stats["rec_yds"] == 4.0      # 1.5 + 2.5
+    assert row.stats["rec_td"] == 9.0
+
+
+def test_a_single_occurrence_name_is_unaffected(tmp_path):
+    prof = tmp_path / "p.yaml"
+    prof.write_text("owner_codes: [ZZ]\ngroups:\n  T:\n    stats: [rec_yds, rec_td]\n    expect_tokens: 3\n")
+    page = tmp_path / "page.txt"
+    page.write_text("\tFA\tNick Chubb RB • CLE\tOPP\t1.5\t9.0\n")
+    from sffl.cbs_weekly import parse
+    row = parse(str(page), group="T", week=1, profile_path=str(prof))[0]
+    assert row.stats["rec_yds"] == 1.5 and row.stats["rec_td"] == 9.0
+
+
+def test_repeated_underscore_columns_are_still_all_discarded(tmp_path):
+    # `_` marks a column the engine does not use; repeating it must not
+    # create a summed stat literally named "_".
+    prof = tmp_path / "p.yaml"
+    prof.write_text("owner_codes: [ZZ]\ngroups:\n  T:\n    stats: [_, _, rec_yds]\n    expect_tokens: 4\n")
+    page = tmp_path / "page.txt"
+    page.write_text("\tFA\tNick Chubb RB • CLE\tOPP\t1.0\t2.0\t3.0\n")
+    from sffl.cbs_weekly import parse
+    row = parse(str(page), group="T", week=1, profile_path=str(prof))[0]
+    assert "_" not in row.stats
+    assert row.stats["rec_yds"] == 3.0
+
+
 def test_a_line_without_a_leading_status_token_raises_naming_the_count(tmp_path):
     """F4, the real observed bug: 'DJ Moore WR • CHI ...' has no leading
     avail token. Before the fix this silently mis-parsed as name='Moore',
@@ -358,6 +403,89 @@ def test_the_space_delimited_fixture_is_unaffected_by_the_tab_path():
     r = by_name(rows)["Braelon Allen"]
     assert r.pos == "RB" and r.team == "NYJ"
     assert r.stats["rush_yds"] == 36.8
+
+
+# --- Task 3b: an optional leading "id=<digits>\t" prefix -------------------
+
+def test_a_leading_id_prefix_lands_on_player_id(tmp_path):
+    page = tmp_path / "tab_id.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("id=2966320\t\tTeam I...\tJa'Marr Chase WR • CIN\tTB\t%s\n"
+                    % stats)
+    rows = parse(str(page), group="RB-WR-TE", week=1)
+    assert len(rows) == 1
+    assert rows[0].name == "Ja'Marr Chase"
+    assert rows[0].player_id == "2966320"
+
+
+def test_a_row_with_no_id_prefix_falls_back_to_the_empty_string(tmp_path):
+    """THE DOCUMENTED FALLBACK PATH. A row `capture()` could not pair with a
+    `playerpage/<id>` link (page furniture, or any page saved before this
+    existed - a real live TQB/DST team-aggregate row DOES carry its own id,
+    see cbs_weekly's module docstring) carries no prefix at all -
+    `player_id` must default to "", never None or a missing attribute, so
+    `identity.resolve_key` can fall back to the (name, team, pos) composite
+    unconditionally."""
+    page = tmp_path / "tab_no_id.txt"
+    stats = "\t".join(["1"] * 16)
+    page.write_text("\tTeam A...\tChargers TQB • LAC\tARI\t%s\n" % stats)
+    rows = parse(str(page), group="TQB", week=1)
+    assert len(rows) == 1
+    assert rows[0].player_id == ""
+
+
+def test_an_id_prefix_does_not_change_expect_tokens_pass_or_fail(tmp_path):
+    """THE COLUMN-SHIFT GUARD MUST BE UNAFFECTED. `expect_tokens` counts
+    tokens AFTER the team code - the id prefix sits entirely before that,
+    stripped off before either delimiter path ever computes `tokens` (see
+    `_strip_id_prefix`/`_parse_row`). Two identical rows, one with the
+    prefix and one without, must both pass expect_tokens=17 (the real
+    RB-WR-TE width) and produce byte-identical stats."""
+    stats = "\t".join(str(n) for n in range(16))  # OPP + 16 = 17 tokens
+    row_no_id = "\tTeam A...\tNick Chubb RB • CLE\t@PIT\t%s\n" % stats
+    row_with_id = "id=12345\t" + row_no_id
+
+    plain = tmp_path / "plain.txt"
+    plain.write_text(row_no_id)
+    prefixed = tmp_path / "prefixed.txt"
+    prefixed.write_text(row_with_id)
+
+    rows_plain = parse(str(plain), group="RB-WR-TE", week=1)
+    rows_prefixed = parse(str(prefixed), group="RB-WR-TE", week=1)
+    assert len(rows_plain) == 1 and len(rows_prefixed) == 1
+    assert rows_plain[0].stats == rows_prefixed[0].stats
+    assert rows_plain[0].player_id == ""
+    assert rows_prefixed[0].player_id == "12345"
+
+
+def test_an_id_prefix_does_not_hide_a_real_column_shift(tmp_path):
+    """The inverse of the guarantee above: a TRUE width violation must still
+    raise, prefix or no prefix - the prefix must not accidentally widen or
+    narrow what expect_tokens sees."""
+    stats = "\t".join(str(n) for n in range(15))  # one short: 16, not 17
+    page = tmp_path / "short.txt"
+    page.write_text("id=12345\t\tTeam A...\tNick Chubb RB • CLE\t@PIT\t%s\n"
+                    % stats)
+    with pytest.raises(ValueError) as exc:
+        parse(str(page), group="RB-WR-TE", week=1)
+    assert "expected 17" in str(exc.value)
+
+
+def test_the_real_tab_fixture_carries_real_ids_on_nearly_every_row():
+    """This fixture was regenerated from a real live capture (2026-08-30,
+    Task 3b) - 99 of its 100 rows now carry a genuine CBS `player_id`. The
+    one holdout (Michael Wilson, ARI - no longer on the live page as of
+    this regeneration, most likely normal roster churn) exercises the
+    documented FALLBACK path naturally, on real data, rather than only in a
+    hand-constructed test - both paths matter and both must keep parsing."""
+    rows = parse(TAB_FIXTURE, group="RB-WR-TE", week=1)
+    assert len(rows) == 100
+    by_name = dict((r.name, r) for r in rows)
+    assert by_name["Ja'Marr Chase"].player_id == "2966320"
+    assert by_name["Puka Nacua"].player_id == "3121687"
+    assert by_name["Michael Wilson"].player_id == ""
+    with_id = [r for r in rows if r.player_id]
+    assert len(with_id) == 99
 
 
 def test_a_whitespace_only_tab_owner_cell_is_refused_not_called_owned(tmp_path):
