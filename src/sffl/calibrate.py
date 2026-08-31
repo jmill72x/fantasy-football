@@ -257,18 +257,77 @@ def _pava(points):
     return out
 
 
+def _pava_monotone(points, direction):
+    """`_pava`, but enforcing whichever monotone direction `direction` names.
+
+    `_pava` always fits non-decreasing. That is correct for a stat whose
+    band() pays MORE as the raw value climbs (direction=+1), but wrong for
+    one that pays LESS (direction=-1: def_pa, def_ya in this league) -
+    forcing a non-decreasing fit onto a genuinely descending sequence pools
+    the whole run into one block and returns a flat constant (measured:
+    def_pa collapsed to 0.676, def_ya to 1.885 - see
+    docs/superpowers/specs, this fix's own write-up).
+
+    The fit for direction=-1 is obtained by negating y, running the SAME
+    `_pava` (which fits non-decreasing on the negated series), and negating
+    the result back. This is not a second algorithm: least-squares isotonic
+    regression under "non-increasing" on y is identical to least-squares
+    isotonic regression under "non-decreasing" on -y, then flipping sign -
+    negation reverses every pairwise comparison, so a block PAVA pools under
+    one direction is exactly the block it would pool under the other. `_pava`
+    itself is untouched and still called with no direction argument at all,
+    so its existing tests (and every ascending stat's behaviour) are
+    unaffected by this function existing.
+    """
+    if direction >= 0:
+        return _pava(points)
+    negated = [(x, -y) for x, y in points]
+    fit = _pava(negated)
+    return [(x, -y) for x, y in fit]
+
+
 def build_curves_isotonic(lg, lines, min_weeks=MIN_WEEKS):
     """Same input as build_curves, but fitted monotone rather than interpolated.
 
     WHY. build_curves draws straight lines through every player's point, so each
     additional player gives the curve one more noisy season to chase - which is
     why adding the held-back data made it worse. Monotonicity is a regulariser
-    that costs nothing in truth: band() is non-decreasing, so E[band(X)] is
-    non-decreasing in E[X], and a curve that respects that cannot follow a dip
-    that only noise produced.
+    that costs nothing in truth: band() is monotone in the value - non-decreasing
+    for five stats, non-increasing for def_pa/def_ya - so E[band(X)] inherits
+    band()'s own direction in E[X], and a curve that respects THAT direction
+    cannot follow a dip that only noise produced.
+
+    DIRECTION-AWARE, not hardcoded. Which way to fit is read off each stat's
+    own band table via `pool._band_direction` (imported locally, below, to
+    avoid a circular import: `pool.py` already imports from this module at
+    its own top level - STAT_POSITIONS, expected_points - so importing
+    `pool` back at THIS module's top level would try to resolve a partially
+    initialised module in either import order. Deferring the import to
+    inside this function costs nothing: by the time any caller actually
+    invokes build_curves_isotonic, both modules have finished loading) -
+    never a hardcoded list of "descending" stat names, so a second league
+    profile with different bands (or a different direction for the same stat
+    name) is handled correctly with no code change here.
+
+    Before this fix, every stat was forced non-decreasing regardless of its
+    table's own direction: harmless for the five ascending stats this is
+    shipped on (pass_cmp, pass_yds, rec_ct, rec_yds, rush_yds - unaffected by
+    this change, see test_calibrate_isotonic.py's pin), silently wrong for
+    def_pa/def_ya, whose tables pay LESS as the raw value climbs and which
+    consequently collapsed to a single flat constant - no error, just a
+    curve that treats every defense as identical.
     """
+    from sffl.pool import _band_direction
+
     raw = build_curves(lg, lines, min_weeks)
-    return dict((stat, _pava(pairs) if pairs else []) for stat, pairs in raw.items())
+    curves = {}
+    for stat, pairs in raw.items():
+        if not pairs:
+            curves[stat] = []
+            continue
+        direction = _band_direction(lg.bands[stat])
+        curves[stat] = _pava_monotone(pairs, direction)
+    return curves
 
 
 def expected_points(curve, mean):
