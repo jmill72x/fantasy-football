@@ -65,13 +65,16 @@ TOP_CLUSTER_DEPTH = 4
 # TWO regimes since the 2026-08-30 isotonic adoption (see
 # docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md and
 # calibration/2025.provenance.yaml for the full per-stat record):
-# pass_cmp/pass_yds/rec_ct/rec_yds/rush_yds are `build_curves_isotonic` on the
-# FULL dataset (build set + previously held-back weeks); def_pa/def_ya are
-# unchanged, `build_curves` on the build set only.
-CALIBRATION_PLAYERS_ISOTONIC = 132
-CALIBRATION_PLAYER_WEEKS_ISOTONIC = 2424
-CALIBRATION_PLAYERS_INTERPOLATED = 48
-CALIBRATION_PLAYER_WEEKS_INTERPOLATED = 811
+# pass_cmp/rec_ct/rec_yds/rush_yds are `build_curves_isotonic` on the
+# FULL dataset (build set + previously held-back weeks); pass_yds/def_pa/
+# def_ya are `build_curves` on the build set only. pass_yds was REVERTED to
+# interpolation 2026-08-30 - it lost condition 3 of the third-measurement
+# gate on de-duplicated data (see
+# .superpowers/sdd/2026-08-30-full-position-coverage/pass-yds-revert-report.md).
+CALIBRATION_PLAYERS_ISOTONIC = 127
+CALIBRATION_PLAYER_WEEKS_ISOTONIC = 2339
+CALIBRATION_PLAYERS_INTERPOLATED = 46
+CALIBRATION_PLAYER_WEEKS_INTERPOLATED = 777
 
 # REMOVED 2026-08-27: TQB_UNDERPRICED / TQB_OVERPRICED.
 #

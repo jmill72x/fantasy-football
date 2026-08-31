@@ -1,14 +1,24 @@
 """Build 2025 expectation curves from real CBS weekly data.
 
 Per-stat, by adopted method (see docs/superpowers/specs/2026-08-30-curve-
-adoption-third-measurement.md, cleared, and
-.superpowers/sdd/2026-08-30-regularised-calibration-curves/third-measurement-report.md):
+adoption-third-measurement.md, cleared subject to its condition 3, and
+.superpowers/sdd/2026-08-30-full-position-coverage/pass-yds-revert-report.md
+for the 2026-08-30 pass_yds revert below):
 
-  - pass_cmp, pass_yds, rec_ct, rec_yds, rush_yds (the five board-relevant
+  - pass_cmp, rec_ct, rec_yds, rush_yds (four of the five board-relevant
     stats `_dollars` actually prices): `build_curves_isotonic` on the FULL
     dataset - the build set PLUS the previously held-back weeks
-    (`data/weekly/2025/_held_back/*.full.csv`). Measured: top10_cost
-    15.1681 -> 12.5436, mae 4.3392 -> 4.4758, top10_bias +5.1042 -> +3.7312.
+    (`data/weekly/2025/_held_back/*.full.csv`). See the pass-yds-revert
+    report for the re-measured bundle numbers (four stats, not five).
+  - pass_yds: REVERTED 2026-08-30 to `build_curves` on the build set only.
+    It was adopted for isotonic on a LEAKED cross-validation (a duplicate
+    entity's identical twin sat in the fit set for a held-out fold - see
+    commit a8584da and NEXT.md's DUPLICATE-ENTITY note). Condition 3 of the
+    third-measurement gate requires winning the cross-validated held-out MAE
+    under `predict_weekly` in the first experiment; re-run on de-duplicated
+    data, pass_yds LOSES to the baseline (0.1572 vs 0.1520) - a tie would
+    already be a loss per the gate, and this is not even a tie. It does not
+    belong in the bundle and is not adopted for isotonic.
   - def_pa, def_ya: unchanged, `build_curves` on the build set only. NOT
     adopted for isotonic/full-dataset treatment - two independent reasons,
     both binding: (1) DST sits in `flat_priced_pools`, so its curve never
@@ -64,14 +74,42 @@ BUILD_SET_POSITIONS = ["DST", "K", "RB", "TQB", "WR"]
 HELD_BACK_POSITIONS = ["DST", "TQB", "WR", "TE"]
 SEASON = 2025
 
-# The five board-relevant isotonic winners, adopted on the full dataset. See
+# The four board-relevant isotonic winners, adopted on the full dataset. See
 # docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md - the
-# gate that cleared - and the third-measurement report for the numbers.
+# gate - and the pass-yds-revert report for the re-measured bundle numbers.
+# pass_yds was dropped from this list 2026-08-30: it fails condition 3 under
+# de-duplicated data (see the module docstring above).
 ISOTONIC_FULL_DATASET_STATS = [
-    "pass_cmp", "pass_yds", "rec_ct", "rec_yds", "rush_yds",
+    "pass_cmp", "rec_ct", "rec_yds", "rush_yds",
 ]
-# def_pa/def_ya stay on the shipped build_curves/build-set-only path.
-INTERPOLATED_BUILD_SET_STATS = ["def_pa", "def_ya"]
+# def_pa/def_ya stay on the shipped build_curves/build-set-only path, as does
+# pass_yds now (reverted 2026-08-30).
+INTERPOLATED_BUILD_SET_STATS = ["def_pa", "def_ya", "pass_yds"]
+
+# Per-stat reason a stat sits in INTERPOLATED_BUILD_SET_STATS. def_pa/def_ya
+# are excluded for a structural, board-pricing reason; pass_yds is excluded
+# for a measurement reason (it lost its cross-validated held-out MAE under
+# predict_weekly on de-duplicated data - condition 3 of the third-measurement
+# gate). Keeping the two reasons distinct in provenance matters: def_pa/def_ya
+# were never gated at all, while pass_yds was gated and failed.
+INTERPOLATED_STAT_NOTES = {
+    "def_pa": ("excluded from isotonic/full-dataset adoption: structurally "
+               "inert on the board (DST sits in flat_priced_pools, so this "
+               "curve never reaches _dollars) and its weekly-path behaviour "
+               "was never covered by any pre-registered gate"),
+    "def_ya": ("excluded from isotonic/full-dataset adoption: structurally "
+               "inert on the board (DST sits in flat_priced_pools, so this "
+               "curve never reaches _dollars) and its weekly-path behaviour "
+               "was never covered by any pre-registered gate"),
+    "pass_yds": ("REVERTED 2026-08-30: adopted for isotonic on a leaked "
+                 "cross-validation (a duplicate-entity id's identical twin "
+                 "sat in the fit set - commit a8584da). Re-run on "
+                 "de-duplicated data under predict_weekly, isotonic loses "
+                 "condition 3 of the third-measurement gate (0.1572 vs "
+                 "baseline 0.1520) - see "
+                 ".superpowers/sdd/2026-08-30-full-position-coverage/"
+                 "pass-yds-revert-report.md"),
+}
 
 
 def load_all_weekly(data_dir, positions, suffix=".csv"):
@@ -148,11 +186,7 @@ def main():
                 "dataset": "build_set_only",
                 "player_count": _player_count_for_stat(build_set_lines, stat),
                 "anchor_count": len(curves[stat]),
-                "note": ("excluded from isotonic/full-dataset adoption: "
-                         "structurally inert on the board (DST sits in "
-                         "flat_priced_pools, so this curve never reaches "
-                         "_dollars) and its weekly-path behaviour was never "
-                         "covered by any pre-registered gate"),
+                "note": INTERPOLATED_STAT_NOTES[stat],
             }
         else:
             raise ValueError(
