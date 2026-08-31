@@ -45,8 +45,26 @@ DEFAULT_LEAGUE = "leagues/sffl/2026.yaml"
 # literal that could drift out of sync with this one.
 CBS_LEAGUE_BASE = "https://stripesfantasyfootballleague.football.cbssports.com"
 DEFAULT_TEAM_URL = CBS_LEAGUE_BASE + "/teams"
+# `print_rows` IS LOAD-BEARING, not a tuning knob. Without it CBS returns
+# exactly 100 player rows - its default page size - and every rostered
+# player outside CBS's top 100 silently has NO projection at all. That is
+# not hypothetical: the 2026-08-30 dry run had THREE of Jeff's thirteen
+# (TreVeyon Henderson, Rhamondre Stevenson, Courtland Sutton) missing for
+# exactly this reason, reported as "no projection row - data problem" when
+# the real cause was a page-size cap nobody had looked for. It stayed
+# invisible until the BENCH board started naming all thirteen, because the
+# three were reserves and the digest only ever named the eight it started.
+#
+# 9999, NOT the 999 that CBS's own "All" pagination link uses: 999 was
+# measured to still return 100 rows, while 9999 returns the full 1710-row
+# RB/WR/TE universe (verified live 2026-08-30, and all 1710 parse). Applied
+# to EVERY group, not just RB-WR-TE - K is currently 98 rows, two under the
+# cap, and would begin truncating silently the moment CBS listed two more
+# kickers.
+PROJECTIONS_PAGE_ROWS = 9999
 PROJECTIONS_URL_TEMPLATE = (
-    CBS_LEAGUE_BASE + "/stats/stats-main/all:%s/%d:p/standard/projections")
+    CBS_LEAGUE_BASE + "/stats/stats-main/all:%s/%d:p/standard/projections"
+    "?print_rows=%d")
 
 # The four position-group pages `sffl alert` captures and merges into one
 # pool, in the order they are captured - and the CBS URL "scope" token each
@@ -85,7 +103,8 @@ def _projections_url(group, week):
     The ONLY function that turns a (group, week) pair into a URL - see
     PROJECTIONS_URL_TEMPLATE and GROUP_SCOPES above.
     """
-    return PROJECTIONS_URL_TEMPLATE % (GROUP_SCOPES[group], week)
+    return PROJECTIONS_URL_TEMPLATE % (GROUP_SCOPES[group], week,
+                                       PROJECTIONS_PAGE_ROWS)
 
 
 def _banner(title, body):
@@ -1279,7 +1298,7 @@ def _cmd_alert(args):
 
     from sffl.alert import (POSITION_NOT_CAPTURED, PROJECTION_MISSING,
                             PROJECTION_PAGE_FAILED, STALE_INJURIES_MINUTES,
-                            compose)
+                            BoardRow, compose)
     from sffl.calibrate import load_curves
     from sffl.capture import CaptureError, capture
     from sffl.cbs_roster import parse_lineup_rows
@@ -1305,6 +1324,10 @@ def _cmd_alert(args):
     # renders those two states differently (see its docstring), so this
     # must not default to `[]`.
     current_starters = None
+    # None, not [] - see compose's docstring. [] would render "BENCH ... (0)"
+    # and assert an empty bench on a run where the roster was never read at
+    # all, which is a claim this code cannot make.
+    roster_board = None
     # Current starters that were never scored. `None` for the same reason
     # `current_starters` is: until the projections parse, nobody knows.
     unevaluated_starters = None
@@ -1571,17 +1594,27 @@ def _cmd_alert(args):
         # still has no row is a different animal - a data problem, not a
         # scope limit - and the two must not be reported as one thing.
         covered_positions = set(p.pos for p in projections)
+
+        def _why_unscored(row):
+            """Why this roster row has no projection. See _UNEVALUATED_REASONS.
+
+            Factored out because the BENCH board needs the SAME answer for a
+            RESERVE, and the two must never drift: a bench player and a
+            starter with identical missing data have identical causes, and
+            two copies of this ladder would eventually disagree about which.
+            """
+            if row.slot in failed_positions:
+                return PROJECTION_PAGE_FAILED
+            if row.slot and row.slot in covered_positions:
+                return PROJECTION_MISSING
+            return POSITION_NOT_CAPTURED
+
         unevaluated_starters = []
         for row in starter_rows:
             if row in resolved:
                 continue
-            if row.slot in failed_positions:
-                why = PROJECTION_PAGE_FAILED
-            elif row.slot and row.slot in covered_positions:
-                why = PROJECTION_MISSING
-            else:
-                why = POSITION_NOT_CAPTURED
-            unevaluated_starters.append((row.name, row.slot, why))
+            unevaluated_starters.append(
+                (row.name, row.slot, _why_unscored(row)))
 
         sidelined = sorted((resolved[r].name, resolved[r].status)
                            for r in roster_rows
@@ -1592,6 +1625,28 @@ def _cmd_alert(args):
                       team=resolved[r].team)
             for r in roster_rows
             if r in resolved and not is_out(resolved[r].status)])
+
+        # EVERY rostered player, not just the eight that got slotted. All
+        # thirteen were already CONSIDERED above (`roster_rows` is starters
+        # plus reserves); until this existed the digest simply never showed
+        # the twelve-odd numbers behind the eight names it printed, so a
+        # reserve out-projecting a startable starter was invisible on the
+        # phone. Out players are scored and listed here WITH their status
+        # rather than dropped: `best_lineup` must not pick them (it does not
+        # - they are filtered out of the pool above), but the reader still
+        # needs to see who they are and what they would have been worth.
+        roster_board = []
+        for r in roster_rows:
+            if r in resolved:
+                p = resolved[r]
+                roster_board.append(BoardRow(
+                    name=p.name, pos=p.pos, team=p.team,
+                    points=score_week(lg, p, curves),
+                    status=p.status or "", why=None))
+            else:
+                roster_board.append(BoardRow(
+                    name=r.name, pos=r.slot, team=normalize_team(r.team),
+                    points=None, status="", why=_why_unscored(r)))
     except _AllProjectionsFailed as exc:
         # Checked as its OWN except, ahead of (never merged into)
         # CaptureError/ValueError below - see the class's own docstring for
@@ -1680,7 +1735,8 @@ def _cmd_alert(args):
                    unevaluated_starters=unevaluated_starters,
                    injury_error=injury_error,
                    injuries_age_minutes=injuries_age_minutes,
-                   projections_capture_error=projections_capture_error)
+                   projections_capture_error=projections_capture_error,
+                   roster_board=roster_board)
 
     # A PARTIAL capture failure - one to three of the four position-group
     # pages, with the roster and at least one other page still good - must
