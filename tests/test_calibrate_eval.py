@@ -184,10 +184,13 @@ def test_the_harness_reproduces_the_shipped_curves():
     #
     # Updated 2026-08-30 for the adopted per-stat split (see
     # poc/build_calibration.py and
-    # docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md):
-    # pass_cmp/pass_yds/rec_ct/rec_yds/rush_yds now ship from
-    # build_curves_isotonic on the FULL dataset (build set + held-back);
-    # def_pa/def_ya are unchanged, build_curves on the build set only. This
+    # docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md),
+    # and again 2026-08-30 when pass_yds was REVERTED to interpolation (it
+    # lost condition 3 of the gate on de-duplicated data - see
+    # .superpowers/sdd/2026-08-30-full-position-coverage/
+    # pass-yds-revert-report.md): pass_cmp/rec_ct/rec_yds/rush_yds now ship
+    # from build_curves_isotonic on the FULL dataset (build set + held-back);
+    # pass_yds/def_pa/def_ya are build_curves on the build set only. This
     # single-dataset/single-method assumption used to hold for every stat -
     # it no longer does, and the harness must be told, not left to pass
     # vacuously against a premise the shipped file no longer follows.
@@ -200,8 +203,8 @@ def test_the_harness_reproduces_the_shipped_curves():
     from sffl.calibrate import build_curves, build_curves_isotonic, load_curves
 
     ISOTONIC_FULL_DATASET_STATS = {
-        "pass_cmp", "pass_yds", "rec_ct", "rec_yds", "rush_yds"}
-    INTERPOLATED_BUILD_SET_STATS = {"def_pa", "def_ya"}
+        "pass_cmp", "rec_ct", "rec_yds", "rush_yds"}
+    INTERPOLATED_BUILD_SET_STATS = {"def_pa", "def_ya", "pass_yds"}
 
     lg = load_league("leagues/sffl/2026.yaml")
     build_set_lines = []
