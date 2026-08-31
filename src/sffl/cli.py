@@ -1273,7 +1273,7 @@ def _cmd_alert(args):
     from sffl.cbs_roster import parse_lineup_rows
     from sffl.cbs_weekly import is_out
     from sffl.cbs_weekly import parse as parse_weekly
-    from sffl.identity import normalize_team, resolve_key
+    from sffl.identity import IdentityIndex, normalize_team
     from sffl.injuries import for_roster, load as load_injuries
     from sffl.league import load_league
     from sffl.lineup import Candidate, best_lineup
@@ -1323,6 +1323,21 @@ def _cmd_alert(args):
     # it still cannot tell apart (e.g. two same-named players at the same
     # position on the same team).
     residual_projection_duplicates = []
+    # (group, row_count) for every position-group page whose parsed rows
+    # ALL came back with `player_id == ""` this run, despite having rows at
+    # all - Task 3b review round 1 Important 3: without this, `sffl.
+    # capture.capture` silently losing its id extraction on one page (a
+    # CBS markup change, say) degrades every join on that page's rows back
+    # to the (name, team, pos) composite FOREVER, with zero indication
+    # anywhere - exactly the rot Task 3b's own brief asked this feature to
+    # guard against. A single row lacking an id (real churn - a player
+    # dropped from a live page between one capture and the next) is NOT
+    # reported here; only TOTAL loss across an entire page's rows is,
+    # since that is the signal a real extraction regression produces (a
+    # live capture 2026-08-30 measured 100%, 98/98, 32/32, and 32/32
+    # coverage across the four groups - occasional single misses are
+    # normal, wholesale loss is not).
+    id_coverage_losses = []
 
     try:
         # ROSTER FIRST, its own capture() call, and any failure here still
@@ -1396,6 +1411,8 @@ def _cmd_alert(args):
                 group_failures.append((group, str(exc)))
                 continue
             group_rows.append((group, rows))
+            if rows and not any(p.player_id for p in rows):
+                id_coverage_losses.append((group, len(rows)))
 
         if not group_rows:
             # Every single position-group page failed - the projections
@@ -1416,31 +1433,43 @@ def _cmd_alert(args):
         projections, _owner_group, cross_group_duplicates = (
             _merge_projection_groups(group_rows))
 
-        # Keyed on `p.key()` - `identity.resolve_key`'s id-first join: a real
-        # CBS `player_id` (lifted from a `playerpage/<id>` link by
+        # Keyed on `p.key()` - `identity.resolve_key`'s SINGLE per-row key:
+        # a real CBS `player_id` (lifted from a `playerpage/<id>` link by
         # `sffl.capture.capture`) when the row has one, `identity.
         # player_key`'s (name, team, pos) composite as the documented
-        # fallback when it does not. NOT (name, pos): the NFL has had two
-        # simultaneously active players sharing a name at the same position
-        # on DIFFERENT teams (real, not hypothetical - see
-        # `_merge_projection_groups`'s docstring), and a (name, pos) key
-        # would silently merge them, handing one player's projection to the
-        # other. THE COMPOSITE FALLBACK IS STILL A HEURISTIC, NOT A
-        # PROVEN-UNIQUE IDENTITY - see `cbs_roster`'s module docstring for
-        # why - so a residual collision (two rows that still share this key)
-        # is DETECTED and REPORTED here, exactly like `_merge_projection_
-        # groups`'s cross-group one, never silently resolved by keeping the
-        # first and dropping the second. This also naturally catches a
-        # within-group duplicate `_merge_projection_groups` deliberately
-        # leaves untouched (see its docstring) whenever that duplicate is a
-        # TRUE one rather than a normalize_name suffix collision between two
-        # different real players (those have different keys here too, since
-        # name differs) - UNLESS both rows carry ids, in which case a suffix
-        # collision like that can no longer happen here at all: their ids
-        # differ, so their resolve_key values differ too. This branch is
-        # therefore only ever reached via the composite fallback - a genuine
-        # id collision (two DIFFERENT rows both claiming the SAME id) is the
-        # one case an id cannot resolve either, and lands here just as loud.
+        # fallback when it does not. This IS the right tool HERE - deduping
+        # `projections` against ITSELF is a SYMMETRIC, single-source check
+        # (see `resolve_key`'s own docstring, corrected in Task 3b review
+        # round 1: it is the WRONG tool for the asymmetric roster ↔
+        # projections join further below, which uses `IdentityIndex`
+        # instead). NOT (name, pos): the NFL has had two simultaneously
+        # active players sharing a name at the same position on DIFFERENT
+        # teams (real, not hypothetical - see `_merge_projection_groups`'s
+        # docstring), and a (name, pos) key would silently merge them,
+        # handing one player's projection to the other. THE COMPOSITE
+        # FALLBACK IS STILL A HEURISTIC, NOT A PROVEN-UNIQUE IDENTITY - see
+        # `cbs_roster`'s module docstring for why - so a residual collision
+        # (two rows that still share this key) is DETECTED and REPORTED
+        # here, exactly like `_merge_projection_groups`'s cross-group one,
+        # never silently resolved by keeping the first and dropping the
+        # second. This also naturally catches a within-group duplicate
+        # `_merge_projection_groups` deliberately leaves untouched (see its
+        # docstring) whenever that duplicate is a TRUE one rather than a
+        # normalize_name suffix collision between two different real
+        # players (those have different keys here too, since name differs)
+        # - UNLESS both rows carry ids, in which case a suffix collision
+        # like that can no longer happen here at all: their ids differ, so
+        # their resolve_key values differ too. This branch is therefore
+        # only ever reached via the composite fallback - a genuine id
+        # collision (two DIFFERENT rows both claiming the SAME id) is the
+        # one case an id cannot resolve either, and lands here just as
+        # loud, correctly described below as a JOIN KEY collision, not
+        # asserted to be caused by a missing id (Task 3b review round 1
+        # minor: the pushed-body banner used to claim EVERY residual here
+        # was "because at least one of them carried no CBS id," which is
+        # false for the shared-id case - the per-row WARNING below already
+        # named that case correctly; only the pushed-body banner text was
+        # wrong, and is now worded to cover both without asserting which).
         by_key = {}
         for p in projections:
             key = p.key()
@@ -1461,21 +1490,46 @@ def _cmd_alert(args):
                 continue
             by_key[key] = p
 
+        # THE ACTUAL ROSTER <-> PROJECTIONS JOIN - deliberately NOT built by
+        # calling `resolve_key` per roster row and looking that single key
+        # up in `by_key`. Task 3b review round 1 reproduced, live, exactly
+        # why that is wrong: `resolve_key` never computes a composite key
+        # for a row that HAS an id, so if the roster's capture carried real
+        # ids while a projections page's capture (this run) carried none at
+        # all - the two sides of this join CAN legitimately disagree, since
+        # each page's id extraction succeeds or degrades independently -
+        # every roster row's `"id:<n>"` key missed `by_key` entirely (every
+        # projection in it was keyed by ITS OWN composite instead) and
+        # NOTHING fell back to anything. Result: BEST LINEUP 0.00 pts,
+        # every slot UNFILLED, exit 0, no DEGRADED banner - worse than the
+        # heuristic this task replaced, and completely silent.
+        #
+        # `IdentityIndex` (see identity.py) is the fix: every surviving
+        # projection is indexed under BOTH its id (if it has one) AND its
+        # composite key, and a lookup tries the id first, falling back to
+        # composite - so either side losing its ids independently still
+        # resolves via whichever key the OTHER side can supply. Built from
+        # `by_key.values()`, not `projections` directly, so it inherits the
+        # dedup already done above (a true duplicate never reaches it).
+        lookup_index = IdentityIndex()
+        for p in by_key.values():
+            lookup_index.add(p.player_id, p.name, p.team, p.pos, p)
+
         # Each `RosterRow` already knows its OWN slot and team - no more
         # "which position does this bare name mean" ambiguity to detect:
         # `parse_lineup_rows` never collapsed the Chargers TQB/DST case (or
         # any other same-name-different-row case) in the first place, so
         # each row is looked up independently and CORRECTLY, not merely
-        # flagged as unresolvable. `resolve_key` - NOT bare `player_key` -
-        # so a roster row carrying a real CBS `player_id` (see cbs_roster
-        # and sffl.capture) joins against `by_key` on that id, the SAME
-        # genuinely unique key `p.key()` used to build `by_key` above; a
-        # row with no id (page furniture aside, this is now rare on a live
-        # CBS page - even a TQB/DST team-aggregate pick carries its own id,
-        # verified live 2026-08-30) falls back to the (name, team, pos)
-        # composite exactly as before this task.
-        owned = [resolve_key(r.player_id, r.name, r.team, r.slot)
-                for r in roster_rows]
+        # flagged as unresolvable. `resolved` maps each `RosterRow` (the
+        # namedtuple itself, hashable) to its matching `PlayerProjection`,
+        # or omits it entirely when `lookup_index` finds nothing - the
+        # single source every downstream computation below reads from,
+        # rather than each recomputing its own key/lookup independently.
+        resolved = {}
+        for r in roster_rows:
+            match = lookup_index.get(r.player_id, r.name, r.team, r.slot)
+            if match is not None:
+                resolved[r] = match
 
         # Which positions had NO usable data this run because their OWN
         # page failed to capture or parse - as opposed to a position no
@@ -1493,9 +1547,9 @@ def _cmd_alert(args):
         # C1. Which of CBS's eight starters could not be scored at all, and
         # WHY. Before this task only RB-WR-TE was ever captured, so the TQB,
         # the kicker and the defense had no projection and were not in
-        # `by_key`; the START/SIT diff in `compose` is a set difference, so
-        # before that fix they landed in the SIT column every single week,
-        # dressed as merit-based bench advice.
+        # `resolved`; the START/SIT diff in `compose` is a set difference,
+        # so before that fix they landed in the SIT column every single
+        # week, dressed as merit-based bench advice.
         #
         # The covered positions are read off the MERGED pages themselves
         # rather than off a group name, because what actually decides
@@ -1507,8 +1561,7 @@ def _cmd_alert(args):
         covered_positions = set(p.pos for p in projections)
         unevaluated_starters = []
         for row in starter_rows:
-            key = resolve_key(row.player_id, row.name, row.team, row.slot)
-            if key in by_key:
+            if row in resolved:
                 continue
             if row.slot in failed_positions:
                 why = PROJECTION_PAGE_FAILED
@@ -1518,14 +1571,15 @@ def _cmd_alert(args):
                 why = POSITION_NOT_CAPTURED
             unevaluated_starters.append((row.name, row.slot, why))
 
-        sidelined = sorted((by_key[k].name, by_key[k].status)
-                           for k in owned
-                           if k in by_key and is_out(by_key[k].status))
+        sidelined = sorted((resolved[r].name, resolved[r].status)
+                           for r in roster_rows
+                           if r in resolved and is_out(resolved[r].status))
         result = best_lineup(lg, [
-            Candidate(name=by_key[k].name, pos=by_key[k].pos,
-                      points=score_week(lg, by_key[k], curves),
-                      team=by_key[k].team)
-            for k in owned if k in by_key and not is_out(by_key[k].status)])
+            Candidate(name=resolved[r].name, pos=resolved[r].pos,
+                      points=score_week(lg, resolved[r], curves),
+                      team=resolved[r].team)
+            for r in roster_rows
+            if r in resolved and not is_out(resolved[r].status)])
     except _AllProjectionsFailed as exc:
         # Checked as its OWN except, ahead of (never merged into)
         # CaptureError/ValueError below - see the class's own docstring for
@@ -1661,16 +1715,49 @@ def _cmd_alert(args):
                 % (name, pos, team, kept_group, dropped_group))
         body = body + "\n\n" + "\n".join(dup_banner)
 
+    # Task 3b review round 1, Important 3: NO SIGNAL ANYWHERE previously
+    # existed for id coverage silently dropping to zero on a page that
+    # normally carries ids - the exact rot Task 3b's brief asked this
+    # feature to guard against. Surfaced the same way every other
+    # degradation here is: a named banner in the pushed body, and it counts
+    # toward the exit code below. A single missed row is NOT this - only a
+    # page whose EVERY row came back id-less is (see `id_coverage_losses`'s
+    # own comment above for why that threshold).
+    if (id_coverage_losses and not capture_error
+            and not projections_capture_error):
+        id_banner = [
+            "!! ID COVERAGE LOST on %d of %d position-group page(s): every "
+            "row parsed with no CBS player id at all, though rows were "
+            "present. A live capture normally pairs virtually every row "
+            "with one (100%%, measured 2026-08-30) - this usually means "
+            "CBS changed the page's markup or the id-extraction broke, and "
+            "every row on the named page(s) has silently fallen back to "
+            "the (name, team, pos) composite key for this run:"
+            % (len(id_coverage_losses), len(ALERT_GROUPS))]
+        for group, count in id_coverage_losses:
+            id_banner.append("  - %s: 0 of %d row(s) carried an id"
+                             % (group, count))
+        body = body + "\n\n" + "\n".join(id_banner)
+
     # A RESIDUAL projection duplicate - two rows that still share the same
     # join key even after `identity.resolve_key`'s id-first, composite-
-    # fallback join was applied. NOT necessarily the same entity captured
-    # twice: this branch is only reached when at least one of the two rows
-    # carried no CBS id (two id-bearing rows can never collide here unless
-    # they share the SAME id, a genuine data anomaly) - the far more common
-    # cause is `normalize_name` stripping a generational suffix and merging
-    # two DIFFERENT real players' composite keys ("Braelon Allen" vs
-    # "Braelon Allen Jr.", same team and position). Either way the key is a
-    # HEURISTIC, not a proven-unique identity for rows without an id (see
+    # fallback key was applied. TWO DISTINCT CAUSES land here, and the
+    # banner below must not claim it is always one of them (Task 3b review
+    # round 1 minor: this banner used to assert unconditionally "because
+    # at least one of them carried no CBS id," which is FALSE for the
+    # shared-id case - the per-row WARNING above already names that case
+    # correctly; only this pushed-body summary was wrong):
+    #   (1) two DIFFERENT real players share a (name, team, position)
+    #       composite key because at least one of them carried no CBS id
+    #       (e.g. `normalize_name` stripping a generational suffix -
+    #       "Braelon Allen" vs "Braelon Allen Jr.", same team and
+    #       position) - a player id on BOTH rows would have told them
+    #       apart automatically;
+    #   (2) two rows both claim the SAME CBS id - a genuine data anomaly
+    #       an id cannot resolve either, since an id assumed unique turned
+    #       out not to be.
+    # Either way the key is a HEURISTIC for rows without an id, or an
+    # assumption that turned out false for rows that share one (see
     # cbs_roster's module docstring) - this is the loud safety net for
     # whatever it still could not tell apart, rather than silently keeping
     # the first row and dropping the second.
@@ -1679,14 +1766,15 @@ def _cmd_alert(args):
         residual_banner = [
             "!! %d residual projection duplicate(s) found - a row's join "
             "key collided with an earlier one's even after the id-first, "
-            "composite-fallback join. This does NOT necessarily mean the "
-            "same player was captured twice: it also happens when two "
+            "composite-fallback key. This does NOT necessarily mean the "
+            "same player was captured twice: it can also mean two "
             "DIFFERENT real players share a (name, team, position) "
-            "composite key (e.g. a generational suffix normalize_name "
-            "strips) because at least one of them carried no CBS id - a "
+            "composite key because at least one of them carried no CBS id "
+            "(e.g. a generational suffix normalize_name strips) - a "
             "player id on BOTH rows would have told them apart "
-            "automatically. Only the first row seen is kept; check these "
-            "names by hand:"
+            "automatically - OR that two rows both claim the SAME CBS id, "
+            "a data anomaly an id cannot resolve either. Only the first "
+            "row seen is kept; check these names by hand:"
             % len(residual_projection_duplicates)]
         for name, pos, team in residual_projection_duplicates:
             residual_banner.append("  - %s (%s, %s)" % (name, pos, team))
@@ -1725,18 +1813,20 @@ def _cmd_alert(args):
     # injury fetch produced nothing, or produced something that is not
     # from this run, or one to three of the four position-group pages
     # failed - `group_failures` - or a cross-group projection duplicate was
-    # found, or a residual (name, pos, team) collision survived even the
-    # full composite key - see `residual_projection_duplicates`), or a
-    # delivery failure is each visible in a way launchd's log must be able
-    # to see, so each makes the exit code non-zero - but they are DIFFERENT
-    # failures (nothing produced, vs. an alert missing half its content,
-    # vs. a correct alert that could not be pushed), and the printed body
-    # above, not the exit code, is what tells them apart. A missing
-    # --injuries argument is NOT counted here: that is a deliberate
-    # invocation, not a failed step, and it is still stated in the body.
+    # found, or a page's id coverage silently dropped to zero across every
+    # row - `id_coverage_losses`, Task 3b review round 1 - or a residual
+    # (name, pos, team) collision survived even the full composite key -
+    # see `residual_projection_duplicates`), or a delivery failure is each
+    # visible in a way launchd's log must be able to see, so each makes
+    # the exit code non-zero - but they are DIFFERENT failures (nothing
+    # produced, vs. an alert missing half its content, vs. a correct alert
+    # that could not be pushed), and the printed body above, not the exit
+    # code, is what tells them apart. A missing --injuries argument is NOT
+    # counted here: that is a deliberate invocation, not a failed step, and
+    # it is still stated in the body.
     return 1 if (capture_error or projections_capture_error
                 or injury_fetch_failed or delivery_error or group_failures
-                or cross_group_duplicates
+                or cross_group_duplicates or id_coverage_losses
                 or residual_projection_duplicates) else 0
 
 
