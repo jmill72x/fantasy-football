@@ -120,35 +120,58 @@ def _prefix_ids(full_text, rows):
     with an id at all. Losing one row's id to an unexpected layout quirk
     is far cheaper than losing (or corrupting) the whole page.
 
-    THE PREFIX LANDS AFTER ANY LEADING BLANK LINE(S) WITHIN THE ROW'S OWN
-    TEXT, not at its literal first character - verified necessary live,
+    THE PREFIX LANDS RIGHT AFTER THE LAST NEWLINE IN THE ROW'S OWN TEXT,
+    not at its literal first character - verified necessary live,
     2026-08-30: a `<tr>`'s `innerText` can start with a hidden cell's
-    rendered whitespace (CBS's action-buttons column, e.g.) followed by a
-    line break BEFORE the row's real content - e.g. `" \n\tSgt Hu...\t..."`
-    for the Chargers TQB row. Inserting at the literal start would put
-    `"id=1974\t"` on its OWN throwaway line ("id=1974\t "), orphaned from
-    the actual content line the parser reads next - a silent, total loss of
-    every id on every page this happens on, discovered only by parsing a
-    real capture and checking `player_id` (see `sffl.cbs_weekly`'s tests).
-    Every leading `\n`-terminated segment that is blank once stripped is
-    skipped past; a row with no such quirk (the ordinary case) sees this
-    skip past nothing (offset 0), unchanged from inserting at the start.
+    rendered content (whitespace, OR - confirmed on a real page, review
+    round 1 - a short non-blank label like an action button's "Add")
+    followed by a line break BEFORE the row's real content - e.g.
+    `" \n\tSgt Hu...\t..."` for the Chargers TQB row. Inserting at the
+    literal start would put `"id=1974\t"` on its OWN throwaway line
+    ("id=1974\t "), orphaned from the actual content line the parser reads
+    next - a silent, total loss of every id on every page this happens on.
+
+    GENERAL ON PURPOSE, NOT "SKIP LEADING BLANK SEGMENTS": an earlier
+    version of this function only skipped past a leading segment if it was
+    blank once stripped, which is exactly wrong for a leading NON-blank
+    cell ("Add\n\t..." - confirmed live, this shape already exists on real
+    pages: the roster page's rows have no leading blank at all, while the
+    DST projections page's rows have `' '` on 32 of 32 - one CBS layout
+    tweak away from a THIRD shape appearing) - that version would stop at
+    the first non-blank segment and insert there, re-orphaning the id
+    exactly as before, SILENTLY (no exception, no warning - a page in that
+    shape parses every row with `player_id == ""` and nothing says so).
+    Anchoring on the LAST newline instead does not need to know or guess
+    WHAT is in any leading segment - blank, "Add", or anything else - it
+    is content-agnostic and correct for every shape observed so far, and a
+    row with no embedded newline at all (the ordinary case, no quirk)
+    still gets offset 0, unchanged from inserting at the literal start.
+
+    A ROW WHOSE OWN TEXT IS BLANK ON EVERY LINE (no real content anywhere,
+    a genuinely degenerate row) IS SKIPPED ENTIRELY, not merely un-offset.
+    Review round 1 caught the alternative: anchoring on the last newline of
+    an all-blank `row_text` still lands somewhere WITHIN that blank span,
+    which can sit at or past the boundary where the NEXT row's own text
+    begins in `full_text` - migrating this row's id prefix onto the
+    FOLLOWING row's line (`"id=A\tid=B\t..."`), which then fails to parse
+    as ANY recognized row - loud (raises) in `cbs_weekly` (the merged
+    text still contains " • ", so it is caught as an unmatched line), but
+    a SILENT drop in `cbs_roster` (`_ROW` has no such watchdog - a line
+    that fails to match is simply skipped, no warning). A row with nothing
+    to identify is skipped up front instead, leaving its own (blank, inert)
+    text untouched and never touching its neighbor's.
     """
     cursor = 0        # up to here, `pieces` already accounts for `full_text`
     search_from = 0   # where the NEXT row's `.find` should start looking
     pieces = []
     for row in rows:
         row_text = row["text"]
-        if not row_text:
+        if not row_text or not row_text.strip():
             continue
         idx = full_text.find(row_text, search_from)
         if idx == -1:
             continue
-        offset = 0
-        for segment in row_text.split("\n")[:-1]:
-            if segment.strip():
-                break
-            offset += len(segment) + 1  # +1 for the "\n" this segment ends on
+        offset = row_text.rfind("\n") + 1  # 0 when there is no "\n" at all
         content_idx = idx + offset
         pieces.append(full_text[cursor:content_idx])
         pieces.append("id=%s\t" % row["id"])
@@ -194,7 +217,17 @@ def check_page_text(text, url, title=""):
     """Raise unless `text` is plausibly the real page for `url`.
 
     Arguments:
-      text: the body text of the page
+      text: the body text of the page - Task 3b review round 1 note: this
+        is called on the ALREADY id-PREFIXED text (see `capture()` below,
+        which runs `_capture_page_text` before this), so the
+        `_MIN_PLAUSIBLE_CHARS` floor is technically measured on text a
+        little LONGER than the raw page (every `id=<id>\t` prefix adds a
+        handful of characters, once per identifiable row - a few hundred
+        to low thousands of characters on a real page with ~100 rows).
+        Negligible against a 1000-character floor and a real page that is
+        thousands of characters either way, so this is not a correctness
+        issue - noted here so nobody re-derives the discrepancy from
+        scratch on a future pass through this file.
       url: the final URL (after redirects), to detect /login redirects
       title: the HTML page title (the <title> tag), to detect CBS login pages
 

@@ -784,3 +784,204 @@ def test_two_rows_sharing_the_same_id_are_still_a_loud_residual_collision(
     assert "BEST LINEUP" in out
     assert len(alert_env.sent_calls) == 1
     assert "residual projection duplicate" in alert_env.sent_calls[0][2]
+
+
+
+# --- Task 3b review round 1: asymmetric id loss must degrade, never silently
+# resolve nothing -----------------------------------------------------------
+
+_STRIP_ID_LINE = re.compile(r"^id=\d+\t", re.MULTILINE)
+
+
+def _strip_all_ids(text):
+    """Every leading "id=<digits>\t" prefix removed, simulating a page
+    whose THIS-RUN capture lost its id-extraction entirely while other
+    pages (or the roster) did not - see IdentityIndex's docstring for why
+    that asymmetry is the exact hazard it exists to survive."""
+    return _STRIP_ID_LINE.sub("", text)
+
+
+def test_asymmetric_id_loss_degrades_to_the_composite_join_not_to_nothing(
+        alert_env, capsys, tmp_path):
+    """THE PROHIBITED OUTCOME, reproduced by the round-1 reviewer against
+    `identity.resolve_key` used as the roster<->projections join: the
+    roster fixture carries REAL CBS ids (Task 3b regenerated it from a
+    live capture); if EVERY projection page this run loses its ids (a
+    plausible, independent capture degradation - each page is captured
+    separately, see `_cmd_alert`'s own docstring), `resolve_key` computes
+    an `"id:<n>"` key for every roster row and NOTHING in a composite-only
+    `by_key` was ever stored under such a key - every single roster row
+    reads as unresolved, and `best_lineup` optimizes over an EMPTY
+    candidate list: BEST LINEUP 0.00 pts, every slot UNFILLED, exit 0, no
+    PROJECTIONS DEGRADED banner anywhere. That is worse than the composite
+    heuristic this task replaced, and it is completely silent.
+
+    `IdentityIndex` (identity.py) fixes this: an id-bearing roster row
+    still finds its match via that projection's OWN composite entry, since
+    every surviving projection is indexed under BOTH keys. This test
+    strips every id from all four projection pages while leaving the
+    roster's real ids untouched - the starkest form of the reproduction -
+    and asserts a REAL, non-degraded lineup, not 0.00 points.
+
+    NOT exit 0 here, though - a SEPARATE fix (Important 3, same review
+    round) makes total id loss on a page its OWN loud, independent signal
+    (`id_coverage_losses`/"ID COVERAGE LOST"), regardless of whether the
+    join itself still works. Both are true at once: the LINEUP is correct
+    (the join survived), and the RUN is still flagged, because losing every
+    id on a page is real, actionable rot even when this fallback papers
+    over it for scoring purposes THIS run.
+    """
+    with open("tests/fixtures/cbs_weekly_tab_rbwrte.txt") as fh:
+        rbwrte_text = _strip_all_ids(fh.read())
+    with open(TQB_FIXTURE) as fh:
+        tqb_text = _strip_all_ids(fh.read())
+    with open(K_FIXTURE) as fh:
+        k_text = _strip_all_ids(fh.read())
+    with open(DST_FIXTURE) as fh:
+        dst_text = _strip_all_ids(fh.read())
+
+    rbwrte = tmp_path / "rbwrte_no_ids.txt"
+    rbwrte.write_text(rbwrte_text)
+    tqb = tmp_path / "tqb_no_ids.txt"
+    tqb.write_text(tqb_text)
+    k = tmp_path / "k_no_ids.txt"
+    k.write_text(k_text)
+    dst = tmp_path / "dst_no_ids.txt"
+    dst.write_text(dst_text)
+    alert_env.set_path("RB-WR-TE", rbwrte)
+    alert_env.set_path("TQB", tqb)
+    alert_env.set_path("K", k)
+    alert_env.set_path("DST", dst)
+    # The roster fixture is left completely untouched - it still carries
+    # its real ids, exactly the asymmetry under test.
+
+    code, out = alert_env.run(capsys)
+
+    assert code == 1
+    assert "ID COVERAGE LOST" in out
+    assert "PROJECTIONS DEGRADED" not in out
+    assert "WARNING" not in out
+    assert "residual projection duplicate" not in out
+    assert "BEST LINEUP" in out
+    total_line = next(l for l in out.splitlines() if "BEST LINEUP" in l)
+    total = float(total_line.split("(")[1].split(" pts")[0])
+    # THE CORE ASSERTION: a real, positive lineup total - not the silent
+    # 0.00 the bug produced.
+    assert total > 0, (
+        "asymmetric id loss produced an empty/zero lineup instead of "
+        "falling back to the composite join - out:\n%s" % out)
+    slots_section = out[out.index("BEST LINEUP"):out.index("[dry run")]
+    assert "TQB    Chargers" in slots_section
+    assert "RB     Cam Skattebo" in slots_section
+    assert "Ja'Marr Chase" in slots_section
+    # NOT every slot UNFILLED (the prohibited outcome) - some slots here
+    # (K, DST) are unrelated data-problem gaps in these small curated
+    # fixtures regardless of ids (McPherson/Patriots simply are not on the
+    # 3-row K/DST fixtures by NAME), so this checks the count, not zero.
+    assert slots_section.count("-- UNFILLED") < 8
+
+
+def test_asymmetric_id_loss_reproduces_the_prohibited_outcome_without_the_fix(
+        alert_env, capsys, tmp_path, monkeypatch):
+    """Companion to the test above: proves the failure mode is REAL by
+    reproducing it with `IdentityIndex.get` monkeypatched to behave like a
+    single-key lookup (no composite fallback when the caller's id misses
+    the index) - the exact shape the round-1 reviewer reported: BEST
+    LINEUP 0.00 pts, every slot UNFILLED.
+
+    Exit code is NOT part of this reproduction's assertions: Important 3
+    (same review round) added an INDEPENDENT id-coverage check that fires
+    on total id loss regardless of whether the join itself is broken, so
+    exit 1 and an "ID COVERAGE LOST" banner are both present here too -
+    which is correct defense-in-depth, not a sign the join bug stopped
+    mattering. What this test isolates is the JOIN's own behaviour: with
+    it broken, the lineup itself is still silently empty even though a
+    banner about id coverage is now printed alongside it."""
+    from sffl.identity import IdentityIndex, player_key
+
+    def _single_key_get(self, player_id, name, team, pos):
+        # Mimics resolve_key's SINGLE-key behaviour: try the id ONLY if
+        # present (never falling back to composite when an id exists but
+        # misses), matching the pre-fix `by_key` lookup exactly.
+        if player_id:
+            return self._by_id.get(player_id)
+        return self._by_composite.get(player_key(name, team, pos))
+
+    monkeypatch.setattr(IdentityIndex, "get", _single_key_get)
+
+    with open("tests/fixtures/cbs_weekly_tab_rbwrte.txt") as fh:
+        rbwrte_text = _strip_all_ids(fh.read())
+    with open(TQB_FIXTURE) as fh:
+        tqb_text = _strip_all_ids(fh.read())
+    with open(K_FIXTURE) as fh:
+        k_text = _strip_all_ids(fh.read())
+    with open(DST_FIXTURE) as fh:
+        dst_text = _strip_all_ids(fh.read())
+    for name, text in (("RB-WR-TE", rbwrte_text), ("TQB", tqb_text),
+                       ("K", k_text), ("DST", dst_text)):
+        p = tmp_path / ("%s_no_ids.txt" % name)
+        p.write_text(text)
+        alert_env.set_path(name, p)
+
+    code, out = alert_env.run(capsys)
+
+    assert "PROJECTIONS DEGRADED" not in out
+    total_line = next(l for l in out.splitlines() if "BEST LINEUP" in l)
+    total = float(total_line.split("(")[1].split(" pts")[0])
+    # THE JOIN BUG ITSELF, isolated: with `IdentityIndex.get` behaving
+    # like a single-key lookup, the lineup is STILL silently empty, even
+    # though Important 3's coverage banner is now also present (exit 1,
+    # "ID COVERAGE LOST" in out) - that banner does not, by itself, fix
+    # the join; it only makes the underlying id-loss impossible to miss.
+    assert total == 0.0
+    slots_section = out[out.index("BEST LINEUP"):out.index("[dry run")]
+    assert slots_section.count("-- UNFILLED") == 8
+    assert code == 1
+    assert "ID COVERAGE LOST" in out
+
+
+
+def test_one_groups_total_id_loss_is_named_and_the_others_are_not(
+        alert_env, capsys, tmp_path):
+    """THE SIGNAL ITSELF, isolated: only the K page loses every id this
+    run - RB-WR-TE, TQB, and DST all keep theirs. The banner must name K
+    specifically (with its row count) and must NOT claim the same for the
+    pages that are fine - a coverage warning that cannot say WHICH page
+    regressed would send a human hunting through all four for nothing.
+    Also reaches the pushed body, on the same terms as every other
+    degradation this command reports."""
+    with open(K_FIXTURE) as fh:
+        k_text = _strip_all_ids(fh.read())
+    k = tmp_path / "k_no_ids.txt"
+    k.write_text(k_text)
+    alert_env.set_path("K", k)
+
+    code, out = alert_env.run(capsys)
+
+    assert code == 1
+    assert "ID COVERAGE LOST" in out
+    assert "1 of %d position-group page(s)" % len(ALERT_GROUPS) in out
+    assert "K: 0 of 3 row(s) carried an id" in out
+    # The other three pages are not named as having lost coverage.
+    coverage_block = out[out.index("ID COVERAGE LOST"):]
+    coverage_block = coverage_block[:coverage_block.index("\n\n")]
+    assert "RB-WR-TE:" not in coverage_block
+    assert "TQB:" not in coverage_block
+    assert "DST:" not in coverage_block
+    assert len(alert_env.sent_calls) == 1
+    assert "ID COVERAGE LOST" in alert_env.sent_calls[0][2]
+    assert "K: 0 of 3 row(s) carried an id" in alert_env.sent_calls[0][2]
+
+
+def test_a_single_missed_row_is_not_reported_as_id_coverage_lost(
+        alert_env, capsys):
+    """NOT A FALSE POSITIVE: the committed RB-WR-TE fixture has 99 of its
+    100 rows carrying a real id (one player, no longer on the live page as
+    of regeneration, naturally has none - see test_cbs_weekly.py). A
+    single ordinary miss like this is ROUTINE roster churn, not a
+    regression, and must never trigger the same banner a wholesale page
+    loss does - that would make the real signal indistinguishable from
+    background noise."""
+    code, out = alert_env.run(capsys)
+    assert code == 0
+    assert "ID COVERAGE LOST" not in out

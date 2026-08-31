@@ -151,6 +151,70 @@ def test_prefix_ids_handles_multiple_leading_blank_segments():
     assert id_line == "id=1978\t" + content
 
 
+def test_prefix_ids_skips_past_a_leading_NON_BLANK_cell_too():
+    # Task 3b review round 1 Important 2, reproduced: a leading segment
+    # that is a real, non-blank label ("Add" - an action-button cell's
+    # text) followed by a newline BEFORE the row's actual content. The
+    # earlier "skip only blank segments" version stopped at this segment
+    # and inserted right before it - re-orphaning the id exactly like the
+    # original blank-segment bug, only SILENTLY (no exception anywhere).
+    content = "\tSgt Hu...\tChargers TQB • LAC \tARI\t---\t18.45"
+    row_text = "Add\n" + content
+    full = "nav\n\n" + row_text + "\n\nfooter"
+    rows = [{"id": "1974", "text": row_text}]
+    out = capture._prefix_ids(full, rows)
+    lines = out.splitlines()
+    id_line = next(l for l in lines if l.startswith("id=1974"))
+    assert id_line == "id=1974\t" + content
+    # "Add" itself is untouched, on its own line, with no id attached.
+    assert "Add" in out
+    assert "id=1974\tAdd" not in out
+
+
+def test_prefix_ids_is_content_agnostic_about_the_leading_segment():
+    # The fix is general, not a second special case bolted onto the first:
+    # ANY leading segment - blank, a word, punctuation, digits - must be
+    # skipped past uniformly, because the function has no way to know (and
+    # must not need to guess) what CBS puts in a hidden cell.
+    for leading in (" ", "Add", "***", "12", "Trade"):
+        content = "\tRow\tContent • XX \tYY\t1.23"
+        row_text = leading + "\n" + content
+        full = "nav\n" + row_text + "\nfooter"
+        rows = [{"id": "42", "text": row_text}]
+        out = capture._prefix_ids(full, rows)
+        id_line = next(l for l in out.splitlines() if l.startswith("id=42"))
+        assert id_line == "id=42\t" + content, "failed for leading=%r" % leading
+
+
+def test_prefix_ids_skips_a_row_whose_own_text_is_entirely_blank():
+    # Task 3b review round 1 Important 2, second half: a row with NO real
+    # content anywhere in its own text must not be prefixed at all -
+    # anchoring on its last newline would land somewhere inside its own
+    # blank span, which can coincide with (or precede) where the NEXT
+    # row's real text begins, migrating THIS row's id onto that row's line
+    # ("id=A\tid=B\t...") - loud in cbs_weekly (still contains " • ", so
+    # it is caught as an unmatched line) but a SILENT DROP in cbs_roster
+    # (`_ROW` has no such watchdog - a non-matching line just vanishes).
+    blank_row = " \n \n "
+    next_row = "\tWR\tJa'Marr Chase WR • CIN \tTB\t"
+    # A real newline-separated page - `full`'s own structure separates
+    # every row onto its own line(s) regardless of what any one row's
+    # `tr.innerText` contains; this test's `blank_row` is deliberately
+    # entirely blank content WITHIN that structure, not a missing
+    # separator between rows (a different, unrelated concern).
+    full = "nav\n" + blank_row + "\n" + next_row + "\nfooter"
+    rows = [{"id": "AAA", "text": blank_row},
+           {"id": "2966320", "text": next_row}]
+    out = capture._prefix_ids(full, rows)
+    # The blank row contributed NOTHING - no "id=AAA" anywhere in the
+    # output, and it never merges onto the next row's line.
+    assert "id=AAA" not in out
+    assert "id=AAAid=2966320" not in out
+    lines = out.splitlines()
+    id_line = next(l for l in lines if l.startswith("id=2966320"))
+    assert id_line == "id=2966320\t" + next_row
+
+
 def test_capture_page_text_calls_evaluate_once_and_prefixes_ids(monkeypatch):
     # `_capture_page_text` must do exactly ONE page.evaluate round trip
     # (see its own docstring on why a second, separate inner_text() call
