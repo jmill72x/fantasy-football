@@ -51,8 +51,11 @@ See the status table below and "What works today."
 scheduled Friday/Sunday ntfy alerts. **Also MERGED to `main` 2026-08-29, as commit
 `93314a1`.** Its runbook is `docs/operations/in-season-alerting.md`.
 
-**A seventh, still later addition: full position coverage (TQB/K/DST) lives on branch
-`position-coverage`, UNMERGED, as of 2026-08-30.** `sffl alert`/`sffl week` now capture
+**A seventh, still later addition: full position coverage (TQB/K/DST) — MERGED to
+`main` 2026-08-30 as `26031e8`; the `position-coverage` branch is gone.** (This
+paragraph read "lives on branch `position-coverage`, UNMERGED, as of 2026-08-30"
+until 2026-08-31, when it was already false — the same drift the in-season-core
+paragraph above records. Verify with `git merge-base --is-ancestor 26031e8 main`.) `sffl alert`/`sffl week` now capture
 and score all eight lineup slots, not five - see `docs/superpowers/specs/
 2026-08-30-full-position-coverage.md` and the plan alongside it.
 
