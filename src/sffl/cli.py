@@ -2126,6 +2126,113 @@ def _cmd_trade(args):
     return 0
 
 
+def _cmd_lineup(args):
+    """Set the CBS starting lineup to this week's optimum.
+
+    DRY RUN BY DEFAULT. `--confirm` is the only thing that makes this touch
+    the live team, and it is refused when stdin is not a TTY so a scheduled
+    job can never submit: CBS applies each move as it happens with no save
+    step and no undo, and an unattended run that half-completes leaves a real
+    mixed lineup ninety minutes before kickoff.
+    """
+    import sys as _sys
+
+    from sffl.calibrate import load_curves
+    from sffl.cbs_lineup import LineupWriteError, apply_swaps, open_edit_mode
+    from sffl.cbs_weekly import parse as parse_weekly
+    from sffl.league import load_league
+    from sffl.lineup import Candidate, best_lineup
+    from sffl.lineup_write import describe_plan, plan_swaps
+    from sffl.pool import score_week
+
+    lg = load_league(args.league)
+    curves = load_curves(args.curves) if args.curves else None
+
+    group_files = [(args.group, args.projections)]
+    for group, path in (("TQB", args.projections_tqb), ("K", args.projections_k),
+                        ("DST", args.projections_dst)):
+        if path:
+            group_files.append((group, path))
+    rows = []
+    for group, path in group_files:
+        rows.extend(parse_weekly(path, group=group, week=args.week,
+                                 season=lg.season))
+    # Joined on CBS's own player id, never on name. The lineup page and the
+    # projections pages come from the same site and carry the same ids, and
+    # name matching is what put "Chargers" in two places at once elsewhere in
+    # this codebase.
+    points_by_id = dict((p.player_id, p) for p in rows if p.player_id)
+
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        ctx = pw.chromium.launch_persistent_context(
+            args.profile_dir, headless=not args.show, timeout=45000)
+        try:
+            page = ctx.new_page()
+            current = open_edit_mode(page)
+            cands, unpriced = [], []
+            for slot in current:
+                proj = points_by_id.get(slot.player_id)
+                if proj is None:
+                    unpriced.append(slot)
+                    continue
+                cands.append((slot, Candidate(
+                    name=slot.name, pos=slot.pos,
+                    points=score_week(lg, proj, curves), team=proj.team)))
+            if unpriced:
+                # Refuse rather than optimise around a hole: a player with no
+                # projection scores 0 and would be benched by arithmetic
+                # rather than by judgement.
+                print("REFUSING: %d rostered player(s) have no projection in "
+                      "the pages given, and a missing projection scores zero "
+                      "- which would bench a healthy player as if he were "
+                      "worthless:" % len(unpriced))
+                for slot in unpriced:
+                    print("    %-22s (%s, id %s)" % (slot.name, slot.pos,
+                                                     slot.player_id))
+                return 1
+
+            id_by_cand = dict((id(c), slot.player_id) for slot, c in cands)
+            best = best_lineup(lg, [c for _s, c in cands])
+            target_ids = set(id_by_cand[id(p)] for _slot, p in best.slots if p)
+            swaps = plan_swaps(current, target_ids)
+
+            print("CURRENT starters: %s"
+                  % ", ".join(s.name for s in current if s.starting))
+            print("OPTIMAL (%.2f pts): %s"
+                  % (best.total, ", ".join(p.name for _s, p in best.slots if p)))
+            print("\nPLAN")
+            print(describe_plan(swaps))
+
+            if not swaps:
+                return 0
+            if not args.confirm:
+                print("\n  DRY RUN - nothing was changed. Re-run with "
+                      "--confirm to apply.")
+                return 0
+            if not _sys.stdin.isatty():
+                print("\n  REFUSING to apply: --confirm was given but this is "
+                      "not an interactive terminal. CBS applies each move as "
+                      "it happens with no undo, so an unattended run that "
+                      "half-completes leaves a real mixed lineup. Run it by "
+                      "hand.")
+                return 1
+
+            print("\n  APPLYING - each swap is verified before the next.")
+            def step(i, swap):
+                print("    step %d: bench %s, start %s"
+                      % (i, swap.bench_name, swap.promote_name))
+            applied = apply_swaps(page, swaps, target_ids, on_step=step)
+            print("  DONE - %d of %d swaps applied and verified."
+                  % (applied, len(swaps)))
+            return 0
+        except LineupWriteError as exc:
+            print("LINEUP WRITE FAILED: %s" % exc)
+            return 1
+        finally:
+            ctx.close()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sffl")
     sub = ap.add_subparsers(dest="cmd")
@@ -2311,6 +2418,26 @@ def main(argv=None):
     tr.add_argument("--curves", default=None)
     tr.add_argument("--top", type=int, default=10)
     tr.set_defaults(func=_cmd_trade)
+
+    ln = sub.add_parser("lineup", help="set the CBS starting lineup to the "
+                                       "weekly optimum (DRY RUN unless "
+                                       "--confirm)")
+    ln.add_argument("--projections", required=True)
+    ln.add_argument("--group", default="RB-WR-TE")
+    ln.add_argument("--projections-tqb", default=None)
+    ln.add_argument("--projections-k", default=None)
+    ln.add_argument("--projections-dst", default=None)
+    ln.add_argument("--week", type=int, required=True)
+    ln.add_argument("--league", default=DEFAULT_LEAGUE)
+    ln.add_argument("--curves", default=None)
+    ln.add_argument("--profile-dir", default="data/browser-profile")
+    ln.add_argument("--show", action="store_true",
+                    help="run the browser visibly")
+    ln.add_argument("--confirm", action="store_true",
+                    help="actually apply the swaps. Without this nothing is "
+                         "changed. Refused when stdin is not a TTY, so a "
+                         "scheduled job can never submit")
+    ln.set_defaults(func=_cmd_lineup)
 
     alr = sub.add_parser("alert", help="capture, score, and push the weekly digest")
     alr.add_argument("--kind", choices=["friday", "sunday"], required=True)

@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `846` passed
+- full_suite: `855` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -171,7 +171,7 @@ the PDF/iPad path is no longer the primary artifact and no annotation app needs 
 | **Plan 4 — silent auction planner** | ✅ merged — 279 tests. `sffl plan`; the table is on PDF p17 |
 | **In-season core — weekly waivers & start/sit (read-only)** | ✅ **merged 2026-08-29 (`09e1b0d`)** — 409 tests at merge, three pre-merge fix waves. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop — **the (add, drop) half was DONE 2026-08-31, see below** |
 | **In-season automation — capture, injury fetch, scheduled alerts** | ✅ **merged 2026-08-29 (`93314a1`)** — `sffl alert`, `ops/run_alert.sh`, two launchd LaunchAgents. Runbook: `docs/operations/in-season-alerting.md`. (ntfy/launchd delivery was listed as "deferred" on the row above until 2026-08-30; it is not — it shipped here) |
-| **Full position coverage — TQB/K/DST** | ✅ MERGED (`26031e8`) — 846 tests. All eight lineup slots captured and scored |
+| **Full position coverage — TQB/K/DST** | ✅ MERGED (`26031e8`) — 855 tests. All eight lineup slots captured and scored |
 
 Verify state in one command:
 
@@ -989,7 +989,7 @@ effect of +2.62** — the gain does not concentrate in one or two players.
 
 **Full test suite: 654 passed** (was 653 — one added, `test_every_curve_stat_has_
 provenance_and_vice_versa`). **Stale as of 2026-08-30: the current full suite (after the
-`pass_yds` revert, the duplicate-entity fix, and full position coverage, and the all-13 roster board) is **846 passed**,
+`pass_yds` revert, the duplicate-entity fix, and full position coverage, and the all-13 roster board) is **855 passed**,
 measured by `./.venv/bin/pytest -q` on `position-coverage` on 2026-08-30. (This line read
 "770 passed" until the docs audit later that day: 770 predated the final review round's
 three tests, which took it to 773, and the audit itself added the eight in
