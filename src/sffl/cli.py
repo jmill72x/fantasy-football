@@ -2233,6 +2233,84 @@ def _cmd_lineup(args):
             ctx.close()
 
 
+def _cmd_claim(args):
+    """File one waiver claim: add a free agent, drop a rostered player.
+
+    DRY RUN BY DEFAULT, and even with --confirm the claim JOINS THE WAIVER
+    QUEUE rather than executing immediately, unless --now is also given. A
+    queued offer sits in PENDING ADD/DROPS for days and can be cancelled on
+    CBS; an immediate execution drops a real player the moment it is sent,
+    and a drop is the one action in this project that can actually cost
+    something.
+    """
+    import sys as _sys
+
+    from sffl.cbs_claim import (ClaimError, droppable_ids, pending_claims,
+                                select_drop, stage_add, submit_claim)
+
+    if not args.add or not args.drop:
+        print("both --add and --drop are required: a claim on a full roster "
+              "is an add AND a drop, and CBS will not take one without the "
+              "other")
+        return 1
+
+    from playwright.sync_api import sync_playwright
+    with sync_playwright() as pw:
+        ctx = pw.chromium.launch_persistent_context(
+            args.profile_dir, headless=not args.show, timeout=45000)
+        try:
+            page = ctx.new_page()
+            stage_add(page, args.pos, args.add)
+            offered = droppable_ids(page)
+            if args.drop not in offered:
+                print("REFUSING: CBS does not list player id %s as droppable "
+                      "on this claim. Nothing was submitted." % args.drop)
+                print("  it offered: %s" % (", ".join(offered) or "none"))
+                return 1
+            select_drop(page, args.drop)
+
+            print("CLAIM")
+            print("  ADD   %s (%s, id %s)" % (args.add_name or "?", args.pos,
+                                              args.add))
+            print("  DROP  %s (id %s)" % (args.drop_name or "?", args.drop))
+            print("  mode  %s" % ("EXECUTE IMMEDIATELY" if args.now
+                                  else "pending waiver offer (cancellable)"))
+            for line in page.inner_text("body").split("\n"):
+                t = line.strip()
+                if ("waiver offers remaining" in t
+                        or "will be processed on" in t):
+                    print("  CBS says: %s" % t[:96])
+
+            if not args.confirm:
+                print("\n  DRY RUN - staged in the browser only, nothing was "
+                      "sent. Re-run with --confirm to file it.")
+                return 0
+            if not _sys.stdin.isatty():
+                print("\n  REFUSING to file: --confirm was given but this is "
+                      "not an interactive terminal. A claim drops a real "
+                      "player; it is not something a scheduled job should do "
+                      "unattended.")
+                return 1
+
+            submit_claim(page, queue_as_waiver=not args.now,
+                         move_to_top=args.move_to_top)
+            # Verify against CBS's own pending list rather than reporting
+            # success for having clicked a button.
+            after = pending_claims(page)
+            filed = args.add in after or (args.add_name or "\0") in after
+            print("\n  SUBMITTED. CBS's transactions page %s this claim."
+                  % ("now lists" if filed else "does NOT yet list"))
+            if not filed:
+                print("  Check CBS directly before assuming it was filed.")
+                return 1
+            return 0
+        except ClaimError as exc:
+            print("CLAIM FAILED: %s" % exc)
+            return 1
+        finally:
+            ctx.close()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sffl")
     sub = ap.add_subparsers(dest="cmd")
@@ -2438,6 +2516,29 @@ def main(argv=None):
                          "changed. Refused when stdin is not a TTY, so a "
                          "scheduled job can never submit")
     ln.set_defaults(func=_cmd_lineup)
+
+    cl = sub.add_parser("claim", help="file a waiver claim: add one free "
+                                      "agent, drop one rostered player "
+                                      "(DRY RUN unless --confirm)")
+    cl.add_argument("--add", required=True, help="CBS player id to ADD")
+    cl.add_argument("--pos", required=True,
+                    help="that player's position, as CBS spells it in the "
+                         "add link (TQB/RB/WR/TE/K/DST)")
+    cl.add_argument("--drop", required=True, help="CBS player id to DROP")
+    cl.add_argument("--add-name", default=None, help="label, for the printout")
+    cl.add_argument("--drop-name", default=None, help="label, for the printout")
+    cl.add_argument("--profile-dir", default="data/browser-profile")
+    cl.add_argument("--show", action="store_true")
+    cl.add_argument("--move-to-top", action="store_true",
+                    help="put this ahead of your other pending offers")
+    cl.add_argument("--now", action="store_true",
+                    help="EXECUTE IMMEDIATELY instead of queueing as a "
+                         "cancellable waiver offer. This drops the player at "
+                         "once and cannot be undone")
+    cl.add_argument("--confirm", action="store_true",
+                    help="actually file it. Without this nothing is sent. "
+                         "Refused when stdin is not a TTY")
+    cl.set_defaults(func=_cmd_claim)
 
     alr = sub.add_parser("alert", help="capture, score, and push the weekly digest")
     alr.add_argument("--kind", choices=["friday", "sunday"], required=True)
