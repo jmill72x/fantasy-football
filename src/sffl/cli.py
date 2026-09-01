@@ -934,7 +934,7 @@ def _cmd_week(args):
     from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import normalize_name
-    from sffl.lineup import Candidate, best_lineup, delta
+    from sffl.lineup import Candidate, best_add_drop, best_lineup, delta
     from sffl.pool import score_week
 
     owner_codes = _load_owner_codes(DEFAULT_PROFILE)
@@ -1196,8 +1196,8 @@ def _cmd_week(args):
         # `sorted` being stable is still what makes that deterministic.
         ranked = sorted(free, key=lambda c: (-delta(lg, roster, c), -c.points, c.name))
         shown = ranked[:args.top]
-        print("\n  WAIVER TARGETS (top %d of %d)   %-8s %-6s %s"
-              % (len(shown), len(ranked), "+PTS", "SLOT", "PLAYER"))
+        print("\n  WAIVER TARGETS (top %d of %d)   %-8s %-6s %-26s %s"
+              % (len(shown), len(ranked), "+PTS", "SLOT", "PLAYER", "DROP"))
         for c in shown:
             d = delta(lg, roster, c)
             # F8. A slot label is a claim that the addition CRACKS the
@@ -1214,7 +1214,24 @@ def _cmd_week(args):
                 slot = next((s for s, p in after.slots if p and p.name == c.name),
                             None)
                 where = slot if slot else "bench"
-            print("    %-8.2f %-6s %s (%s)" % (d, where, c.name, c.pos))
+            # THE DROP. A claim in this league is a swap - the roster is
+            # capped at `roster_size` - so an addition with no named
+            # release is advice that cannot be submitted. `net` is not
+            # reprinted beside `d`: they are provably equal at this
+            # league's geometry (see lineup.best_add_drop), and showing
+            # two identical columns would imply a distinction that does
+            # not exist here.
+            drop, _net = best_add_drop(lg, roster, c)
+            drop_label = drop.name if drop else "(open spot)"
+            print("    %-8.2f %-6s %-26s %s"
+                  % (d, where, "%s (%s)" % (c.name, c.pos), drop_label))
+
+        if shown:
+            print("\n    DROP = the cheapest release THIS WEEK. Every release")
+            print("    that leaves the same optimal lineup ties at zero cost,")
+            print("    and this breaks those ties by lowest projection - it")
+            print("    cannot see bye weeks or next week, so check the pick")
+            print("    before submitting.")
 
     if args.start_sit:
         optimal_by_key = dict((normalize_name(p.name), p.name)
@@ -1298,9 +1315,11 @@ def _cmd_alert(args):
 
     from sffl.alert import (POSITION_NOT_CAPTURED, PROJECTION_MISSING,
                             PROJECTION_PAGE_FAILED, STALE_INJURIES_MINUTES,
-                            BoardRow, compose)
+                            BoardRow, STALE_PROJECTIONS_HOURS, compose)
     from sffl.calibrate import load_curves
     from sffl.capture import CaptureError, capture
+    from sffl.cbs_weekly import (WEEK_MISMATCH_RATIO, read_report_stamp,
+                                 shared_team_count, week_conflicts)
     from sffl.cbs_roster import parse_lineup_rows
     from sffl.cbs_weekly import is_out
     from sffl.cbs_weekly import parse as parse_weekly
@@ -1324,6 +1343,11 @@ def _cmd_alert(args):
     # renders those two states differently (see its docstring), so this
     # must not default to `[]`.
     current_starters = None
+    # Week/freshness validation outcomes. None means "the check did not
+    # fire", never "the check passed" - compose distinguishes the two.
+    week_mismatch = None
+    stale_projections = None
+    projections_age_hours = None
     # None, not [] - see compose's docstring. [] would render "BENCH ... (0)"
     # and assert an empty bench on a run where the roster was never read at
     # all, which is a claim this code cannot make.
@@ -1433,6 +1457,7 @@ def _cmd_alert(args):
         # bounded and predictable, and correctness under partial failure
         # matters more here than shaving a few seconds off a background job.
         group_rows = []
+        page_stamps = {}
         for group in ALERT_GROUPS:
             url = (args.projections_url
                    if group == "RB-WR-TE" and args.projections_url
@@ -1446,6 +1471,9 @@ def _cmd_alert(args):
                 group_failures.append((group, str(exc)))
                 continue
             group_rows.append((group, rows))
+            # The page stamps its own freshness. Read here, while the file
+            # path is still in hand, because nothing downstream keeps it.
+            page_stamps[group] = read_report_stamp(written[url])
             if rows and not any(p.player_id for p in rows):
                 id_coverage_losses.append((group, len(rows)))
 
@@ -1464,6 +1492,38 @@ def _cmd_alert(args):
                 "or parse: %s" % (
                     len(ALERT_GROUPS),
                     "; ".join("%s (%s)" % (g, m) for g, m in group_failures)))
+
+        # WEEK VALIDATION. `--week` used to be accepted by parse() and
+        # dropped on the floor: a saved week-3 page handed to a week-4 run
+        # exited 0 and produced a confident lineup. Two independent signals
+        # now guard it, and they catch different failures:
+        #
+        #   1. Cross-page opponent agreement. Every page in one run is the
+        #      same NFL week and TQB/DST both list all 32 teams, so a mixed
+        #      pair disagrees on essentially every shared team (measured:
+        #      32/32). Judged by RATIO, because CBS's own TQB page ships a
+        #      known 2-team OPP defect - see cbs_weekly.WEEK_MISMATCH_RATIO.
+        #   2. Page freshness. The page's own "REPORT UPDATED AS OF" stamp,
+        #      which the in-season spec named as the staleness signal and
+        #      which nothing read until now.
+        #
+        # Neither can be a hard failure: this job runs unattended ninety
+        # minutes before kickoff, and refusing to send anything because one
+        # signal looks off is strictly worse than sending a lineup that says
+        # so. Both degrade the run and are rendered in the message.
+        pages_by_group = dict(group_rows)
+        n_shared = shared_team_count(pages_by_group)
+        conflicts = week_conflicts(pages_by_group)
+        if n_shared and (float(len(conflicts)) / n_shared) > WEEK_MISMATCH_RATIO:
+            week_mismatch = (len(conflicts), n_shared, conflicts[:3])
+
+        known = [t for t in page_stamps.values() if t is not None]
+        if known:
+            newest = max(known)
+            age_h = (datetime.datetime.now() - newest).total_seconds() / 3600.0
+            projections_age_hours = age_h
+            if age_h > STALE_PROJECTIONS_HOURS:
+                stale_projections = (age_h, newest)
 
         projections, _owner_group, cross_group_duplicates = (
             _merge_projection_groups(group_rows))
@@ -1736,7 +1796,10 @@ def _cmd_alert(args):
                    injury_error=injury_error,
                    injuries_age_minutes=injuries_age_minutes,
                    projections_capture_error=projections_capture_error,
-                   roster_board=roster_board)
+                   roster_board=roster_board,
+                   week_mismatch=week_mismatch,
+                   stale_projections=stale_projections,
+                   projections_age_hours=projections_age_hours)
 
     # A PARTIAL capture failure - one to three of the four position-group
     # pages, with the roster and at least one other page still good - must
@@ -1884,7 +1947,10 @@ def _cmd_alert(args):
     # found, or a page's id coverage silently dropped to zero across every
     # row - `id_coverage_losses`, Task 3b review round 1 - or a residual
     # (name, pos, team) collision survived even the full composite key -
-    # see `residual_projection_duplicates`), or a delivery failure is each
+    # see `residual_projection_duplicates`), or the projections failing a
+    # week/freshness check - `week_mismatch`, `stale_projections`: a lineup
+    # built on the wrong week's or days-old numbers is wrong in a way no
+    # other signal in this run reveals - or a delivery failure is each
     # visible in a way launchd's log must be able to see, so each makes
     # the exit code non-zero - but they are DIFFERENT failures (nothing
     # produced, vs. an alert missing half its content, vs. a correct alert
@@ -1895,7 +1961,8 @@ def _cmd_alert(args):
     return 1 if (capture_error or projections_capture_error
                 or injury_fetch_failed or delivery_error or group_failures
                 or cross_group_duplicates or id_coverage_losses
-                or residual_projection_duplicates) else 0
+                or residual_projection_duplicates
+                or week_mismatch or stale_projections) else 0
 
 
 def main(argv=None):

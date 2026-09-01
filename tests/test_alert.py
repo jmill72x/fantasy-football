@@ -840,3 +840,62 @@ def test_an_unfilled_slot_still_renders_without_a_points_column():
                                  ("K", None)], total=18.0)
     block = _block(compose("sunday", 2, [], lineup, []), "BEST LINEUP")
     assert "-- UNFILLED" in block
+
+
+# ------------------------------------------------- week / freshness warnings
+#
+# `--week` was accepted by cbs_weekly.parse and dropped on the floor: a saved
+# week-3 page handed to a week-4 run exited 0 with a confident lineup. These
+# cover the rendering half of the fix; cbs_weekly's own tests cover detection.
+
+def test_a_week_mismatch_is_stated_before_the_lineup_not_after_it():
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [],
+                  week_mismatch=(30, 32, [("ARI", {"DST": "@LAC", "TQB": "SEA"})]))
+    assert "WRONG WEEK" in msg
+    assert "30 of the 32" in msg
+    assert "ARI" in msg
+    # Ahead of the lineup: a reader who stops at the first screen must see it.
+    assert msg.index("WRONG WEEK") < msg.index("BEST LINEUP")
+
+
+def test_no_week_mismatch_renders_no_warning_at_all():
+    # None means "the check did not fire", and must not print a reassurance
+    # the caller never earned.
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [])
+    assert "WRONG WEEK" not in msg
+
+
+def test_stale_projections_name_the_stamp_and_the_limit():
+    import datetime
+    from sffl.alert import STALE_PROJECTIONS_HOURS
+    when = datetime.datetime(2026, 9, 9, 14, 30)
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [],
+                  stale_projections=(51.0, when))
+    assert "STALE PROJECTIONS" in msg
+    assert "51 hours" in msg
+    assert str(STALE_PROJECTIONS_HOURS) in msg
+    assert msg.index("STALE PROJECTIONS") < msg.index("BEST LINEUP")
+
+
+def test_a_fresh_page_reports_its_age_rather_than_staying_silent():
+    # Silence cannot be told from "never checked". A fresh run says so.
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [], projections_age_hours=3.0)
+    assert "updated 3 hours ago" in msg
+    assert "STALE PROJECTIONS" not in msg
+
+
+def test_a_stale_page_reports_staleness_instead_of_the_bare_age_line():
+    import datetime
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [],
+                  stale_projections=(99.0, datetime.datetime(2026, 9, 5, 9, 0)),
+                  projections_age_hours=99.0)
+    assert "STALE PROJECTIONS" in msg
+    assert "updated 99 hours ago" not in msg
+
+
+def test_both_warnings_default_off_so_existing_callers_are_unaffected():
+    args = ("sunday", 2, [CHUBB_OUT], LINEUP, [("Nick Chubb", "O")])
+    assert compose(*args) == _PRE_CURRENT_STARTERS_PINNED_OUTPUT
+    assert (compose(*args, week_mismatch=None, stale_projections=None,
+                    projections_age_hours=None)
+            == _PRE_CURRENT_STARTERS_PINNED_OUTPUT)

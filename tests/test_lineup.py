@@ -168,3 +168,81 @@ def test_delta_is_zero_for_a_player_who_would_not_crack_the_lineup():
     able to tell that apart from a claim that starts."""
     roster = full_roster()
     assert delta(LG, roster, c("scrub", "RB", 0.1)) == pytest.approx(0.0)
+
+
+# ------------------------------------------------------------ add/drop pairs
+#
+# `--waivers` ranked additions and never named a release, but this league caps
+# the roster at 13 and every claim is a swap - so the advice could not be
+# submitted without a decision the tool declined to make.
+
+def _full_roster():
+    return ([Candidate("RB%d" % i, "RB", 12.0 - i, "NE") for i in range(4)]
+            + [Candidate("WR%d" % i, "WR", 11.0 - i, "NE") for i in range(4)]
+            + [Candidate("TE1", "TE", 6.0, "NE"),
+               Candidate("K1", "K", 8.0, "NE"),
+               Candidate("D1", "DST", 5.0, "NE"),
+               Candidate("Q1", "TQB", 18.0, "NE"),
+               Candidate("SCRUB", "WR", 0.5, "NE")])
+
+
+def test_the_drop_is_the_weakest_releasable_player():
+    from sffl.lineup import Candidate, best_add_drop
+    lg = LG
+    roster = _full_roster()
+    drop, _net = best_add_drop(lg, roster, Candidate("Star", "WR", 14.0, "NE"))
+    assert drop is not None and drop.name == "SCRUB"
+
+
+def test_an_under_cap_roster_drops_nobody():
+    from sffl.lineup import Candidate, best_add_drop
+    lg = LG
+    roster = _full_roster()[:9]
+    drop, _net = best_add_drop(lg, roster, Candidate("Star", "WR", 14.0, "NE"))
+    assert drop is None
+
+
+def test_the_only_kicker_is_never_the_drop():
+    # Needs no special case: releasing him leaves the K slot unfilled and the
+    # optimizer sees that cost directly. Pinned because a future "don't drop
+    # starters" shortcut would look equivalent and would not be.
+    from sffl.lineup import Candidate, best_add_drop
+    lg = LG
+    roster = _full_roster()
+    for _ in range(3):
+        drop, _net = best_add_drop(lg, roster, Candidate("W", "WR", 20.0, "NE"))
+        assert drop.pos != "K"
+
+
+def test_the_drop_is_free_at_this_league_s_roster_size():
+    # THE MEASURED CLAIM, pinned. An earlier docstring asserted that `delta`
+    # overstates the gain because it charges nothing for the released player.
+    # It does not: 8 lineup slots against a 13-man roster leave at least six
+    # players outside the optimal lineup, so some release always costs zero
+    # and net == delta exactly. If this ever fails, the league's lineup or
+    # roster size changed and the waiver board must start showing both
+    # numbers - it currently shows one, deliberately.
+    import random
+    from sffl.lineup import Candidate, best_add_drop, delta
+    lg = LG
+    random.seed(7)
+    positions = ["TQB", "RB", "WR", "TE", "K", "DST"]
+    for _ in range(400):
+        n = random.choice([9, 11, 13])
+        roster = [Candidate("p%d" % i, random.choice(positions),
+                            round(random.uniform(0, 20), 2), "NE")
+                  for i in range(n)]
+        add = Candidate("ADD", random.choice(positions),
+                        round(random.uniform(0, 20), 2), "NE")
+        _drop, net = best_add_drop(lg, roster, add)
+        assert abs(net - delta(lg, roster, add)) < 1e-9
+
+
+def test_a_starter_can_be_the_drop_when_that_is_actually_better():
+    # Two players for one slot: the backup at a single-slot position is
+    # releasable even though a "never drop a starter" rule would protect him.
+    from sffl.lineup import Candidate, best_add_drop
+    lg = LG
+    roster = _full_roster()
+    drop, _net = best_add_drop(lg, roster, Candidate("Star", "WR", 30.0, "NE"))
+    assert drop.name == "SCRUB"

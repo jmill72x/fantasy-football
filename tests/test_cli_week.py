@@ -28,7 +28,11 @@ def _owner_code():
 # Fannin Jr.", "TE"). Slot/bench and position are single tokens (no internal
 # whitespace in this league's labels), so the name is whatever sits between
 # them, matched non-greedily against the trailing " (POS)".
-_ROW = re.compile(r"^\s*(\d+\.\d{2})\s+(\S+)\s+(.+?) \((\w+)\)\s*$")
+# The waiver row gained a DROP column on 2026-08-31 - a claim in this league
+# is a swap, so an addition with no named release cannot be submitted. The
+# drop is captured rather than skipped so tests can assert on it.
+_ROW = re.compile(
+    r"^\s*(\d+\.\d{2})\s+(\S+)\s+(.+?) \((\w+)\)\s+(\S.*?)\s*$")
 _TOTAL = re.compile(r"best legal lineup: (\d+\.\d+) pts")
 
 
@@ -47,7 +51,8 @@ def waiver_rows(out):
     for line in section.splitlines():
         m = _ROW.match(line)
         if m:
-            rows.append((float(m.group(1)), m.group(2), m.group(3), m.group(4)))
+            rows.append((float(m.group(1)), m.group(2), m.group(3),
+                         m.group(4), m.group(5)))
     return rows
 
 
@@ -70,10 +75,10 @@ def test_waivers_ranks_free_agents_by_what_they_add_to_the_lineup(tmp_path, caps
     assert rc == 0
 
     rows = waiver_rows(out)
-    names = [name for _pts, _slot, name, _pos in rows]
+    names = [name for _pts, _slot, name, _pos, _drop in rows]
     assert names.index("Woody Marks") < names.index("Tyrone Tracy Jr.")
 
-    pts = [p for p, _slot, _name, _pos in rows]
+    pts = [p for p, _slot, _name, _pos, _drop in rows]
     assert pts == sorted(pts, reverse=True), \
         "+PTS column must be non-increasing top to bottom: %r" % (pts,)
 
@@ -92,7 +97,7 @@ def test_waivers_names_the_slot_a_claim_would_fill(tmp_path, capsys):
           "--week", "1", "--roster", r, "--waivers"])
     out = capsys.readouterr().out
 
-    by_name = dict((name, slot) for _pts, slot, name, _pos in waiver_rows(out))
+    by_name = dict((name, slot) for _pts, slot, name, _pos, _drop in waiver_rows(out))
     assert by_name["Harold Fannin Jr."] == "WR/TE"
     assert by_name["Harold Fannin Jr."] != "bench"
     assert by_name["Tyrone Tracy Jr."] == "bench"
@@ -280,7 +285,7 @@ def test_a_waiver_row_owned_by_another_team_is_excluded_and_reported(tmp_path, c
     out = capsys.readouterr().out
     assert rc == 0
 
-    names = [name for _pts, _slot, name, _pos in waiver_rows(out)]
+    names = [name for _pts, _slot, name, _pos, _drop in waiver_rows(out)]
     assert "Ghost Player" not in names
     assert "1 excluded" in out
 
@@ -309,8 +314,8 @@ def test_waiver_ranking_ties_break_by_name_not_page_order(tmp_path, capsys):
           "--week", "1", "--roster", r, "--waivers"])
     out_reversed = capsys.readouterr().out
 
-    names_forward = [name for _pts, _slot, name, _pos in waiver_rows(out_forward)]
-    names_reversed = [name for _pts, _slot, name, _pos in waiver_rows(out_reversed)]
+    names_forward = [name for _pts, _slot, name, _pos, _drop in waiver_rows(out_forward)]
+    names_reversed = [name for _pts, _slot, name, _pos, _drop in waiver_rows(out_reversed)]
     assert names_forward == names_reversed, (
         "waiver order changed when the saved page's line order was reversed: "
         "%r vs %r" % (names_forward, names_reversed))
@@ -335,8 +340,8 @@ def test_zero_delta_ties_break_by_points_not_name(tmp_path, capsys):
     out = capsys.readouterr().out
 
     rows = waiver_rows(out)
-    assert [pts for pts, _slot, _name, _pos in rows] == [0.0, 0.0]
-    names = [name for _pts, _slot, name, _pos in rows]
+    assert [pts for pts, _slot, _name, _pos, _drop in rows] == [0.0, 0.0]
+    names = [name for _pts, _slot, name, _pos, _drop in rows]
     assert names == ["Woody Marks", "Tyrone Tracy Jr."]
 
 
@@ -372,7 +377,7 @@ def test_a_zero_delta_claim_is_never_labelled_with_a_real_slot(tmp_path, capsys)
 
     rows = waiver_rows(out)
     assert len(rows) == 1
-    pts, slot, name, _pos = rows[0]
+    pts, slot, name, _pos, _drop = rows[0]
     assert name == "Player Alpha"
     assert pts == 0.0
     assert slot == "bench"
@@ -409,13 +414,13 @@ def test_calibrated_waivers_rank_the_higher_yardage_back_first(tmp_path, capsys)
     assert rc == 0
 
     rows = waiver_rows(out)
-    by_points = dict((name, pts) for pts, _slot, name, _pos in rows)
+    by_points = dict((name, pts) for pts, _slot, name, _pos, _drop in rows)
     assert "Higher Yards Back" in by_points and "Lower Yards Back" in by_points
     assert by_points["Higher Yards Back"] >= by_points["Lower Yards Back"], (
         "25.7 projected rushing yards must score at least as much as 21.0: %r"
         % (by_points,))
 
-    names = [name for _pts, _slot, name, _pos in rows]
+    names = [name for _pts, _slot, name, _pos, _drop in rows]
     assert names.index("Higher Yards Back") < names.index("Lower Yards Back"), (
         "the higher-yardage back must rank first, not the lower one: %r"
         % (names,))
@@ -524,7 +529,7 @@ def test_an_out_free_agent_does_not_appear_in_waiver_ranking(tmp_path, capsys):
 
     # The O free agent must not appear in the waiver ranking
     rows = waiver_rows(out)
-    names = [name for _pts, _slot, name, _pos in rows]
+    names = [name for _pts, _slot, name, _pos, _drop in rows]
     assert "Sidelined Free Agent" not in names, \
         "Out free agent must not appear in WAIVER TARGETS"
 
@@ -566,3 +571,47 @@ def test_a_tab_delimited_owned_row_is_classified_owned_through_the_cli(tmp_path,
         "a tab-format owner cell must classify as owned, not fall through "
         "to the unclassified-avail warning")
     assert "22 free agents ranked (77 excluded - rostered by another team)" in out
+
+
+def test_every_waiver_row_names_a_drop_from_the_actual_roster(tmp_path, capsys):
+    # A claim in this league is a swap - the roster is capped - so a waiver
+    # row without a named release is advice that cannot be submitted. The
+    # drop must also be a player Jeff actually rosters: naming someone else's
+    # player, or a free agent, would be worse than naming nobody.
+    owned = ["Harold Fannin Jr.", "Isaiah Likely", "Sam LaPorta",
+             "Kyle Pitts", "Elic Ayomanor"]
+    r = roster_file(tmp_path, owned)
+    rc = main(["week", "--projections", PROJ, "--group", "RB-WR-TE",
+               "--week", "1", "--roster", r, "--waivers"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    rows = waiver_rows(out)
+    assert rows, "expected at least one waiver row"
+    for _pts, _slot, name, _pos, drop in rows:
+        assert drop, "row for %s named no drop" % name
+        # This roster is under the 13-man cap, so the honest answer is that
+        # no release is needed - and it must say so rather than invent one.
+        assert drop == "(open spot)", (name, drop)
+
+
+def test_a_full_roster_names_a_real_player_as_the_drop():
+    """At the roster cap the drop must be a real rostered player.
+
+    Asserted at the unit level, not through the CLI: the weekly fixture holds
+    eight players, so a 13-man roster cannot be built from it AND still leave
+    a free agent to rank - a CLI version of this test could only ever skip,
+    and a skipped test that reads as coverage is worse than no test. The
+    rendering path is covered by the "(open spot)" test above; the choice of
+    drop is covered here and in tests/test_lineup.py.
+    """
+    from sffl.league import load_league
+    from sffl.lineup import Candidate, best_add_drop
+    lg = load_league("leagues/sffl/2026.yaml")
+    roster = [Candidate("p%d" % i, ["RB", "WR", "TE"][i % 3], 10.0 - i * 0.5, "NE")
+              for i in range(10)]
+    roster += [Candidate("Q", "TQB", 18.0, "NE"), Candidate("K", "K", 8.0, "NE"),
+               Candidate("D", "DST", 5.0, "NE")]
+    assert len(roster) == lg.roster_size
+    drop, _net = best_add_drop(lg, roster, Candidate("New", "WR", 12.0, "NE"))
+    assert drop is not None
+    assert drop.name in set(c.name for c in roster)

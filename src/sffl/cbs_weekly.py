@@ -30,6 +30,7 @@ not use) is exempt: repeating `_` still discards every one of those columns
 and never creates a stat literally named `_`.
 """
 
+import datetime
 import re
 import yaml
 
@@ -357,6 +358,142 @@ def _parse_row(line, line_re):
             m.group("rest").split(), player_id)
 
 
+# The page stamps its own freshness: "REPORT UPDATED AS OF 8/31/26 10:26 PM
+# EST". The in-season spec named this as THE staleness signal and nothing
+# read it until 2026-08-31 - so a capture that silently returned a cached or
+# days-old page was indistinguishable from a fresh one, and the alert would
+# push a confident lineup off it ninety minutes before kickoff.
+_REPORT_STAMP_RE = re.compile(r"REPORT UPDATED AS OF\s+(.+?)\s*$",
+                              re.IGNORECASE | re.MULTILINE)
+# "8/31/26 10:26 PM EST" - month and day are NOT zero-padded on the real
+# page, which %m/%d accept. The trailing timezone word is dropped rather
+# than parsed: %Z cannot reliably read "EST" across platforms, and the only
+# thing this timestamp is used for is an AGE in hours against a local clock
+# that is already in the league's timezone.
+_REPORT_STAMP_FORMAT = "%m/%d/%y %I:%M %p"
+
+
+def read_report_stamp(path):
+    """The page's own "REPORT UPDATED AS OF" time, or None if absent.
+
+    Returns a naive datetime in the page's own (Eastern) timezone. None means
+    the page carried no stamp - which is NOT the same as a stale page and must
+    not be reported as one: an older capture path, or a layout change, would
+    both produce it, and treating "unknown" as "stale" would cry wolf every
+    single run. Callers say "could not be read", never "is old".
+
+    Deliberately separate from `parse` rather than another return value:
+    `parse` returns a plain list and dozens of call sites unpack it that way,
+    so widening it to a tuple to carry one timestamp would be a breaking
+    change to every one of them for no gain.
+    """
+    with open(path) as fh:
+        m = _REPORT_STAMP_RE.search(fh.read())
+    if not m:
+        return None
+    raw = m.group(1).strip()
+    # Drop a trailing timezone token ("EST"/"EDT") if present; see the format
+    # constant above for why it is not parsed.
+    parts = raw.split()
+    if parts and parts[-1].isalpha() and len(parts[-1]) <= 4:
+        raw = " ".join(parts[:-1])
+    try:
+        return datetime.datetime.strptime(raw, _REPORT_STAMP_FORMAT)
+    except ValueError:
+        return None
+
+
+# A genuine wrong-week pair disagrees on essentially EVERY shared team; the
+# noise floor is a handful. Measured on real captures 2026-08-31: the week-1
+# and week-2 DST pages conflict on 32 of 32 teams (100%), while the genuine
+# same-run TQB and DST pages conflict on 2 of 32 (6%) because CBS's TQB page
+# ships a real opponent defect - a contiguous chain MIN->GB->LV->MIA->CLE
+# whose OPP cells are shifted by one row. That defect is in the OPP column
+# only: every one of those rows still carries its full 17 tokens, so the
+# positional STAT block (sliced off the end) is unaffected and nothing is
+# mis-scored by it.
+#
+# 25% sits an order of magnitude above the observed noise and far below a
+# real mismatch. It is deliberately NOT 0: a check that fires on every
+# single run because of a known upstream quirk gets ignored, and an ignored
+# check is worse than none.
+WEEK_MISMATCH_RATIO = 0.25
+
+
+def week_conflicts(pages):
+    """Teams whose OPPONENT disagrees between two pages of the same run.
+
+    `pages` is {label: [PlayerProjection]}. Returns a sorted list of
+    (team, {label: opp}) for every team appearing on more than one page with
+    more than one distinct opponent.
+
+    WHY THIS IS THE WEEK CHECK. Every page captured in one run is supposed to
+    be the same NFL week, and the TQB and DST pages each list ALL 32 teams,
+    so they overlap completely. A team's opponent is fixed for a given week,
+    so two pages disagreeing about it are two different weeks. This needs no
+    external schedule and nothing that can go stale: the pages check each
+    other.
+
+    Returns the raw list; callers should judge it by RATIO against
+    `WEEK_MISMATCH_RATIO`, not by "any conflict at all" - see that constant
+    for the measured reason.
+    """
+    by_team = {}
+    for label, rows in pages.items():
+        for r in rows:
+            if not r.opp:
+                continue
+            by_team.setdefault(r.team, {}).setdefault(label, set()).add(r.opp)
+    out = []
+    for team, labels in by_team.items():
+        if len(labels) < 2:
+            continue
+        seen = set()
+        for opps in labels.values():
+            seen |= opps
+        if len(seen) > 1:
+            out.append((team, dict((lbl, sorted(o)[0])
+                                   for lbl, o in sorted(labels.items()))))
+    return sorted(out)
+
+
+def shared_team_count(pages):
+    """How many teams appear on more than one of `pages`.
+
+    The denominator for `week_conflicts`. Zero means the pages have no team
+    in common, so the check could not run at all - which is NOT the same as
+    "no conflict found" and must never be rendered as a clean result.
+    """
+    seen = {}
+    for label, rows in pages.items():
+        for r in rows:
+            if r.opp:
+                seen.setdefault(r.team, set()).add(label)
+    return sum(1 for labels in seen.values() if len(labels) > 1)
+
+
+def internally_inconsistent_opponents(rows):
+    """Teams on ONE page whose opponent does not name them back.
+
+    If A's opponent is B, B's opponent must be A. A page that fails this is
+    scrambled or misaligned regardless of which week it is - a different
+    failure from `week_conflicts`, which compares two pages and can only see
+    a MIXED week, never a single page that is internally wrong.
+
+    Measured 2026-08-31: the DST page scores 0 on both a week-1 and a week-2
+    capture; the TQB page scores 4, which is the upstream OPP-column defect
+    documented at `WEEK_MISMATCH_RATIO`.
+    """
+    opp = dict((r.team, r.opp.lstrip("@")) for r in rows if r.opp)
+    bad = []
+    for team, other in sorted(opp.items()):
+        if other not in opp:
+            bad.append((team, other, "opponent not listed on this page"))
+        elif opp[other] != team:
+            bad.append((team, other, "but %s plays %s" % (other, opp[other])))
+    return bad
+
+
 def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
     """Rows from one saved weekly-projections page, as PlayerProjection.
 
@@ -480,6 +617,16 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                 avail=avail,
                 status=status,
                 player_id=player_id,
+                # `week` was accepted by this function and never used until
+                # 2026-08-31. Recording it is what lets anything downstream
+                # notice that a saved week-3 page was handed to a week-4 run
+                # - which previously exited 0 and produced confident advice.
+                week=week,
+                # OPP is always the FIRST token after the team code, ahead of
+                # the positional stat block (which is sliced off the END, so
+                # the two never contend). Verified live against all four
+                # group pages 2026-08-31.
+                opp=tokens[0] if tokens else "",
             ))
 
     if unmatched:

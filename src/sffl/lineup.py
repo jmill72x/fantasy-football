@@ -125,3 +125,63 @@ def delta(lg, roster, addition):
     base = best_lineup(lg, roster).total
     with_add = best_lineup(lg, list(roster) + [addition]).total
     return max(0.0, with_add - base)
+
+
+def best_add_drop(lg, roster, addition):
+    """Which rostered player to release for `addition`, and the resulting gain.
+
+    Returns `(drop, net)` - `drop` is the `Candidate` to release, or None
+    when the roster is under `roster_size` and nobody need be released.
+
+    WHY THIS EXISTS: the DROP, not the number. `--waivers` ranked additions
+    and never said who to release, but this league caps the roster at 13 and
+    every claim is a SWAP - so "pick up X" was advice that could not be
+    acted on without a second decision the tool declined to make.
+
+    **`net` is NOT a correction to `delta`, and this was measured before it
+    was claimed.** An earlier version of this docstring asserted that `delta`
+    overstates the gain by charging nothing for the released player. That is
+    false at this league's geometry: 8 lineup slots against a 13-man roster
+    means that after adding a candidate at least 6 players sit outside the
+    optimal lineup, so SOME release always costs zero and `net == delta`
+    exactly. Checked over 3000 randomised rosters at sizes 9, 11 and 13:
+    3000 equal, 0 different (see
+    test_the_drop_is_free_at_this_league_s_roster_size). `net` is returned
+    anyway because it is what a caller should display and because the
+    identity is a property of THESE numbers, not a law - a league with a
+    deeper lineup or a shallower bench would break it, and then this
+    function is already right.
+
+    So the real content is the tiebreak among releases that all cost zero
+    THIS WEEK. Two rules:
+
+    - EVERY rostered player is tried, starters included. Releasing a starter
+      is occasionally correct (two players, one slot) and a rule of thumb
+      that excluded them would hide those. The optimizer decides.
+    - Ties break to the LOWEST-scoring player. Positional necessity needs no
+      special case: dropping a lone kicker leaves the K slot unfilled and the
+      optimizer sees that cost directly, so it never proposes it.
+
+    WHAT THIS CANNOT SEE: bye weeks, and next week. Every zero-cost release
+    is equal to a one-week optimizer, and they are not equal in a season.
+    Callers must present the drop as the cheapest release THIS WEEK, never as
+    an unconditional recommendation.
+    """
+    base = best_lineup(lg, roster).total
+    best_total = None
+    best_drop = None
+    # An open spot is not a drop. Only offered when the roster is genuinely
+    # under the cap - `roster_size` is the league's own number, never 13
+    # hard-coded here.
+    if len(roster) < lg.roster_size:
+        best_total = best_lineup(lg, list(roster) + [addition]).total
+        best_drop = None
+    for i, dropped in enumerate(roster):
+        kept = list(roster[:i]) + list(roster[i + 1:]) + [addition]
+        total = best_lineup(lg, kept).total
+        if (best_total is None or total > best_total
+                or (total == best_total and best_drop is not None
+                    and dropped.points < best_drop.points)):
+            best_total = total
+            best_drop = dropped
+    return best_drop, max(0.0, best_total - base)
