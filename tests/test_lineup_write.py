@@ -1,9 +1,12 @@
 """Swap planning for the CBS lineup write path.
 
-The governing fact: CBS's edit mode has NO SAVE BUTTON. Each move applies on
-its own, so a sequence that stops halfway leaves a real, mixed lineup with
-nothing to roll back. Everything here exists to make the plan reviewable
-before a browser opens, and a partial application diagnosable after.
+The governing fact, measured live 2026-09-01: swaps are CLIENT-SIDE until the
+"Set Lineup" button is pressed a second time, which commits them all in one
+POST. So the commit is atomic and a stopped run sends nothing. (An earlier
+version of this file asserted the opposite - that there was no save control
+and therefore no rollback - because "Set Lineup" matches no save/submit/apply
+keyword. Believing that cost a live run that reported "0 of 1 applied"
+against a page it had rearranged correctly, having reloaded the change away.)
 """
 import pytest
 
@@ -58,12 +61,13 @@ def test_a_target_of_the_wrong_size_is_refused():
     assert "different lineup shape" in str(e.value)
 
 
-def test_the_description_warns_there_is_no_rollback():
-    # The warning is the point of the text: a human approving this must know
-    # a stopped run leaves earlier swaps applied.
+def test_the_description_says_a_stopped_run_sends_nothing():
+    # A human approving this needs to know the failure mode, and the failure
+    # mode is "nothing happened", not "half happened". Pinned because the
+    # text asserted the opposite until a live run proved otherwise.
     text = describe_plan(plan_swaps(roster(), {"s1", "s2", "b1"}))
-    assert "no" in text and "save" in text
-    assert "rollback" in text
+    assert "committed in ONE submit" in text
+    assert "leaves the CBS lineup untouched" in text
 
 
 def test_verify_compares_ids_not_row_order():

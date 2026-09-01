@@ -1,17 +1,19 @@
 """Plan the swaps that turn a CBS lineup into a target one. PURE - no I/O.
 
-WHY A PLANNER SEPARATE FROM THE DRIVER. CBS's set-lineup UI has NO SAVE
-BUTTON - verified live 2026-09-01, `save-ish controls: []` on a page in edit
-mode. Each move applies on its own, so a sequence that stops halfway leaves a
-REAL, MIXED lineup on a real team: some swaps done, some not, and no
-transaction to roll back. That makes "what exactly am I about to do, in what
-order" a thing worth computing, printing and reviewing BEFORE a browser is
-ever opened - which is what this module produces and why it touches nothing.
+WHY A PLANNER SEPARATE FROM THE DRIVER. "What exactly am I about to do, in
+what order" is worth computing, printing and reviewing BEFORE a browser is
+opened, on a command that edits a real team. This module produces that and
+touches nothing, so it is cheap to test exhaustively; the driver stays thin.
 
-The driver's job is then narrow: execute one step, re-read, verify, and stop
-on the first divergence - reporting precisely which steps landed. A driver
-that plans as it goes cannot do that, because it has nothing to compare
-against.
+CORRECTED 2026-09-01, after a live run. An earlier version of this docstring
+said CBS had NO SAVE BUTTON and that a half-finished sequence would leave a
+mixed lineup with nothing to roll back. That was wrong, and wrong in the
+frightening direction: the save control is the SAME "Set Lineup" button that
+enters edit mode, which a keyword search for save/submit/apply/done does not
+match. Swaps are client-side until that button is pressed a second time, so
+the commit IS atomic - every swap lands together or none does. The driver
+correspondingly stages all swaps, verifies the whole arrangement, and only
+then commits.
 """
 
 from collections import namedtuple
@@ -83,10 +85,10 @@ def describe_plan(swaps):
         out.append("  %d. BENCH   %-22s (id %s)" % (i, s.bench_name, s.bench_id))
         out.append("     START   %-22s (id %s)" % (s.promote_name, s.promote_id))
     out.append("")
-    out.append("  %d swap(s). CBS applies each one as it happens - there is no"
+    out.append("  %d swap(s), applied together. They are staged in the browser"
                % len(swaps))
-    out.append("  save step and no rollback, so a run that stops early leaves")
-    out.append("  the earlier swaps in place.")
+    out.append("  and committed in ONE submit at the end, so a run that stops")
+    out.append("  early sends nothing and leaves the CBS lineup untouched.")
     return "\n".join(out)
 
 
