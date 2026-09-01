@@ -425,6 +425,14 @@ def read_report_stamp(path):
 WEEK_MISMATCH_RATIO = 0.25
 
 
+def _int_or_zero(token):
+    """`int(token)` or 0. Used for preamble cells that are occasionally "--"."""
+    try:
+        return int(str(token).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
 def _modal_opponents(pages):
     """{team: {page_label: that page's MODAL opponent for the team}}.
 
@@ -658,6 +666,14 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                 # the two never contend). Verified live against all four
                 # group pages 2026-08-31.
                 opp=tokens[0] if tokens else "",
+                # Preamble is OPP OVP BYE ROST START [EXPERT] on every group
+                # defined in sources/cbs-weekly.yaml, so BYE is index 2 in
+                # all of them - DST simply lacks the trailing EXPERT, which
+                # is past this point and cannot shift it. Non-numeric ("--"
+                # on a row CBS has no bye for) falls back to 0, meaning
+                # "unknown", which `trade.games_remaining` treats as "no bye
+                # to skip" rather than guessing one.
+                bye=_int_or_zero(tokens[2]) if len(tokens) > 2 else 0,
             ))
 
     if unmatched:

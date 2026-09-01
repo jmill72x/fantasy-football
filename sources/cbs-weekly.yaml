@@ -133,6 +133,45 @@ groups:
     stats: [_, _, fg_u30, fg_att_u50, fg_u30, fg_att_u50, fg_30_39, fg_att_u50,
             fg_40_49, fg_att_u50, fg_50_59, _, xp_made, _, _]
     expect_tokens: 21
+  # ---------------------------------------------------------- REST OF SEASON
+  #
+  # CBS's `restofseason:p` pages carry the SAME columns as the weekly ones
+  # plus one extra: FPTS/G, sitting between the last stat and FPTS. Measured
+  # live 2026-09-01 - every group is exactly one token wider than its weekly
+  # twin (RB-WR-TE 18 vs 17, TQB 18 vs 17, K 22 vs 21, DST 17 vs 16).
+  #
+  # THEY CANNOT REUSE THE WEEKLY MAPS. `parse` slices the stat block off the
+  # RIGHT, so an extra column before FPTS shifts every field by one and reads
+  # FPTS/G as fumbles, FPTS as FPTS/G, and so on - each value plausible, none
+  # correct. The weekly groups' `expect_tokens` caught this on the first real
+  # run (Jahmyr Gibbs, 18 tokens where 17 were expected) rather than letting
+  # it through, which is exactly what that guard is for.
+  #
+  # Each map is its weekly twin with ONE trailing `_` appended, nothing else
+  # changed. Verified on Jahmyr Gibbs: rush_att 263, rush_yds 1353, rush_td
+  # 15, tgt 91, rec_ct 74, rec_yds 625, rec_td 5, fum_lost 1, then 7.30 and
+  # 124.10 both ignored - and 124.10 / 17 games = 7.30, which is what
+  # confirms those last two columns are FPTS/G and FPTS as claimed.
+  RB-WR-TE-ROS:
+    stats: [rush_att, rush_yds, _, rush_td, tgt, rec_ct, rec_yds, _, rec_td,
+            fum_lost, _, _]
+    expect_tokens: 18
+
+  TQB-ROS:
+    stats: [pass_att, pass_cmp, pass_yds, pass_td, pass_int,
+            rush_att, rush_yds, _, rush_td, fum_lost, _, _]
+    expect_tokens: 18
+
+  DST-ROS:
+    stats: [def_sack, def_fum_rec, def_int, _, def_td, def_safety, _, def_ya,
+            _, def_pa, _, _]
+    expect_tokens: 17
+
+  K-ROS:
+    stats: [_, _, fg_u30, fg_att_u50, fg_u30, fg_att_u50, fg_30_39,
+            fg_att_u50, fg_40_49, fg_att_u50, fg_50_59, _, xp_made, _, _, _]
+    expect_tokens: 22
+
 
 # The league's manager abbreviations, exactly as CBS prints them in the
 # leftmost column of the ALL PLAYERS view.

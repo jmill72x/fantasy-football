@@ -39,6 +39,13 @@ class PlayerProjection(object):
                                      # `cbs_weekly.week_conflicts`) and the
                                      # home/away marker makes that stricter,
                                      # not looser.
+    bye: int = 0                    # the player's team's bye week, off a
+                                     # weekly page's BYE column; 0 when the
+                                     # source carries none. Needed to count
+                                     # a player's REMAINING games for a
+                                     # rest-of-season valuation - a bye that
+                                     # has not happened yet is one fewer game
+                                     # he will actually play.
     player_id: str = ""             # CBS's own stable player id, lifted from
                                      # a `playerpage/<id>` link on the row
                                      # that produced this record - "" when the
