@@ -626,3 +626,48 @@ def test_a_page_with_no_stamp_returns_none_rather_than_a_guess():
         assert read_report_stamp(path) is None
     finally:
         os.unlink(path)
+
+
+def test_one_stray_row_does_not_flag_a_team_the_pages_agree_on():
+    # THE MEASURED CASE. A real 1710-row RB/WR/TE capture had ARI at 58 rows
+    # saying "@LAC" and one saying "@SEA" (CBS's opponent data lagging a
+    # player's team change - those rows are NOT misaligned, they carry the
+    # full token count). Counting a page's opinion as the SET of opponents it
+    # mentions flagged three whole teams as cross-page conflicts when all
+    # four pages actually agreed. 58 votes to 1 is not a disagreement.
+    from sffl.cbs_weekly import week_conflicts
+    pages = {"A": [_proj("ARI", "@LAC")] * 58 + [_proj("ARI", "@SEA")],
+             "B": [_proj("ARI", "@LAC")]}
+    assert week_conflicts(pages) == []
+
+
+def test_a_real_cross_page_disagreement_still_flags_after_the_mode():
+    # The mode must not swallow a genuine conflict: here each page is
+    # internally unanimous and they disagree with each other.
+    from sffl.cbs_weekly import week_conflicts
+    pages = {"A": [_proj("ARI", "@LAC")] * 20,
+             "B": [_proj("ARI", "SEA")] * 20}
+    got = week_conflicts(pages)
+    assert [t for t, _ in got] == ["ARI"]
+    assert got[0][1] == {"A": "@LAC", "B": "SEA"}
+
+
+def test_the_reported_opponent_is_the_pages_majority_not_an_arbitrary_row():
+    # The rendered value goes in front of Jeff. Reporting the stray row would
+    # send him to check a conflict that does not exist on the page.
+    from sffl.cbs_weekly import week_conflicts
+    pages = {"A": [_proj("GB", "@MIN")] * 40 + [_proj("GB", "ZZZ")],
+             "B": [_proj("GB", "@LV")] * 40}
+    got = week_conflicts(pages)
+    assert got[0][1]["A"] == "@MIN"
+
+
+def test_an_exact_tie_in_the_mode_is_deterministic():
+    # Two opponents with equal counts must not depend on dict ordering, or
+    # the same capture warns on one run and not the next.
+    from sffl.cbs_weekly import week_conflicts
+    pages = {"A": [_proj("GB", "@MIN"), _proj("GB", "@LV")],
+             "B": [_proj("GB", "@MIN")]}
+    first = week_conflicts(pages)
+    for _ in range(5):
+        assert week_conflicts(pages) == first

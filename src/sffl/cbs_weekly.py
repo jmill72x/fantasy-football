@@ -404,20 +404,59 @@ def read_report_stamp(path):
 
 
 # A genuine wrong-week pair disagrees on essentially EVERY shared team; the
-# noise floor is a handful. Measured on real captures 2026-08-31: the week-1
-# and week-2 DST pages conflict on 32 of 32 teams (100%), while the genuine
-# same-run TQB and DST pages conflict on 2 of 32 (6%) because CBS's TQB page
-# ships a real opponent defect - a contiguous chain MIN->GB->LV->MIA->CLE
-# whose OPP cells are shifted by one row. That defect is in the OPP column
-# only: every one of those rows still carries its full 17 tokens, so the
-# positional STAT block (sliced off the end) is unaffected and nothing is
-# mis-scored by it.
+# noise floor is a handful. Measured on real captures 2026-08-31, comparing
+# MODAL opponents (see `_modal_opponents` for why the mode and not the set):
+#
+#   all four same-run pages : 2 of 33 shared teams (6.1%)
+#   week-1 vs week-2 DST    : 32 of 32 (100%)
+#
+# The 6.1% is a REAL defect on CBS's TQB page, not noise in this code: GB and
+# MIA dissent there while the RB-WR-TE, K and DST pages all agree with each
+# other, part of a contiguous chain MIN->GB->LV->MIA->CLE whose OPP cells sit
+# one row out. It is confined to the OPP column - every one of those rows
+# still carries its full 17 tokens, verified against a correct row on the
+# same page, so the positional STAT block (sliced off the END) is unaffected
+# and nothing is mis-scored by it.
 #
 # 25% sits an order of magnitude above the observed noise and far below a
 # real mismatch. It is deliberately NOT 0: a check that fires on every
 # single run because of a known upstream quirk gets ignored, and an ignored
 # check is worse than none.
 WEEK_MISMATCH_RATIO = 0.25
+
+
+def _modal_opponents(pages):
+    """{team: {page_label: that page's MODAL opponent for the team}}.
+
+    THE MODE, NOT THE SET, and this is not a detail. CBS's own pages carry a
+    small number of rows whose OPP cell disagrees with the rest of their
+    team - measured on a real 1710-row RB/WR/TE capture: ARI 58 rows say
+    "@LAC" and one says "@SEA"; JAC 45 say "CLE" and one "@LAC"; PIT 75 say
+    "ATL" and one "@MIN". Three strays in 1710 rows (0.2%), all on players
+    whose listed team CBS's opponent data has evidently not caught up with.
+    Those rows are NOT misaligned - every one carries the full 17 tokens, so
+    the positional stat block is correct and nothing is mis-scored by them.
+
+    Treating a page's opinion as the SET of opponents it mentions therefore
+    flagged three whole teams as cross-page conflicts when all four pages
+    actually agreed. The mode is what "this page says team X plays Y" means:
+    58 votes to 1 is not a disagreement.
+    """
+    counts = {}
+    for label, rows in pages.items():
+        for r in rows:
+            if not r.opp:
+                continue
+            tally = counts.setdefault(r.team, {}).setdefault(label, {})
+            tally[r.opp] = tally.get(r.opp, 0) + 1
+    modal = {}
+    for team, per_label in counts.items():
+        modal[team] = dict(
+            # -count first, then the opponent string, so an exact tie is
+            # broken deterministically rather than by dict ordering.
+            (label, sorted(tally.items(), key=lambda kv: (-kv[1], kv[0]))[0][0])
+            for label, tally in per_label.items())
+    return modal
 
 
 def week_conflicts(pages):
@@ -438,23 +477,13 @@ def week_conflicts(pages):
     `WEEK_MISMATCH_RATIO`, not by "any conflict at all" - see that constant
     for the measured reason.
     """
-    by_team = {}
-    for label, rows in pages.items():
-        for r in rows:
-            if not r.opp:
-                continue
-            by_team.setdefault(r.team, {}).setdefault(label, set()).add(r.opp)
     out = []
-    for team, labels in by_team.items():
-        if len(labels) < 2:
+    for team, per_label in sorted(_modal_opponents(pages).items()):
+        if len(per_label) < 2:
             continue
-        seen = set()
-        for opps in labels.values():
-            seen |= opps
-        if len(seen) > 1:
-            out.append((team, dict((lbl, sorted(o)[0])
-                                   for lbl, o in sorted(labels.items()))))
-    return sorted(out)
+        if len(set(per_label.values())) > 1:
+            out.append((team, per_label))
+    return out
 
 
 def shared_team_count(pages):
@@ -484,7 +513,9 @@ def internally_inconsistent_opponents(rows):
     capture; the TQB page scores 4, which is the upstream OPP-column defect
     documented at `WEEK_MISMATCH_RATIO`.
     """
-    opp = dict((r.team, r.opp.lstrip("@")) for r in rows if r.opp)
+    modal = _modal_opponents({"page": rows})
+    opp = dict((team, per["page"].lstrip("@"))
+               for team, per in modal.items())
     bad = []
     for team, other in sorted(opp.items()):
         if other not in opp:
