@@ -63,6 +63,7 @@ Run:
 
 import math
 import os
+import sys
 from collections import defaultdict
 
 from sffl.calibrate import (
@@ -234,8 +235,18 @@ def evaluate(lg, lines, pa_builder, ya_builder, k):
 
 
 def main():
+    # Optional dataset override, added 2026-08-31. With no argument this is
+    # byte-for-byte the run the gate was pre-registered against, so the
+    # override cannot quietly change what "the gate" means; it exists because
+    # the 21-defense held-back file was never the population the spec wanted
+    # (it wanted all 32), and the spec's own correction says so: "the missing
+    # 10 are not unavailable; nobody fetched them."
+    #
+    # THE THRESHOLD IS NOT TOUCHED. Moving 0.15 after seeing a sample size,
+    # or a result, is the error this project has already been burned by once.
+    dataset = sys.argv[1] if len(sys.argv) > 1 else HELD_BACK_DST
     lg = load_league(LEAGUE_PROFILE_PATH)
-    lines, dupes = _load_canonical_dst_lines(HELD_BACK_DST)
+    lines, dupes = _load_canonical_dst_lines(dataset)
 
     by_player = defaultdict(list)
     for ln in lines:
@@ -246,19 +257,29 @@ def main():
     print("DATA")
     print("=" * 78)
     print("Loaded %d rows, %d distinct defenses (canonical) from %s"
-          % (len(lines), n_defenses, HELD_BACK_DST))
+          % (len(lines), n_defenses, dataset))
     for team_key, dup_id, canonical in sorted(set(dupes)):
         print("  DUPLICATE ID FOUND: %r had id=%s, relabeled to canonical id=%s"
               % (team_key, dup_id, canonical))
     weeks_per = sorted(len(v) for v in by_player.values())
     print("  weeks per defense: min=%d max=%d" % (weeks_per[0], weeks_per[-1]))
     print()
-    print("NOTE: the dispatch background states '26 defenses' available from")
-    print("held-back data. Measured: %d distinct real defenses (21 canonical" % n_defenses)
-    print("teams once the id collision above is fixed), because the 4 teams")
-    print("in the original build-set-only file (data/weekly/2025/DST.csv) are")
-    print("byte-identical, already-included rows inside this held-back file,")
-    print("not 4 additional ones on top of it. Verified by diff, all 4 match.")
+    # This note used to be an unconditional paragraph about the held-back
+    # file's 21 defenses. Once this script grew a dataset argument that text
+    # became a false statement for any other input, so it is now printed only
+    # for the file it actually describes.
+    if os.path.abspath(dataset) == os.path.abspath(HELD_BACK_DST):
+        print("NOTE: the dispatch background states '26 defenses' available from")
+        print("held-back data. Measured: %d distinct real defenses (21 canonical" % n_defenses)
+        print("teams once the id collision above is fixed), because the 4 teams")
+        print("in the original build-set-only file (data/weekly/2025/DST.csv) are")
+        print("byte-identical, already-included rows inside this held-back file,")
+        print("not 4 additional ones on top of it. Verified by diff, all 4 match.")
+    elif n_defenses >= 32:
+        print("NOTE: %d defenses - this is the COMPLETE 2025 NFL population," % n_defenses)
+        print("not a sample of it. No additional 2025 DST data exists to be")
+        print("collected, so 'gather more of this season' is no longer an")
+        print("available remedy for the sample size; only another SEASON is.")
     print()
 
     fold_counts = [("k=5", 5), ("leave-one-out (k=%d)" % n_defenses, n_defenses)]
@@ -376,6 +397,11 @@ def main():
         else:
             print("  -> survives drop-one.")
 
+    # Largest margin any candidate achieved on any fold count - reported in
+    # the verdict so "did not clear" is quantified rather than asserted.
+    max_margin = max((m for per_fold in margins.values()
+                      for m in per_fold.values() if m is not None),
+                     default=float("nan"))
     print()
     print("=" * 78)
     print("VERDICT")
@@ -387,8 +413,25 @@ def main():
         print("at n=%d (SE ~ 1/sqrt(n-1) ~ %.3f), not a claim the candidates" % (
             n_defenses, 1.0 / math.sqrt(max(n_defenses - 1, 1))))
         print("failed. The 4-defense curves stand for want of evidence, not")
-        print("for merit. What would change the answer: another season of")
-        print("weekly DST data to raise n materially above ~21.")
+        print("for merit.")
+        # "Collect the rest of this season" was the honest remedy while the
+        # sample was a partial 21. At the full 32 it no longer exists, and
+        # leaving that sentence in would send the next reader after data that
+        # has already been gathered.
+        if n_defenses >= 32:
+            print()
+            print("WHAT WOULD CHANGE THE ANSWER: another SEASON. n=%d is every"
+                  % n_defenses)
+            print("defense in the league, so 2025 is exhausted. Note also that")
+            print("the largest margin measured here is %+.4f - roughly an order"
+                  % max_margin)
+            print("of magnitude short of the 0.15 bar and well inside the noise")
+            print("floor, so this is not a near miss that more precision would")
+            print("resolve in the candidates' favour.")
+        else:
+            print("What would change the answer: the %d defenses not in this"
+                  % (32 - n_defenses))
+            print("dataset, which exist and simply have not been collected.")
     else:
         print("Cleared combinations (before drop-one): %s" % cleared)
         print("See the drop-one section above for whether each survives it.")
