@@ -167,3 +167,66 @@ production weekly predictor (0.1572 vs baseline 0.1520 — a loss). It was rever
 `def_ya` were never part of that adoption either way), but the line asserting "the five stats"
 as settled fact is no longer accurate and should not be relied on. See `NEXT.md`'s
 isotonic-adoption note for the current numbers.
+
+---
+
+## RE-RUN, 2026-08-31 — n=32, the complete league. Same verdict.
+
+The three corrections above each record a shrinking sample (26 → 22 → 21) and each
+say the same thing: the missing defenses "are not unavailable; nobody fetched them."
+They have now been fetched. **The gate was re-run against all 32 NFL defenses.**
+
+**Nothing about the gate was changed.** Same script, same metric, same
+pre-registered **0.15** threshold, same four conditions, same two fold counts. Only
+the dataset differs, via a new optional argument to `poc/measure_dst_ranking.py`
+whose default is the original file — so the pre-registered run is still reproducible
+byte-for-byte by invoking the script with no arguments. Moving the threshold after
+learning a sample size, or after seeing a result, would have been the violation; it
+stands at 0.15.
+
+### Result
+
+| candidate | k=5 margin | leave-one-out margin |
+|---|---:|---:|
+| `def_pa` / isotonic | −0.0006 | −0.0044 |
+| `def_pa` / pooled | −0.0035 | −0.0152 |
+| `def_ya` / isotonic | −0.0053 | −0.0064 |
+| `def_ya` / pooled | **+0.0048** | −0.0016 |
+
+Baseline Spearman: 0.9402 (k=5), 0.9455 (leave-one-out). No candidate cleared 0.15
+on either fold count, let alone both, so conditions 3 and 4 were never reached.
+
+### What is now different about this finding
+
+Every earlier statement of this result had to be phrased as **"underpowered — keep
+the baseline, for want of evidence, not for merit"**, and that phrasing was correct
+while the sample was a partial 21 with a known, cheap way to grow it. That escape
+hatch is now closed:
+
+- **n=32 is the entire population**, not a sample of it. There is no more 2025 DST
+  data to collect.
+- **The largest margin observed anywhere is +0.0048** — about 3% of the 0.15 bar,
+  and roughly 2.5% of the n=32 standard error (≈0.180). Seven of the eight
+  comparisons favour the *baseline*.
+
+So the honest reading is no longer "we could not tell." It is: **on the complete
+2025 population, these candidates make no practical difference to how the weekly
+path ranks defenses.** The baseline stands. The script's own verdict text was
+updated to say this rather than continuing to point the next reader at data that has
+already been gathered.
+
+**What would still change the answer:** another season. Nothing smaller.
+
+### Provenance caveat, stated plainly
+
+The 32-defense dataset is **not** a CBS fantasy-page scrape — that source no longer
+exists (the league site rolled to 2026 and collapses 2025 to season aggregates). It
+is rebuilt from CBS box scores, with sacks and non-offensive TDs taken from the
+existing CBS weekly file for the 21 defenses that have one and from StatsDeck for
+the other 11. Validated on the 357-row overlap: `def_int`, `def_td`, `def_safety`
+and `def_sack` exact 100%; `def_ya` 99.4% exact and **100% band-identical**;
+`def_pa` 97.5% exact and 99.7% band-identical. End-to-end, this project's scoring
+engine fed the rebuilt lines reproduces the fantasy points **CBS itself recorded**
+on **354 of 357** rows, the three misses each ±1 point. Full details and the
+`_held_back/DST.full.csv` Vikings/Giants id defect that forced a standalone file:
+`data/weekly/2025/_reconstructed/README.md`.
