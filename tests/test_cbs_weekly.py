@@ -529,3 +529,100 @@ def test_numeric_owner_codes_from_yaml_also_classify_as_owned(tmp_path):
     codes = _load_owner_codes(str(profile))
     assert codes == ["JM", "12"]
     assert classify_avail("12", codes) == "owned"
+
+
+# ----------------------------------------------------- week validation
+#
+# The detection half of the `--week` fix. `parse` took a `week` argument and
+# never used it, and nothing read the page's own "REPORT UPDATED AS OF"
+# stamp, so a saved week-3 page run as week 4 exited 0 with a confident
+# lineup and no signal anywhere.
+
+def _proj(team, opp, pos="DST"):
+    from sffl.schema import PlayerProjection
+    return PlayerProjection(name=team, team=team, pos=pos, source="cbs-weekly",
+                            source_year=2026, games=1.0, opp=opp)
+
+
+def test_week_conflicts_finds_a_team_two_pages_disagree_about():
+    from sffl.cbs_weekly import week_conflicts
+    pages = {"TQB": [_proj("ARI", "@LAC"), _proj("SEA", "SF")],
+             "DST": [_proj("ARI", "SEA"), _proj("SEA", "SF")]}
+    got = week_conflicts(pages)
+    assert [t for t, _ in got] == ["ARI"]
+    assert got[0][1] == {"DST": "SEA", "TQB": "@LAC"}
+
+
+def test_pages_that_agree_produce_no_conflicts():
+    from sffl.cbs_weekly import week_conflicts
+    pages = {"TQB": [_proj("ARI", "@LAC")], "DST": [_proj("ARI", "@LAC")]}
+    assert week_conflicts(pages) == []
+
+
+def test_a_team_on_only_one_page_cannot_conflict_with_itself():
+    from sffl.cbs_weekly import week_conflicts
+    pages = {"TQB": [_proj("ARI", "@LAC")], "K": [_proj("SEA", "SF")]}
+    assert week_conflicts(pages) == []
+
+
+def test_shared_team_count_is_the_denominator_and_excludes_lone_teams():
+    from sffl.cbs_weekly import shared_team_count
+    pages = {"TQB": [_proj("ARI", "@LAC"), _proj("GB", "MIN")],
+             "DST": [_proj("ARI", "@LAC")]}
+    assert shared_team_count(pages) == 1
+
+
+def test_no_shared_teams_reports_zero_not_a_clean_bill_of_health():
+    # 0 shared means the check COULD NOT RUN. A caller that divides by this
+    # must notice; one that treats it as "no conflicts" is asserting
+    # something it never tested.
+    from sffl.cbs_weekly import shared_team_count, week_conflicts
+    pages = {"TQB": [_proj("ARI", "@LAC")], "K": [_proj("SEA", "SF")]}
+    assert shared_team_count(pages) == 0
+    assert week_conflicts(pages) == []
+
+
+def test_the_mismatch_ratio_sits_between_the_measured_noise_and_a_real_miss():
+    # Measured 2026-08-31 on real captures: a genuine same-run TQB+DST pair
+    # conflicts on 2/32 (6%) because CBS's TQB page ships a known OPP defect;
+    # a week-1/week-2 pair conflicts on 32/32 (100%). The threshold must
+    # exclude the first and catch the second, or it is useless in one
+    # direction or the other.
+    from sffl.cbs_weekly import WEEK_MISMATCH_RATIO
+    assert 2.0 / 32 < WEEK_MISMATCH_RATIO < 32.0 / 32
+
+
+def test_internally_inconsistent_opponents_catches_a_scrambled_page():
+    from sffl.cbs_weekly import internally_inconsistent_opponents
+    good = [_proj("ARI", "@SEA"), _proj("SEA", "ARI")]
+    assert internally_inconsistent_opponents(good) == []
+    bad = [_proj("ARI", "@SEA"), _proj("SEA", "SF"), _proj("SF", "SEA")]
+    got = internally_inconsistent_opponents(bad)
+    assert [t for t, _, _ in got] == ["ARI"]
+
+
+def test_read_report_stamp_parses_the_real_page_format():
+    import datetime, tempfile, os
+    from sffl.cbs_weekly import read_report_stamp
+    fd, path = tempfile.mkstemp(suffix=".txt")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("junk\nREPORT UPDATED AS OF 8/31/26 10:26 PM EST\nmore\n")
+        assert read_report_stamp(path) == datetime.datetime(2026, 8, 31, 22, 26)
+    finally:
+        os.unlink(path)
+
+
+def test_a_page_with_no_stamp_returns_none_rather_than_a_guess():
+    # None must mean "could not be read", never "is old" - an older capture
+    # path or a layout change both produce it, and reporting either as stale
+    # would cry wolf on every run.
+    import tempfile, os
+    from sffl.cbs_weekly import read_report_stamp
+    fd, path = tempfile.mkstemp(suffix=".txt")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write("a page with no stamp at all\n")
+        assert read_report_stamp(path) is None
+    finally:
+        os.unlink(path)

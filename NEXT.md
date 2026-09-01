@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`
-- full_suite: `792` passed
+- full_suite: `814` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -169,9 +169,9 @@ the PDF/iPad path is no longer the primary artifact and no annotation app needs 
 | **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections, lineup floors and market calibration — 165 tests |
 | **Plan 3 — Excel + PDF renderers** | ✅ merged — 203 tests. `sffl render` writes both |
 | **Plan 4 — silent auction planner** | ✅ merged — 279 tests. `sffl plan`; the table is on PDF p17 |
-| **In-season core — weekly waivers & start/sit (read-only)** | ✅ **merged 2026-08-29 (`09e1b0d`)** — 409 tests at merge, three pre-merge fix waves. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop |
+| **In-season core — weekly waivers & start/sit (read-only)** | ✅ **merged 2026-08-29 (`09e1b0d`)** — 409 tests at merge, three pre-merge fix waves. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop — **the (add, drop) half was DONE 2026-08-31, see below** |
 | **In-season automation — capture, injury fetch, scheduled alerts** | ✅ **merged 2026-08-29 (`93314a1`)** — `sffl alert`, `ops/run_alert.sh`, two launchd LaunchAgents. Runbook: `docs/operations/in-season-alerting.md`. (ntfy/launchd delivery was listed as "deferred" on the row above until 2026-08-30; it is not — it shipped here) |
-| **Full position coverage — TQB/K/DST** | ✅ MERGED (`26031e8`) — 792 tests. All eight lineup slots captured and scored |
+| **Full position coverage — TQB/K/DST** | ✅ MERGED (`26031e8`) — 814 tests. All eight lineup slots captured and scored |
 
 Verify state in one command:
 
@@ -983,7 +983,7 @@ effect of +2.62** — the gain does not concentrate in one or two players.
 
 **Full test suite: 654 passed** (was 653 — one added, `test_every_curve_stat_has_
 provenance_and_vice_versa`). **Stale as of 2026-08-30: the current full suite (after the
-`pass_yds` revert, the duplicate-entity fix, and full position coverage, and the all-13 roster board) is **792 passed**,
+`pass_yds` revert, the duplicate-entity fix, and full position coverage, and the all-13 roster board) is **814 passed**,
 measured by `./.venv/bin/pytest -q` on `position-coverage` on 2026-08-30. (This line read
 "770 passed" until the docs audit later that day: 770 predated the final review round's
 three tests, which took it to 773, and the audit itself added the eight in
@@ -1043,7 +1043,26 @@ a small negative on a handful of players. Fix it with the 2026 rules pass, not t
    `PlayerProjection`, echoes it, or validates it against the page, and nothing reads the
    page's "REPORT UPDATED AS OF" stamp that the spec names as the staleness signal.
    Saving week 3's page and running `sffl week --week 4 ...` exits 0 with no warning.
-   Known gap, not yet fixed.
+   **FIXED 2026-08-31.** `parse` now records `week` and the opponent on every
+   `PlayerProjection`, `cbs_weekly.read_report_stamp` reads the page's own
+   "REPORT UPDATED AS OF" line, and `sffl alert` runs two independent checks:
+   cross-page opponent agreement (a mixed-week pair disagrees on ~every shared
+   team — measured 32/32, against a 2/32 noise floor from a real CBS TQB-page
+   OPP defect, hence the ratio threshold `WEEK_MISMATCH_RATIO`) and page
+   freshness against `STALE_PROJECTIONS_HOURS`. Both warn at the TOP of the
+   digest and make the exit code non-zero; neither refuses to send, because an
+   unattended job that produces nothing before kickoff is worse than one that
+   flags its own inputs.
+
+7. **`--waivers` names the drop. DONE 2026-08-31.** `lineup.best_add_drop`
+   picks the cheapest release and the waiver board prints a DROP column.
+   **Measured, and NOT what was assumed:** the drop is FREE at this league's
+   geometry — 8 lineup slots against a 13-man roster always leave spare
+   non-starters, so `net == delta` exactly (3000 randomised rosters: 3000
+   equal, 0 different, pinned by
+   `test_the_drop_is_free_at_this_league_s_roster_size`). An earlier draft of
+   that function claimed `delta` overstated the gain; it does not. The value
+   is naming the release, not correcting the number.
 
 ## OUTSIDE RANKINGS — the standing rule (reaffirmed 2026-08-19)
 

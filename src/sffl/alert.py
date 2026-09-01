@@ -141,6 +141,15 @@ STALE_ROSTER_DAYS = 10
 # nothing in this pipeline rewrites it when the fetch fails.
 STALE_INJURIES_MINUTES = 60
 
+# The projections page stamps itself "REPORT UPDATED AS OF ...". CBS
+# refreshes these through the week, so a stamp older than this means the
+# capture returned something cached or the page stopped updating - and a
+# Sunday lineup built on Wednesday's numbers misses every injury and depth
+# chart change since. 36 hours, not 24: a Friday-afternoon run legitimately
+# reads a page CBS last refreshed Thursday evening, and a threshold that
+# fires on a healthy Friday run would be ignored by Sunday.
+STALE_PROJECTIONS_HOURS = 36
+
 _KINDS = {
     "friday": ("Friday practice report",
                "What to plan around - two days left to make a claim."),
@@ -459,7 +468,8 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             capture_error=None, current_starters=None,
             unevaluated_starters=None, injury_error=None,
             injuries_age_minutes=None, projections_capture_error=None,
-            roster_board=None):
+            roster_board=None, week_mismatch=None, stale_projections=None,
+            projections_age_hours=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -511,6 +521,15 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     legally slot - never reached the phone. `None` means the caller does not
     know the full roster and the section is omitted entirely, which keeps
     every pre-existing caller's output byte-identical.
+
+    `week_mismatch` and `stale_projections` are the two week/freshness
+    checks, and BOTH default to None meaning "the check did not fire" -
+    never "the check passed". They are rendered as warnings at the TOP of
+    the digest rather than as a refusal to send: this job runs unattended
+    ninety minutes before kickoff, and a lineup that says its own inputs
+    look wrong is strictly more useful than no message at all.
+    `projections_age_hours` is how old the freshest captured page said it
+    was, rendered whenever known so the reader can judge for themselves.
     """
     if kind not in _KINDS:
         raise ValueError(
@@ -546,6 +565,37 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
 
     lines.append(_roster_age_line(roster_age_days))
     lines.append("")
+
+    # AHEAD of the lineup and the news, because both are built ON these
+    # inputs: if the projections are the wrong week or days old, every
+    # number below is wrong in a way no other line in the message reveals.
+    if week_mismatch is not None:
+        n_conflict, n_shared, examples = week_mismatch
+        lines.append("!! WRONG WEEK? The captured pages disagree about who")
+        lines.append("   plays whom on %d of the %d teams they share."
+                     % (n_conflict, n_shared))
+        for team, per_page in examples:
+            lines.append("     %-4s %s" % (
+                team, ", ".join("%s says %s" % (lbl, opp)
+                                for lbl, opp in sorted(per_page.items()))))
+        lines.append("   Pages captured in one run are all the same NFL week,")
+        lines.append("   so this size of disagreement means at least one page")
+        lines.append("   is a DIFFERENT week. Treat the lineup below as")
+        lines.append("   unverified and check CBS directly.")
+        lines.append("")
+    if stale_projections is not None:
+        age_h, newest = stale_projections
+        lines.append("!! STALE PROJECTIONS: the freshest page says it was")
+        lines.append("   updated %s - %.0f hours ago, over the %d-hour limit."
+                     % (newest.strftime("%a %-d %b %-I:%M %p"), age_h,
+                        STALE_PROJECTIONS_HOURS))
+        lines.append("   The numbers below may predate this week's injury and")
+        lines.append("   depth-chart news.")
+        lines.append("")
+    elif projections_age_hours is not None:
+        lines.append("Projections page updated %.0f hours ago."
+                     % projections_age_hours)
+        lines.append("")
 
     # Placed ahead of every news block, deliberately: this is the one thing
     # in the whole message that tells Jeff to DO something before kickoff.
