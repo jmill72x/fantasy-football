@@ -1,0 +1,13 @@
+Rest-of-season projections. CONSTRUCTED for tests - owner tokens are
+placeholders (the repo is public) and the numbers are chosen so the lineup
+arithmetic is checkable by hand, not copied from any real player.
+Tab-delimited, matching what sffl.capture actually produces. Layout is a
+real restofseason:p capture's: OPP OVP BYE ROST START EXPERT then 12 stat
+columns - the weekly 11 plus FPTS/G ahead of FPTS.
+id=1001		OWNER_A	Alpha Back RB • NE 	@BUF	10	5	90	80	1	250	1400	5.6	12	40	30	250	8.3	2	1	8.00	144.00
+id=1002		OWNER_A	Alpha Wide WR • NE 	@BUF	11	5	90	80	2	0	0	0.0	0	150	100	1300	13.0	10	0	7.50	135.00
+id=1003		OWNER_B	Beta Back RB • KC 	@DEN	12	6	88	70	3	200	1100	5.5	9	30	22	180	8.2	1	1	6.50	117.00
+id=1004		OWNER_B	Beta Wide WR • KC 	@DEN	13	6	88	70	4	0	0	0.0	0	130	88	1150	13.1	8	0	6.60	118.80
+id=1005		OWNER_C	Gamma Back RB • SF 	@LAR	14	7	70	40	5	120	600	5.0	4	20	15	120	8.0	1	0	3.50	63.00
+id=1006		OWNER_C	Gamma Wide WR • SF 	@LAR	15	7	70	40	6	0	0	0.0	0	80	55	700	12.7	4	0	4.00	72.00
+id=1007		W (9/16)	Free Back RB • NYJ 	@MIA	16	9	5	1	N/R	60	300	5.0	2	10	8	60	7.5	0	0	1.90	34.20

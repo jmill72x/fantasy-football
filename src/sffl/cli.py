@@ -1965,6 +1965,167 @@ def _cmd_alert(args):
                 or week_mismatch or stale_projections) else 0
 
 
+def _cmd_trade(args):
+    """Rest-of-season trade valuation. READ-ONLY - never contacts a manager.
+
+    Deliberately has no path to CBS's trade form. A proposal is a message to
+    a real person in Jeff's league; this command drafts one and stops. See
+    `trade.draft_proposal`.
+    """
+    from sffl.calibrate import load_curves
+    from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
+    from sffl.cbs_weekly import parse as parse_weekly
+    from sffl.identity import normalize_name
+    from sffl.league import load_league
+    from sffl.lineup import Candidate
+    from sffl.pool import score_season, score_season_calibrated
+    from sffl.trade import (acquisition_value, draft_proposal, evaluate_trade,
+                            games_remaining, lineup_value, rank_targets,
+                            release_cost)
+
+    lg = load_league(args.league)
+    curves = load_curves(args.curves) if args.curves else None
+    owner_codes = _load_owner_codes(DEFAULT_PROFILE)
+
+    # The -ROS groups, not the weekly ones. CBS's restofseason pages carry an
+    # extra FPTS/G column and `parse` slices the stat block off the RIGHT, so
+    # a weekly map reads every field one place out - see sources/
+    # cbs-weekly.yaml's REST OF SEASON block.
+    group_files = [(args.group, args.projections)]
+    for group, path in (("TQB-ROS", args.projections_tqb),
+                        ("K-ROS", args.projections_k),
+                        ("DST-ROS", args.projections_dst)):
+        if path:
+            group_files.append((group, path))
+
+    rows = []
+    for group, path in group_files:
+        rows.extend(parse_weekly(path, group=group, week=args.week,
+                                 season=lg.season))
+
+    # ROS points, not weekly. `score_season_calibrated` divides by games,
+    # bands the per-game line through the curves, and multiplies back up -
+    # exactly what a rest-of-season TOTAL needs, and the reason `games` has
+    # to be right per player rather than a league-wide constant.
+    def ros(p):
+        p.games = float(games_remaining(args.week, p.bye)) or 1.0
+        # `score_season_calibrated` REQUIRES curves and raises on None. With
+        # no --curves the honest fallback is `score_season`, which bands the
+        # per-game mean directly - a documented approximation (see its own
+        # docstring) rather than a crash, and the same one the auction path
+        # used before curves existed.
+        if curves is None:
+            return score_season(lg, p)
+        return score_season_calibrated(lg, p, curves)
+
+    # WHOSE PLAYERS ARE WHOSE, taken off the page's own owner column rather
+    # than by joining a name list against it. Two reasons, and the first is a
+    # correctness bug this codebase has hit repeatedly: a name-only join
+    # matches "Chargers" to BOTH the TQB row and the DST row, so a 13-man
+    # roster came back as 16 entries with the same team counted twice. Every
+    # projection row already carries its own (name, pos, team) and its
+    # owner, so reading ownership off the row cannot collide at all.
+    classifier = _avail_classifier(args.projections, owner_codes)
+    roster_names = set(normalize_name(l.strip())
+                       for l in open(args.roster) if l.strip())
+
+    owned_by = {}
+    for p in rows:
+        if classifier(p.avail or "") != "owned":
+            continue
+        owned_by.setdefault((p.avail or "").strip(), []).append(p)
+
+    # Which owner token is Jeff's? The one whose players best match the
+    # roster file. Auto-detected rather than configured because CBS
+    # TRUNCATES the column ("Sgt Hu..."), so the token is neither the team
+    # name nor stable enough to hard-code - and the match count is printed
+    # below so a wrong guess is visible rather than silent.
+    def overlap(players):
+        return sum(1 for p in players if normalize_name(p.name) in roster_names)
+
+    my_token, my_hits = None, 0
+    for token, players in owned_by.items():
+        hits = overlap(players)
+        if hits > my_hits:
+            my_token, my_hits = token, hits
+    if my_token is None:
+        print("could not identify which owner column is yours - no owned row "
+              "matched any name in %s" % args.roster)
+        return 1
+
+    mine = [Candidate(name=p.name, pos=p.pos, points=ros(p), team=p.team)
+            for p in owned_by[my_token]]
+    market = [(Candidate(name=p.name, pos=p.pos, points=ros(p), team=p.team),
+               token)
+              for token, players in sorted(owned_by.items()) if token != my_token
+              for p in players]
+
+    if not mine:
+        print("no rostered player resolved to a projection - nothing to value")
+        return 1
+    print("  you are %r on this page (%d of your %d roster names matched)"
+          % (my_token, my_hits, len(roster_names)))
+
+    print("REST-OF-SEASON, from week %d (%d weeks left)"
+          % (args.week, games_remaining(args.week, 0)))
+    print("  your starting lineup, ROS: %.1f pts" % lineup_value(lg, mine))
+    print("\n  WHAT EACH ROSTERED PLAYER IS WORTH TO YOUR LINEUP")
+    print("  %-24s %-5s %9s %9s" % ("PLAYER", "POS", "ROS PTS", "IF TRADED"))
+    for cand in sorted(mine, key=lambda x: -release_cost(lg, mine, x)):
+        print("  %-24s %-5s %9.1f %9.1f"
+              % (cand.name[:24], cand.pos, cand.points,
+                 -release_cost(lg, mine, cand)))
+
+    if args.get or args.give:
+        by_name = dict((normalize_name(c.name), c) for c in mine)
+        market_by_name = dict((normalize_name(c.name), (c, o))
+                              for c, o in market)
+        give, get, unknown = [], [], []
+        for n in (args.give or "").split(",") if args.give else []:
+            k = normalize_name(n.strip())
+            (give.append(by_name[k]) if k in by_name else unknown.append(n.strip()))
+        for n in (args.get or "").split(",") if args.get else []:
+            k = normalize_name(n.strip())
+            (get.append(market_by_name[k][0]) if k in market_by_name
+             else unknown.append(n.strip()))
+        if unknown:
+            print("\n  NOT FOUND (refusing to price a trade around a player "
+                  "this pool does not contain): %s" % ", ".join(unknown))
+            return 1
+        my_net = evaluate_trade(lg, mine, give, get)
+        # The counterparty's side, computed the same way from THEIR roster -
+        # a proposal quoting only the proposer's gain is one the recipient
+        # checks in thirty seconds and resents for the rest of the season.
+        owner = market_by_name[normalize_name(args.get.split(",")[0].strip())][1] \
+            if args.get else "another team"
+        theirs = [c for c, o in market if o == owner]
+        their_net = (evaluate_trade(lg, theirs, get, give)
+                     if all(any((t.name, t.pos, t.team) == (g.name, g.pos, g.team)
+                                for t in theirs) for g in get) else float("nan"))
+        print("\n  TRADE EVALUATION")
+        print("    you give: %s" % (", ".join(c.name for c in give) or "nobody"))
+        print("    you get:  %s" % (", ".join(c.name for c in get) or "nobody"))
+        print("    your ROS lineup change:  %+.2f" % my_net)
+        print("    their ROS lineup change: %+.2f" % their_net)
+        print("\n  DRAFT PROPOSAL (review and send yourself - this tool "
+              "never contacts another manager)\n")
+        for line in draft_proposal("your team", owner, give, get,
+                                   my_net, their_net).split("\n"):
+            print("    %s" % line)
+        return 0
+
+    print("\n  TOP ACQUISITION TARGETS (held by other teams)")
+    print("  %-24s %-5s %9s %9s  %s"
+          % ("PLAYER", "POS", "ROS PTS", "+YOUR LU", "OWNER"))
+    for cand, owner, gain in rank_targets(lg, mine, market, top=args.top):
+        print("  %-24s %-5s %9.1f %9.2f  %s"
+              % (cand.name[:24], cand.pos, cand.points, gain, owner))
+    print("\n  +YOUR LU is what he would add to YOUR optimal lineup, not his")
+    print("  projection. A fourth receiver's points are mostly unreachable in")
+    print("  a lineup that starts one WR/TE and three FLEX.")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="sffl")
     sub = ap.add_subparsers(dest="cmd")
@@ -2124,6 +2285,32 @@ def main(argv=None):
                          "without it the optimum is printed with no diff")
     wk.add_argument("--top", type=int, default=10)
     wk.set_defaults(func=_cmd_week)
+
+    tr = sub.add_parser("trade", help="rest-of-season trade valuation "
+                                      "(read-only; never contacts a manager)")
+    tr.add_argument("--projections", required=True,
+                    help="saved CBS REST-OF-SEASON projections page "
+                         "(restofseason:p), not a weekly one")
+    tr.add_argument("--group", default="RB-WR-TE-ROS",
+                    help="profile group for --projections. Defaults to the "
+                         "REST-OF-SEASON variant; the weekly map would "
+                         "misread these pages by one column")
+    tr.add_argument("--projections-tqb", default=None)
+    tr.add_argument("--projections-k", default=None)
+    tr.add_argument("--projections-dst", default=None)
+    tr.add_argument("--roster", required=True,
+                    help="one owned player name per line")
+    tr.add_argument("--week", type=int, required=True,
+                    help="the week the rest of the season starts FROM - "
+                         "decides how many games each player has left")
+    tr.add_argument("--give", default=None,
+                    help="comma-separated players YOU would send")
+    tr.add_argument("--get", default=None,
+                    help="comma-separated players you would RECEIVE")
+    tr.add_argument("--league", default=DEFAULT_LEAGUE)
+    tr.add_argument("--curves", default=None)
+    tr.add_argument("--top", type=int, default=10)
+    tr.set_defaults(func=_cmd_trade)
 
     alr = sub.add_parser("alert", help="capture, score, and push the weekly digest")
     alr.add_argument("--kind", choices=["friday", "sunday"], required=True)
