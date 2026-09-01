@@ -14,11 +14,18 @@ WHAT CBS ACTUALLY DOES, measured live 2026-09-01:
   * In edit mode every roster row gains a `div.moveSource` button and carries
     its CBS player id in a `playerpage/<id>` link. Ids are the join key
     throughout - no name matching anywhere in the write path.
-  * THERE IS NO SAVE BUTTON. Measured: zero save/submit/apply/done controls
-    on the page in edit mode. Each move applies on its own and there is
-    nothing to roll back, which is why `apply_swaps` re-reads and verifies
-    after EVERY step and stops at the first divergence rather than pressing
-    on and reporting a success it cannot support.
+  * SWAPS ARE CLIENT-SIDE UNTIL COMMITTED. Clicking source then target
+    rearranges the DOM and sends NO request (verified by watching the
+    network: the only non-GET during a swap is a Taboola analytics beacon).
+    The SAME "Set Lineup" button then commits them, POSTing to
+    /teams/set-lineup with hidden point=<week> and team=<id>.
+    An earlier version of this module concluded there was no save control -
+    it had searched for the words save/submit/apply/done and "Set Lineup"
+    matches none of them - and therefore reloaded after each swap to verify
+    it, which THREW THE UNCOMMITTED CHANGES AWAY and made every run report
+    "0 of 1 swaps applied" against a lineup it had in fact rearranged
+    correctly. The commit being atomic is good news: all swaps land together
+    or none do, so a partial application is not a state this can produce.
 """
 
 import re
@@ -96,59 +103,124 @@ def open_edit_mode(page):
     return rows
 
 
-def _click_player(page, player_id):
-    """Press one row's move button, addressed by CBS player id."""
-    sel = ("tr:has(a[href*='playerpage/%s']) .moveSource" % player_id)
-    loc = page.locator(sel)
-    if loc.count() == 0:
+def _row(page, player_id, cls):
+    return page.locator("tr:has(a[href*='playerpage/%s']) .%s"
+                        % (player_id, cls))
+
+
+def _cancel_pending(page):
+    """Abort a half-started move so the page is left in a clean state.
+
+    Called on every failure path after a source click. Without it the run
+    would exit with a player still selected, and the next run's first click
+    would land as a TARGET of the stale selection instead of a new source.
+    """
+    cancel = page.locator(".moveCancel")
+    if cancel.count():
+        try:
+            cancel.first.click(timeout=8000)
+            page.wait_for_timeout(2000)
+        except Exception:
+            pass
+
+
+def _swap(page, bench_id, promote_id):
+    """One swap: select the starter, then click the promoted player.
+
+    THE TWO CLICKS ARE NOT THE SAME CONTROL, which cost a failed live run to
+    learn. Measured 2026-09-01: clicking a row's `.moveSource` re-renders the
+    page - that row becomes `.moveCancel`, and only the POSITION-ELIGIBLE
+    destinations become `.moveTarget` (2 of 12 rows, not all of them). So the
+    second click must find `.moveTarget`, and its absence means CBS considers
+    the swap illegal rather than that the row is missing.
+    """
+    src = _row(page, bench_id, "moveSource")
+    if src.count() == 0:
         raise LineupWriteError(
             "no move button for player id %s - refusing to click a row this "
-            "code cannot identify" % player_id)
-    loc.first.click(timeout=15000)
+            "code cannot identify" % bench_id)
+    src.first.click(timeout=15000)
+    page.wait_for_timeout(3500)
+
+    tgt = _row(page, promote_id, "moveTarget")
+    if tgt.count() == 0:
+        _cancel_pending(page)
+        raise LineupWriteError(
+            "CBS does not offer player id %s as a destination for this move, "
+            "so the swap is not legal at these positions - the pending move "
+            "was cancelled and nothing was changed. Eligible destinations "
+            "were: %s" % (promote_id, ", ".join(_eligible_ids(page)) or "none"))
+    tgt.first.click(timeout=15000)
     page.wait_for_timeout(3500)
 
 
+def _eligible_ids(page):
+    """Which player ids CBS is currently offering as move destinations."""
+    return page.evaluate("""() => Array.from(document.querySelectorAll('tr'))
+        .filter(r => r.querySelector('.moveTarget'))
+        .map(r => {
+          const a = r.querySelector('a[href*=playerpage]');
+          const m = (a && a.getAttribute('href') || '').match(/playerpage\\/(\\d+)/);
+          return m ? m[1] : '?';
+        })""")
+
+
 def apply_swaps(page, swaps, target_ids, on_step=None):
-    """Apply `swaps` one at a time, verifying after each. Returns applied count.
+    """Apply every swap, then COMMIT once. Returns the number applied.
 
-    STOPS AT THE FIRST DIVERGENCE. CBS applies each move as it happens and
-    offers no save or undo, so the only safe posture is to check the board
-    after every step and refuse to continue once it stops matching the plan.
-    The count returned is what actually landed; the caller must report that
-    number rather than the number requested.
+    The swaps are client-side rearrangements; nothing reaches CBS until the
+    "Set Lineup" button is pressed at the end, so this deliberately does NOT
+    reload between steps - doing so discards the uncommitted work, which is
+    exactly the bug that made an earlier version report zero swaps applied
+    against a correctly rearranged page.
 
-    Raises `LineupWriteError` naming the step that failed AND how many
-    preceding steps are still applied, because that is the state the human
-    now has to reconcile.
+    The DOM is checked after every swap anyway. That is not about durability
+    (nothing is durable yet) but about not stacking a second swap on top of a
+    first that silently did not take - the second's eligible destinations
+    depend on where the first left things.
+
+    Raises `LineupWriteError` before the commit if anything diverges, in
+    which case NOTHING has been sent and the lineup on CBS is untouched.
     """
-    applied = 0
     for i, swap in enumerate(swaps, 1):
         if on_step:
             on_step(i, swap)
-        _click_player(page, swap.bench_id)
-        _click_player(page, swap.promote_id)
-        page.reload(wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_timeout(5000)
+        _swap(page, swap.bench_id, swap.promote_id)
         rows = _read_rows(page)
         now = set(r.player_id for r in rows if r.starting)
-        expected_after = set(target_ids)
-        for later in swaps[i:]:
-            expected_after.discard(later.promote_id)
-            expected_after.add(later.bench_id)
-        if now != expected_after:
+        if swap.promote_id not in now or swap.bench_id in now:
+            _cancel_pending(page)
             raise LineupWriteError(
-                "step %d (bench %s, start %s) did not take effect as planned. "
-                "%d of %d swaps are APPLIED and cannot be rolled back by this "
-                "tool. Expected starters after this step: %s. Actually "
-                "starting: %s. Fix the rest on CBS directly."
-                % (i, swap.bench_name, swap.promote_name, applied, len(swaps),
-                   ", ".join(sorted(expected_after)), ", ".join(sorted(now))))
-        applied += 1
+                "step %d (bench %s, start %s) did not rearrange the page as "
+                "planned. NOTHING HAS BEEN SENT to CBS - the lineup there is "
+                "unchanged - because the commit happens only after every swap "
+                "succeeds. Starters shown now: %s"
+                % (i, swap.bench_name, swap.promote_name, ", ".join(sorted(now))))
+
+    staged = set(r.player_id for r in _read_rows(page) if r.starting)
+    if staged != set(target_ids):
+        _cancel_pending(page)
+        raise LineupWriteError(
+            "the rearranged page does not match the target lineup, so it was "
+            "NOT committed and CBS is unchanged. Staged: %s. Wanted: %s."
+            % (", ".join(sorted(staged)), ", ".join(sorted(target_ids))))
+
+    commit = page.locator("input[type=submit][value='Set Lineup']")
+    if commit.count() == 0:
+        raise LineupWriteError(
+            "no 'Set Lineup' control to commit with - the swaps are staged in "
+            "the browser only and have NOT been sent")
+    commit.first.click(timeout=15000)
+    page.wait_for_timeout(8000)
+
+    # Only now is anything durable. Re-read from a fresh navigation rather
+    # than trusting the post-submit render.
+    page.goto(TEAM_URL, wait_until="domcontentloaded", timeout=45000)
+    page.wait_for_timeout(5000)
     ok, wrong, missing = verify_applied(_read_rows(page), target_ids)
     if not ok:
         raise LineupWriteError(
-            "all %d swaps reported success but the final lineup does not "
-            "match the target. Wrongly starting: %s. Missing: %s."
-            % (applied, ", ".join(wrong) or "none",
-               ", ".join(missing) or "none"))
-    return applied
+            "the lineup was submitted but CBS did not save it as planned. "
+            "Wrongly starting: %s. Missing: %s. Check CBS directly."
+            % (", ".join(wrong) or "none", ", ".join(missing) or "none"))
+    return len(swaps)
