@@ -1377,6 +1377,8 @@ def _cmd_alert(args):
     # None, not [] - [] would assert "checked, nobody is on bye" on a run
     # that never got far enough to look.
     starters_on_bye = None
+    next_bye = None
+    next_week_holes = None
     projections_age_hours = None
     # None, not [] - see compose's docstring. [] would render "BENCH ... (0)"
     # and assert an empty bench on a run where the roster was never read at
@@ -1811,6 +1813,36 @@ def _cmd_alert(args):
                 # and are still not caught.
                 trade_error = "%s: %s" % (type(exc).__name__, str(exc)[:160])
 
+        # NEXT WEEK'S BYES, from the BYE column already on this week's pages -
+        # no extra capture. The warning that fires ON the bye week is too
+        # late to act on: CBS processes waivers Wednesday ~2am, so a claim
+        # must be in by Tuesday night. Friday of week N is four days of
+        # runway; Sunday of week N is the LAST automated touch before that
+        # deadline. Hence the look-ahead lives here rather than in a job of
+        # its own, and Sunday only repeats the part that is actionable.
+        nxt = args.week + 1
+        next_bye = sorted(
+            (resolved[r].name, resolved[r].pos)
+            for r in roster_rows
+            if r in resolved and resolved[r].bye == nxt)
+        # UNCOVERABLE is the part worth waking someone for: a slot with no
+        # rostered replacement once the bye players are removed. Computed by
+        # re-running the optimizer without them rather than by counting
+        # positions, because the lineup's FLEX rules decide what covers what
+        # and duplicating that logic here would eventually disagree with it.
+        if next_bye:
+            names_out = set(next_bye)
+            survivors = [
+                Candidate(name=resolved[r].name, pos=resolved[r].pos,
+                          points=score_week(lg, resolved[r], curves),
+                          team=resolved[r].team)
+                for r in roster_rows
+                if r in resolved and not is_out(resolved[r].status)
+                and (resolved[r].name, resolved[r].pos) not in names_out]
+            next_week_holes = sorted(
+                slot for slot, pick in best_lineup(lg, survivors).slots
+                if pick is None)
+
         starters_on_bye = sorted(
             (p.name, p.pos) for _slot, p in result.slots
             if p is not None and (p.name, p.pos) in on_bye_keys)
@@ -1923,7 +1955,9 @@ def _cmd_alert(args):
                    stale_projections=stale_projections,
                    projections_age_hours=projections_age_hours,
                    trade_targets=trade_targets, trade_error=trade_error,
-                   starters_on_bye=starters_on_bye)
+                   starters_on_bye=starters_on_bye,
+                   next_week=args.week + 1, next_bye=next_bye,
+                   next_week_holes=next_week_holes)
 
     # A PARTIAL capture failure - one to three of the four position-group
     # pages, with the roster and at least one other page still good - must

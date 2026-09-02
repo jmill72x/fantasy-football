@@ -1004,3 +1004,57 @@ def test_a_benched_bye_player_reads_as_bye_not_as_a_data_problem():
     row = [l for l in bench.split("\n") if "Jameson Williams" in l][0]
     assert "BYE" in row
     assert "0.00" in row
+
+
+# ------------------------------------------------------- next week's byes
+#
+# CBS processes waivers Wednesday ~2am, so a claim must be in by Tuesday
+# night. A warning that fires ON the bye week cannot be acted on. Friday of
+# week N is four days of runway; Sunday of week N is the LAST automated
+# message before that deadline.
+
+def test_friday_lists_next_weeks_byes_in_full():
+    msg = compose("friday", 2, [], BOARD_LINEUP, [], next_week=6,
+                  next_bye=[("Evan McPherson", "K"), ("Ja'Marr Chase", "WR")])
+    assert "NEXT WEEK (6) ON BYE" in msg
+    assert "Evan McPherson" in msg and "Ja'Marr Chase" in msg
+
+
+def test_sunday_does_not_repeat_the_full_bye_list():
+    # Sunday is ninety minutes from kickoff and about TODAY. The full
+    # look-ahead was already sent on Friday; repeating it trains the reader
+    # to skim a message whose other half is time-critical.
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [], next_week=6,
+                  next_bye=[("Evan McPherson", "K")])
+    assert "ON BYE" not in msg
+
+
+def test_an_uncoverable_slot_is_warned_on_BOTH_days():
+    # The one thing that cannot be fixed after kickoff, and Sunday is the
+    # last automated touch before the Tuesday deadline.
+    for kind in ("friday", "sunday"):
+        msg = compose(kind, 2, [], BOARD_LINEUP, [], next_week=6,
+                      next_bye=[("Evan McPherson", "K")],
+                      next_week_holes=["K"])
+        assert "NEXT WEEK (6) YOU CANNOT FILL: K" in msg, kind
+        assert "Tuesday night" in msg, kind
+
+
+def test_the_hole_warning_outranks_the_rest_of_the_digest():
+    msg = compose("friday", 2, [], BOARD_LINEUP, [], next_week=6,
+                  next_bye=[("Evan McPherson", "K")], next_week_holes=["K"])
+    assert msg.index("CANNOT FILL") < msg.index("BEST LINEUP")
+
+
+def test_byes_that_leave_no_hole_produce_no_alarm():
+    # Most bye weeks are covered by the bench. Warning about those would
+    # make the warning that matters invisible.
+    msg = compose("friday", 2, [], BOARD_LINEUP, [], next_week=7,
+                  next_bye=[("Ladd McConkey", "WR")], next_week_holes=[])
+    assert "CANNOT FILL" not in msg
+    assert "NEXT WEEK (7) ON BYE" in msg
+
+
+def test_no_lookahead_data_renders_nothing():
+    msg = compose("friday", 2, [], BOARD_LINEUP, [])
+    assert "NEXT WEEK" not in msg
