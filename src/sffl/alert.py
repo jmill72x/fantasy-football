@@ -474,7 +474,8 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             injuries_age_minutes=None, projections_capture_error=None,
             roster_board=None, week_mismatch=None, stale_projections=None,
             projections_age_hours=None, trade_targets=None, trade_error=None,
-            starters_on_bye=None):
+            starters_on_bye=None, next_week=None, next_bye=None,
+            next_week_holes=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -545,6 +546,15 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     a bye from a genuinely worthless projection. Measured against the real
     week-6 page, where three of Jeff's players including his only kicker are
     out.
+
+    `next_bye` is [(name, pos)] going on bye NEXT week, and
+    `next_week_holes` the lineup slots that would have NO rostered
+    replacement once they are gone. The split matters because CBS processes
+    waivers Wednesday ~2am, so a claim must be in by Tuesday night: the
+    warning that fires ON the bye week cannot be acted on, and this one can.
+    FRIDAY carries the full look-ahead (four days of runway); SUNDAY carries
+    ONLY the holes, because it is the last automated message before that
+    deadline and everything else in it is about today's kickoff.
 
     `trade_targets` is [(candidate, owner, gain)] for the FRIDAY digest only
     - Sunday is ninety minutes from kickoff and has no use for a trade idea.
@@ -747,6 +757,24 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     if sidelined:
         lines.append("EXCLUDED from the lineup - will not play:")
         lines.extend("  - %s (%s)" % (n, s) for n, s in sidelined)
+        lines.append("")
+
+    # A HOLE outranks everything else here: it is the only thing in the
+    # digest that cannot be fixed after kickoff. Shown on BOTH days.
+    if next_week_holes:
+        lines.append("!! NEXT WEEK (%s) YOU CANNOT FILL: %s"
+                     % (next_week if next_week is not None else "?",
+                        ", ".join(next_week_holes)))
+        lines.append("   Byes leave that slot with nobody rostered to play "
+                     "it.")
+        lines.append("   Waivers process Wednesday ~2am, so a claim has to be")
+        lines.append("   in by Tuesday night.")
+        lines.append("")
+    if next_bye and kind == "friday":
+        lines.append("NEXT WEEK (%s) ON BYE:"
+                     % (next_week if next_week is not None else "?"))
+        for name, pos in next_bye:
+            lines.append("     %-22s %s" % (name, pos))
         lines.append("")
 
     if starters_on_bye:
