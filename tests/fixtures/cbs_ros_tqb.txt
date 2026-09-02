@@ -1,0 +1,5 @@
+Rest-of-season TQB projections. CONSTRUCTED for tests - owner tokens are
+placeholders (the repo is public). Layout matches a real restofseason:p
+capture: the weekly columns plus FPTS/G ahead of FPTS.
+id=2001		OWNER_A	Alpha Team TQB • NE 	@BUF	10	5	90	80	N/R	600	390	4300	30	10	50	170	3.4	2	2	12.0	204.0
+id=2002		OWNER_B	Beta Team TQB • KC 	@DEN	11	6	88	70	N/R	580	370	4100	28	12	45	150	3.3	1	2	11.0	187.0

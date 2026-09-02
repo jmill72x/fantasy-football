@@ -97,6 +97,17 @@ def alert_env(tmp_path, monkeypatch):
     shutil.copy(PROJECTIONS_FIXTURE, str(rbwrte))
     shutil.copy(TQB_FIXTURE, str(tqb))
     shutil.copy(K_FIXTURE, str(k))
+    # Rest-of-season pages, for the Friday trade block. Keyed "<group>-ROS"
+    # exactly as `_cmd_alert` captures them; without these the block dies at
+    # the capture and never reaches the code that first broke in production.
+    ros_paths = {}
+    for group, fixture in (("RB-WR-TE-ROS", "tests/fixtures/cbs_ros_rbwrte.txt"),
+                           ("TQB-ROS", "tests/fixtures/cbs_ros_tqb.txt"),
+                           ("K-ROS", "tests/fixtures/cbs_ros_k.txt"),
+                           ("DST-ROS", "tests/fixtures/cbs_ros_dst.txt")):
+        dest = tmp_path / (group + ".txt")
+        shutil.copy(fixture, str(dest))
+        ros_paths[group] = str(dest)
     shutil.copy(DST_FIXTURE, str(dst))
 
     sent = _Sent()
@@ -109,8 +120,9 @@ def alert_env(tmp_path, monkeypatch):
     state = {
         "capture_error": None,     # raised for EVERY capture() call
         "group_errors": {},        # name -> exception, for ONE page only
-        "paths": {"roster": str(roster), "RB-WR-TE": str(rbwrte),
-                  "TQB": str(tqb), "K": str(k), "DST": str(dst)},
+        "paths": dict({"roster": str(roster), "RB-WR-TE": str(rbwrte),
+                       "TQB": str(tqb), "K": str(k), "DST": str(dst)},
+                      **ros_paths),
     }
 
     def fake_capture(urls, out_dir, profile_dir, **kwargs):
@@ -657,3 +669,36 @@ def test_the_projections_url_still_carries_scope_and_week():
     url = _projections_url("RB-WR-TE", 7)
     assert "all:RB:WR:TE" in url
     assert "/7:p/" in url
+
+
+def test_the_friday_trade_block_never_reports_a_python_error(alert_env, capsys):
+    """The block may fail; it may not fail because of a NAME it never bound.
+
+    The first live Friday run printed "TRADE TARGETS unavailable: NameError:
+    name 'owner_codes' is not defined" - a reference to a local that exists
+    only in `_cmd_week`/`_cmd_trade`. The whole suite passed both before and
+    after the fix, because nothing exercised this path at all.
+
+    A stubbed run cannot produce real rest-of-season pages, so the block is
+    still expected to fail here. What it must never do is fail with an error
+    that means the code is wrong rather than the data is missing.
+    """
+    rc, out = alert_env.run(capsys)
+    for wrong in ("NameError", "AttributeError", "TypeError",
+                  "UnboundLocalError"):
+        assert wrong not in out, (
+            "the Friday trade block failed with %s, which is a bug in the "
+            "code rather than a problem with the data:\n%s" % (wrong, out))
+
+
+def test_the_trade_block_cannot_take_the_alert_down(alert_env, capsys):
+    # It is bolted onto a job whose real purpose is injury news. Whatever it
+    # does, the digest still goes out with its lineup and its news.
+    rc, out = alert_env.run(capsys)
+    assert "BEST LINEUP" in out
+    assert "OFFICIAL STATUS" in out or "PRACTICE / STATUS" in out
+
+
+def test_no_trade_skips_the_block_entirely(alert_env, capsys):
+    rc, out = alert_env.run(capsys, "--no-trade")
+    assert "TRADE TARGETS" not in out
