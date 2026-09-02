@@ -1374,6 +1374,9 @@ def _cmd_alert(args):
     # search ran and found nothing.
     trade_targets = None
     trade_error = None
+    # None, not [] - [] would assert "checked, nobody is on bye" on a run
+    # that never got far enough to look.
+    starters_on_bye = None
     projections_age_hours = None
     # None, not [] - see compose's docstring. [] would render "BENCH ... (0)"
     # and assert an empty bench on a run where the roster was never read at
@@ -1706,6 +1709,16 @@ def _cmd_alert(args):
         sidelined = sorted((resolved[r].name, resolved[r].status)
                            for r in roster_rows
                            if r in resolved and is_out(resolved[r].status))
+        # CBS prints BYE in the opponent column and zeroes the stat line, so
+        # a bye player is a genuine 0.00 rather than a missing row. The
+        # optimizer will still START him when nothing better is rostered at
+        # that slot - correct, and the most actionable thing the Friday
+        # digest can flag, since it is exactly what a waiver claim fixes.
+        on_bye_keys = set(
+            (resolved[r].name, resolved[r].pos)
+            for r in roster_rows
+            if r in resolved and (resolved[r].opp or "").strip().upper() == "BYE")
+
         result = best_lineup(lg, [
             Candidate(name=resolved[r].name, pos=resolved[r].pos,
                       points=score_week(lg, resolved[r], curves),
@@ -1798,6 +1811,10 @@ def _cmd_alert(args):
                 # and are still not caught.
                 trade_error = "%s: %s" % (type(exc).__name__, str(exc)[:160])
 
+        starters_on_bye = sorted(
+            (p.name, p.pos) for _slot, p in result.slots
+            if p is not None and (p.name, p.pos) in on_bye_keys)
+
         roster_board = []
         for r in roster_rows:
             if r in resolved:
@@ -1805,11 +1822,13 @@ def _cmd_alert(args):
                 roster_board.append(BoardRow(
                     name=p.name, pos=p.pos, team=p.team,
                     points=score_week(lg, p, curves),
-                    status=p.status or "", why=None))
+                    status=p.status or "", why=None,
+                    on_bye=(p.opp or "").strip().upper() == "BYE"))
             else:
                 roster_board.append(BoardRow(
                     name=r.name, pos=r.slot, team=normalize_team(r.team),
-                    points=None, status="", why=_why_unscored(r)))
+                    points=None, status="", why=_why_unscored(r),
+                    on_bye=False))
     except _AllProjectionsFailed as exc:
         # Checked as its OWN except, ahead of (never merged into)
         # CaptureError/ValueError below - see the class's own docstring for
@@ -1903,7 +1922,8 @@ def _cmd_alert(args):
                    week_mismatch=week_mismatch,
                    stale_projections=stale_projections,
                    projections_age_hours=projections_age_hours,
-                   trade_targets=trade_targets, trade_error=trade_error)
+                   trade_targets=trade_targets, trade_error=trade_error,
+                   starters_on_bye=starters_on_bye)
 
     # A PARTIAL capture failure - one to three of the four position-group
     # pages, with the roster and at least one other page still good - must

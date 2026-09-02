@@ -715,9 +715,13 @@ BOARD_LINEUP = LineupResult(
 
 
 def _board(*rows):
-    """BoardRow list; each row is (name, pos, team, points, status, why)."""
+    """BoardRow list; each row is (name, pos, team, points, status, why[, on_bye]).
+
+    `on_bye` defaults to False so the tests written before byes existed keep
+    saying what they were written to say.
+    """
     from sffl.alert import BoardRow
-    return [BoardRow(*r) for r in rows]
+    return [BoardRow(*(r if len(r) == 7 else r + (False,))) for r in rows]
 
 
 def test_roster_board_defaults_to_no_bench_section():
@@ -949,3 +953,54 @@ def test_the_trade_block_sits_above_the_lineup():
     msg = compose("friday", 2, [], BOARD_LINEUP, [],
                   trade_targets=[_target("X", "RB", 100.0, 10.0, "T")])
     assert msg.index("TRADE TARGETS") < msg.index("BEST LINEUP")
+
+
+# ------------------------------------------------------------------- byes
+#
+# CBS prints BYE in the opponent column and zeroes the stat line, so a bye
+# player is a genuine 0.00 - not a missing projection. Measured against the
+# real week-6 page, where three of Jeff's players are out INCLUDING HIS ONLY
+# KICKER, whom the optimizer therefore still starts at 0.00.
+
+def test_a_started_bye_player_is_called_out_above_the_lineup():
+    msg = compose("friday", 2, [], BOARD_LINEUP, [],
+                  starters_on_bye=[("Evan McPherson", "K")])
+    assert "ON BYE BUT STILL IN YOUR LINEUP" in msg
+    assert "Evan McPherson" in msg
+    assert msg.index("ON BYE") < msg.index("BEST LINEUP")
+
+
+def test_the_bye_warning_says_why_he_is_started():
+    # Without this it reads as an optimizer bug. He is started because
+    # nothing better is rostered at that slot, which is what a waiver claim
+    # fixes - and saying so is the actionable half.
+    msg = compose("friday", 2, [], BOARD_LINEUP, [],
+                  starters_on_bye=[("Evan McPherson", "K")])
+    assert "nothing better is on your" in msg
+    assert "waiver" in msg
+
+
+def test_the_lineup_row_itself_is_marked_bye():
+    lineup = LineupResult(
+        slots=[("K", Candidate("Evan McPherson", "K", 0.0, "CIN"))], total=0.0)
+    msg = compose("friday", 2, [], lineup, [],
+                  starters_on_bye=[("Evan McPherson", "K")])
+    row = [l for l in msg.split("\n") if "Evan McPherson" in l and "0.00" in l][0]
+    assert "BYE" in row
+
+
+def test_no_bye_renders_no_warning():
+    msg = compose("friday", 2, [], BOARD_LINEUP, [])
+    assert "ON BYE" not in msg
+
+
+def test_a_benched_bye_player_reads_as_bye_not_as_a_data_problem():
+    # 0.00 with no marker invites the reader to diagnose a broken capture.
+    board = _board(("Bijan Robinson", "RB", "ATL", 18.0, "", None, False),
+                   ("Ja'Marr Chase", "WR", "CIN", 16.5, "", None, False),
+                   ("Jameson Williams", "WR", "DET", 0.0, "", None, True))
+    bench = _block(compose("friday", 2, [], BOARD_LINEUP, [],
+                           roster_board=board), "BENCH")
+    row = [l for l in bench.split("\n") if "Jameson Williams" in l][0]
+    assert "BYE" in row
+    assert "0.00" in row
