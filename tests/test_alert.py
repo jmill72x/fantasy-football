@@ -899,3 +899,53 @@ def test_both_warnings_default_off_so_existing_callers_are_unaffected():
     assert (compose(*args, week_mismatch=None, stale_projections=None,
                     projections_age_hours=None)
             == _PRE_CURRENT_STARTERS_PINNED_OUTPUT)
+
+
+# ---------------------------------------------------------- trade targets
+#
+# Friday only. Sunday is ninety minutes from kickoff and has no use for a
+# trade idea, and the block costs four extra page captures.
+
+def _target(name, pos, pts, gain, owner):
+    return (Candidate(name, pos, pts, "NE"), owner, gain)
+
+
+def test_trade_targets_render_with_owner_and_lineup_gain():
+    msg = compose("friday", 2, [], BOARD_LINEUP, [],
+                  trade_targets=[_target("Puka Nacua", "WR", 146.9, 68.5, "Team B")])
+    assert "TRADE TARGETS" in msg
+    assert "Puka Nacua" in msg
+    assert "68.5" in msg
+    assert "Team B" in msg
+
+
+def test_not_attempted_and_found_nothing_render_differently():
+    # None means "we did not look"; [] means "we looked and there is nothing".
+    not_run = compose("friday", 2, [], BOARD_LINEUP, [])
+    assert "TRADE TARGETS" not in not_run
+    empty = compose("friday", 2, [], BOARD_LINEUP, [], trade_targets=[])
+    assert "nobody on another roster" in empty
+
+
+def test_a_failed_trade_block_says_so_rather_than_going_quiet():
+    # The block is bolted onto a job whose real purpose is injury news. It
+    # may fail; it may not fail SILENTLY, or a broken capture reads as a
+    # week with no trade worth making.
+    msg = compose("friday", 2, [], BOARD_LINEUP, [],
+                  trade_error="rest-of-season page capture failed")
+    assert "TRADE TARGETS unavailable" in msg
+    assert "capture failed" in msg
+
+
+def test_the_trade_block_never_appears_on_sunday_by_construction():
+    # compose renders whatever it is given; the Friday-only rule lives in
+    # _cmd_alert. This pins that a Sunday caller passing nothing gets
+    # nothing, so the rule cannot be defeated by a default.
+    msg = compose("sunday", 2, [], BOARD_LINEUP, [])
+    assert "TRADE TARGETS" not in msg
+
+
+def test_the_trade_block_sits_above_the_lineup():
+    msg = compose("friday", 2, [], BOARD_LINEUP, [],
+                  trade_targets=[_target("X", "RB", 100.0, 10.0, "T")])
+    assert msg.index("TRADE TARGETS") < msg.index("BEST LINEUP")

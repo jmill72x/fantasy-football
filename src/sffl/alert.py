@@ -469,7 +469,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             unevaluated_starters=None, injury_error=None,
             injuries_age_minutes=None, projections_capture_error=None,
             roster_board=None, week_mismatch=None, stale_projections=None,
-            projections_age_hours=None):
+            projections_age_hours=None, trade_targets=None, trade_error=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -530,6 +530,12 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     look wrong is strictly more useful than no message at all.
     `projections_age_hours` is how old the freshest captured page said it
     was, rendered whenever known so the reader can judge for themselves.
+
+    `trade_targets` is [(candidate, owner, gain)] for the FRIDAY digest only
+    - Sunday is ninety minutes from kickoff and has no use for a trade idea.
+    `None` means the block was not attempted (Sunday, or --no-trade); `[]`
+    means it ran and found nothing worth naming, and the two render
+    differently because "we did not look" is not "there is nothing there".
     """
     if kind not in _KINDS:
         raise ValueError(
@@ -726,6 +732,24 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     if sidelined:
         lines.append("EXCLUDED from the lineup - will not play:")
         lines.extend("  - %s (%s)" % (n, s) for n, s in sidelined)
+        lines.append("")
+
+    if trade_error:
+        lines.append("TRADE TARGETS unavailable: %s" % trade_error)
+        lines.append("")
+    elif trade_targets:
+        lines.append("TRADE TARGETS (rest of season, best first):")
+        for cand, owner, gain in trade_targets:
+            lines.append("  +%-6.1f %-20s %-5s  from %s"
+                         % (gain, cand.name, cand.pos, owner))
+        lines.append("  +N is what he would add to YOUR optimal lineup over")
+        lines.append("  the rest of the season, not his projection - a fourth")
+        lines.append("  receiver's points are mostly unreachable in a lineup")
+        lines.append("  that starts one WR/TE and three FLEX.")
+        lines.append("")
+    elif trade_targets == []:
+        lines.append("TRADE TARGETS: nobody on another roster would improve")
+        lines.append("  your rest-of-season lineup.")
         lines.append("")
 
     lines.append("BEST LINEUP (%.2f pts, this league's scoring):" %

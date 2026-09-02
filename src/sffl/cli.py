@@ -97,6 +97,26 @@ GROUP_POSITIONS = {
 }
 
 
+# Rest-of-season pages, for the Friday digest's trade block. Same scopes and
+# the same row-count parameter as the weekly URL; only the period token
+# differs. `restofseason` is CBS's own - verified live 2026-09-01, and
+# pre-season it returns the same figures as `season`, which is what
+# rest-of-season MEANS on day zero.
+ROS_URL_TEMPLATE = (
+    CBS_LEAGUE_BASE + "/stats/stats-main/all:%s/restofseason:p/standard/"
+    "projections?print_rows=%d")
+
+# The `-ROS` profile group for each weekly one. The rest-of-season pages
+# carry an extra FPTS/G column, so reusing a weekly map reads every field one
+# place out - see sources/cbs-weekly.yaml's REST OF SEASON block.
+ROS_GROUPS = dict((g, g + "-ROS") for g in ALERT_GROUPS)
+
+
+def _ros_url(group):
+    """The CBS rest-of-season URL for one position group's page."""
+    return ROS_URL_TEMPLATE % (GROUP_SCOPES[group], PROJECTIONS_PAGE_ROWS)
+
+
 def _projections_url(group, week):
     """The CBS weekly-projections URL for one position group's page.
 
@@ -1318,6 +1338,8 @@ def _cmd_alert(args):
                             BoardRow, STALE_PROJECTIONS_HOURS, compose)
     from sffl.calibrate import load_curves
     from sffl.capture import CaptureError, capture
+    from sffl.pool import score_season, score_season_calibrated
+    from sffl.trade import games_remaining, rank_targets
     from sffl.cbs_weekly import (WEEK_MISMATCH_RATIO, read_report_stamp,
                                  shared_team_count, week_conflicts)
     from sffl.cbs_roster import parse_lineup_rows
@@ -1347,6 +1369,10 @@ def _cmd_alert(args):
     # fire", never "the check passed" - compose distinguishes the two.
     week_mismatch = None
     stale_projections = None
+    # None means "not attempted" (Sunday, or --no-trade); [] would claim the
+    # search ran and found nothing.
+    trade_targets = None
+    trade_error = None
     projections_age_hours = None
     # None, not [] - see compose's docstring. [] would render "BENCH ... (0)"
     # and assert an empty bench on a run where the roster was never read at
@@ -1695,6 +1721,69 @@ def _cmd_alert(args):
         # rather than dropped: `best_lineup` must not pick them (it does not
         # - they are filtered out of the pool above), but the reader still
         # needs to see who they are and what they would have been worth.
+        # TRADE TARGETS - FRIDAY ONLY, and never at the cost of the digest.
+        # Friday is the planning message with two days of runway; Sunday is
+        # ninety minutes from kickoff and has no use for a trade idea. The
+        # whole block is wrapped because it is a nice-to-have bolted onto a
+        # job whose real purpose is telling Jeff who is hurt: four extra page
+        # captures must not be able to take that down, so ANY failure here
+        # degrades to a one-line note and the alert goes out regardless.
+        # getattr, not args.no_trade: this function is called directly with a
+        # hand-built Namespace by a good deal of the test suite, and a new
+        # required attribute would break every one of those callers for a
+        # flag they have no opinion about.
+        if args.kind == "friday" and not getattr(args, "no_trade", False):
+            try:
+                ros_rows = []
+                for group in ALERT_GROUPS:
+                    written = capture({group: _ros_url(group)}, args.out_dir,
+                                      args.profile_dir)
+                    ros_rows.extend(parse_weekly(
+                        written[_ros_url(group)], group=ROS_GROUPS[group],
+                        week=args.week, season=lg.season))
+                ros_classifier = _avail_classifier(
+                    written[_ros_url(ALERT_GROUPS[-1])], owner_codes)
+                mine_names = set(normalize_name(r.name) for r in roster_rows)
+                owned_by, my_token, hits = _split_pool_by_owner(
+                    ros_rows, ros_classifier, mine_names, normalize_name)
+                if my_token is None:
+                    trade_error = ("could not tell which owner column is "
+                                   "yours on the rest-of-season pages")
+                elif hits < len(mine_names) / 2:
+                    # A weak match means the token is probably wrong, and a
+                    # wrong token would rank YOUR OWN players as targets.
+                    trade_error = (
+                        "only %d of %d rostered players matched the owner "
+                        "column, too few to trust which team is yours"
+                        % (hits, len(mine_names)))
+                else:
+                    def _ros_pts(p):
+                        p.games = float(
+                            games_remaining(args.week, p.bye)) or 1.0
+                        return (score_season_calibrated(lg, p, curves)
+                                if curves else score_season(lg, p))
+                    mine_ros = [Candidate(p.name, p.pos, _ros_pts(p), p.team)
+                                for p in owned_by[my_token]]
+                    market = [(Candidate(p.name, p.pos, _ros_pts(p), p.team),
+                               token)
+                              for token, players in sorted(owned_by.items())
+                              if token != my_token for p in players]
+                    trade_targets = rank_targets(lg, mine_ros, market, top=3)
+            except Exception as exc:
+                # DELIBERATELY BROAD, and only around this block. The narrow
+                # `except (CaptureError, ValueError)` around the projections
+                # capture above must STAY narrow - broadening it would mask a
+                # real capture defect as a data problem. Here the calculus is
+                # reversed: this block is a convenience bolted onto a job
+                # whose actual purpose is telling Jeff who is hurt, and no
+                # failure in it - a KeyError from a changed page, an
+                # arithmetic error in scoring, anything - may be allowed to
+                # stop that message going out ninety minutes before he needs
+                # it. The failure is REPORTED in the digest, never swallowed.
+                # KeyboardInterrupt and SystemExit derive from BaseException
+                # and are still not caught.
+                trade_error = "%s: %s" % (type(exc).__name__, str(exc)[:160])
+
         roster_board = []
         for r in roster_rows:
             if r in resolved:
@@ -1799,7 +1888,8 @@ def _cmd_alert(args):
                    roster_board=roster_board,
                    week_mismatch=week_mismatch,
                    stale_projections=stale_projections,
-                   projections_age_hours=projections_age_hours)
+                   projections_age_hours=projections_age_hours,
+                   trade_targets=trade_targets, trade_error=trade_error)
 
     # A PARTIAL capture failure - one to three of the four position-group
     # pages, with the roster and at least one other page still good - must
@@ -1965,6 +2055,36 @@ def _cmd_alert(args):
                 or week_mismatch or stale_projections) else 0
 
 
+def _split_pool_by_owner(rows, classifier, roster_names, normalize_name):
+    """({owner_token: [rows]}, my_token, hits) from one pool of projections.
+
+    Ownership is read off the page's OWN owner column, never by joining a
+    name list against it - a name-only join matches "Chargers" to BOTH the
+    TQB and the DST row, which reported a 13-man roster as 16 entries the
+    first time this was written.
+
+    Which token is Jeff's is decided by overlap with `roster_names` and the
+    hit count is returned so the caller can PRINT it: CBS truncates the
+    column ("Sgt Hu..."), so the token is neither the team name nor stable
+    enough to hard-code, and a wrong guess must be visible rather than
+    silent.
+
+    Shared by `sffl trade` and the Friday alert's trade block so the two
+    cannot drift apart on who owns whom.
+    """
+    owned_by = {}
+    for p in rows:
+        if classifier(p.avail or "") != "owned":
+            continue
+        owned_by.setdefault((p.avail or "").strip(), []).append(p)
+    my_token, hits = None, 0
+    for token, players in owned_by.items():
+        n = sum(1 for p in players if normalize_name(p.name) in roster_names)
+        if n > hits:
+            my_token, hits = token, n
+    return owned_by, my_token, hits
+
+
 def _cmd_trade(args):
     """Rest-of-season trade valuation. READ-ONLY - never contacts a manager.
 
@@ -2029,25 +2149,8 @@ def _cmd_trade(args):
     roster_names = set(normalize_name(l.strip())
                        for l in open(args.roster) if l.strip())
 
-    owned_by = {}
-    for p in rows:
-        if classifier(p.avail or "") != "owned":
-            continue
-        owned_by.setdefault((p.avail or "").strip(), []).append(p)
-
-    # Which owner token is Jeff's? The one whose players best match the
-    # roster file. Auto-detected rather than configured because CBS
-    # TRUNCATES the column ("Sgt Hu..."), so the token is neither the team
-    # name nor stable enough to hard-code - and the match count is printed
-    # below so a wrong guess is visible rather than silent.
-    def overlap(players):
-        return sum(1 for p in players if normalize_name(p.name) in roster_names)
-
-    my_token, my_hits = None, 0
-    for token, players in owned_by.items():
-        hits = overlap(players)
-        if hits > my_hits:
-            my_token, my_hits = token, hits
+    owned_by, my_token, my_hits = _split_pool_by_owner(
+        rows, classifier, roster_names, normalize_name)
     if my_token is None:
         print("could not identify which owner column is yours - no owned row "
               "matched any name in %s" % args.roster)
