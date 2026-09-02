@@ -115,7 +115,7 @@ from sffl.identity import normalize_name
 # and confusing the two is how a healthy player gets benched by an absent
 # data file. `why` carries the reason for None (one of the reason constants
 # above), or None when he was scored.
-BoardRow = namedtuple("BoardRow", "name pos team points status why")
+BoardRow = namedtuple("BoardRow", "name pos team points status why on_bye")
 
 # Past this many days, the roster file's age is called out as a problem rather
 # than merely stated. Visible staleness beats invisible staleness.
@@ -456,6 +456,10 @@ def _bench_block(roster_board, lineup_result):
     unscored = [r for r in bench if r.points is None]
     for r in scored:
         note = "  (%s)" % r.status if r.status else ""
+        if getattr(r, "on_bye", False):
+            # A bye is a real 0.00, not a missing projection. Saying so stops
+            # the reader diagnosing a data problem that is not there.
+            note = "  BYE" + note
         out.append("  %-6s %-20s %6.2f%s" % (r.pos or "?", r.name, r.points, note))
     for r in unscored:
         why = _BENCH_REASONS.get(r.why, r.why or "not scored")
@@ -469,7 +473,8 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             unevaluated_starters=None, injury_error=None,
             injuries_age_minutes=None, projections_capture_error=None,
             roster_board=None, week_mismatch=None, stale_projections=None,
-            projections_age_hours=None, trade_targets=None, trade_error=None):
+            projections_age_hours=None, trade_targets=None, trade_error=None,
+            starters_on_bye=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -530,6 +535,16 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     look wrong is strictly more useful than no message at all.
     `projections_age_hours` is how old the freshest captured page said it
     was, rendered whenever known so the reader can judge for themselves.
+
+    `starters_on_bye` is [(name, pos)] for players the OPTIMAL LINEUP still
+    starts even though CBS lists them as BYE this week. That is not a bug in
+    the optimizer - with one kicker on the roster and that kicker on bye, a
+    0.00 kicker really is the best available - it is the single most
+    actionable thing a Friday digest can say, and it was invisible before:
+    the slot rendered as "K Evan McPherson 0.00" with nothing to distinguish
+    a bye from a genuinely worthless projection. Measured against the real
+    week-6 page, where three of Jeff's players including his only kicker are
+    out.
 
     `trade_targets` is [(candidate, owner, gain)] for the FRIDAY digest only
     - Sunday is ninety minutes from kickoff and has no use for a trade idea.
@@ -734,6 +749,15 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         lines.extend("  - %s (%s)" % (n, s) for n, s in sidelined)
         lines.append("")
 
+    if starters_on_bye:
+        lines.append("!! ON BYE BUT STILL IN YOUR LINEUP - these score ZERO:")
+        for name, pos in starters_on_bye:
+            lines.append("     %-22s %s" % (name, pos))
+        lines.append("   They are started because nothing better is on your")
+        lines.append("   roster at that slot, not because they will play.")
+        lines.append("   Pick up a replacement while the waiver window is open.")
+        lines.append("")
+
     if trade_error:
         lines.append("TRADE TARGETS unavailable: %s" % trade_error)
         lines.append("")
@@ -758,7 +782,11 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         if pick is None:
             lines.append("  %-6s %s" % (slot, "-- UNFILLED"))
         else:
-            lines.append("  %-6s %-20s %6.2f" % (slot, pick.name, pick.points))
+            bye = ""
+            if starters_on_bye and (pick.name, pick.pos) in set(starters_on_bye):
+                bye = "   BYE"
+            lines.append("  %-6s %-20s %6.2f%s"
+                         % (slot, pick.name, pick.points, bye))
 
     if roster_board is not None:
         lines.append("")
