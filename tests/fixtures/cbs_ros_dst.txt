@@ -1,0 +1,5 @@
+Rest-of-season DST projections. CONSTRUCTED for tests - owner tokens are
+placeholders (the repo is public). Layout matches a real restofseason:p
+capture: the weekly columns plus FPTS/G ahead of FPTS.
+id=3001		OWNER_A	Alpha Team DST • NE 	@BUF	10	5	90	80	45	11	14	9	2	1	330.0	5610	19.5	331	9.0	153.0
+id=3002		OWNER_B	Beta Team DST • KC 	@DEN	11	6	88	70	40	9	12	8	1	0	345.0	5865	21.0	357	7.5	127.5

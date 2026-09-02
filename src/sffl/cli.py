@@ -1343,6 +1343,7 @@ def _cmd_alert(args):
     from sffl.cbs_weekly import (WEEK_MISMATCH_RATIO, read_report_stamp,
                                  shared_team_count, week_conflicts)
     from sffl.cbs_roster import parse_lineup_rows
+    from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
     from sffl.cbs_weekly import is_out
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import IdentityIndex, normalize_team
@@ -1735,14 +1736,27 @@ def _cmd_alert(args):
         if args.kind == "friday" and not getattr(args, "no_trade", False):
             try:
                 ros_rows = []
+                # Keyed "<group>-ROS", NOT "<group>": `capture` names the
+                # file it writes after the key, so reusing the weekly name
+                # OVERWRITES data/captures/<group>.txt with rest-of-season
+                # content. Harmless inside a single run (the weekly parse is
+                # already done by here) but it leaves the on-disk weekly
+                # capture silently holding the wrong season's numbers, which
+                # is exactly the kind of thing someone debugs for an hour.
                 for group in ALERT_GROUPS:
-                    written = capture({group: _ros_url(group)}, args.out_dir,
-                                      args.profile_dir)
+                    written = capture({ROS_GROUPS[group]: _ros_url(group)},
+                                      args.out_dir, args.profile_dir)
                     ros_rows.extend(parse_weekly(
                         written[_ros_url(group)], group=ROS_GROUPS[group],
                         week=args.week, season=lg.season))
+                # Loaded here rather than assumed in scope: `_cmd_alert`
+                # never needed owner codes before this block, and referring
+                # to a name that only exists in `_cmd_week`/`_cmd_trade` is
+                # what made the first live Friday run report
+                # "NameError: name 'owner_codes' is not defined".
                 ros_classifier = _avail_classifier(
-                    written[_ros_url(ALERT_GROUPS[-1])], owner_codes)
+                    written[_ros_url(ALERT_GROUPS[-1])],
+                    _load_owner_codes(DEFAULT_PROFILE))
                 mine_names = set(normalize_name(r.name) for r in roster_rows)
                 owned_by, my_token, hits = _split_pool_by_owner(
                     ros_rows, ros_classifier, mine_names, normalize_name)
@@ -2664,6 +2678,9 @@ def main(argv=None):
     alr.add_argument("--out-dir", default="data/captures")
     alr.add_argument("--profile-dir", default="data/browser-profile")
     alr.add_argument("--dry-run", action="store_true")
+    alr.add_argument("--no-trade", action="store_true",
+                     help="skip the Friday digest's trade block, and the "
+                          "four rest-of-season page captures it needs")
     alr.set_defaults(func=_cmd_alert)
 
     args = ap.parse_args(argv)
