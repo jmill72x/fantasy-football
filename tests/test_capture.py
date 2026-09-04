@@ -276,3 +276,61 @@ def test_capture_page_text_calls_evaluate_once_and_prefixes_ids(monkeypatch):
     out = capture._capture_page_text(_FakePage())
     assert len(calls) == 1
     assert out == "nav\nid=2966320\t" + row_text + "\nfooter"
+
+
+# ------------------------------------------------------- navigation timeout
+#
+# The first real scheduled Friday run (2026-09-04) lost five of eight lineup
+# slots to a 30s navigation timeout. `?print_rows=9999` - the parameter that
+# stops CBS hiding rostered players outside its default top 100 - makes the
+# RB/WR/TE page 1710 rows, which measures ~33s to domcontentloaded.
+
+def test_the_nav_timeout_clears_the_measured_page_load():
+    # 33s measured. A timeout at or near that is a coin flip, not a margin.
+    from sffl.capture import _NAV_TIMEOUT_MS
+    assert _NAV_TIMEOUT_MS >= 60000, (
+        "the heaviest captured page measured ~33s; a timeout under 60s has "
+        "no margin and cost a real run five lineup slots")
+
+
+def test_navigation_is_retried_but_not_unboundedly():
+    # One retry: the measured failure is slowness, not breakage. A loop
+    # across eight pages is how a background job becomes a hung one.
+    from sffl.capture import _NAV_RETRIES
+    assert _NAV_RETRIES == 1
+
+
+def test_goto_retries_once_then_raises_the_timeout():
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    from sffl.capture import _goto_with_retry
+
+    class _AlwaysSlow(object):
+        def __init__(self):
+            self.calls = 0
+
+        def goto(self, url, timeout=None, wait_until=None):
+            self.calls += 1
+            raise PlaywrightTimeoutError("nope")
+
+    page = _AlwaysSlow()
+    with pytest.raises(PlaywrightTimeoutError):
+        _goto_with_retry(page, "http://x", 1000)
+    assert page.calls == 2, "expected one attempt plus one retry"
+
+
+def test_a_slow_first_attempt_that_then_succeeds_is_not_an_error():
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    from sffl.capture import _goto_with_retry
+
+    class _SlowOnce(object):
+        def __init__(self):
+            self.calls = 0
+
+        def goto(self, url, timeout=None, wait_until=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise PlaywrightTimeoutError("slow")
+
+    page = _SlowOnce()
+    _goto_with_retry(page, "http://x", 1000)
+    assert page.calls == 2
