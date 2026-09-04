@@ -63,7 +63,30 @@ _SETTLE_WAIT_MS = 6000
 # Per-page navigation timeout, passed to page.goto(). Named so a timeout can
 # report which constant it hit and so it is tunable in one place instead of
 # a bare literal.
-_NAV_TIMEOUT_MS = 30000
+#
+# RAISED 30s -> 90s on 2026-09-04, after the first real scheduled Friday run
+# lost five of eight lineup slots to it. `?print_rows=9999` - the parameter
+# that stops CBS hiding rostered players outside its default top 100 - turns
+# the RB/WR/TE page into 1710 rows, and that page MEASURES at ~33s to
+# domcontentloaded. 30s was not a margin, it was a coin flip.
+#
+# Asking for fewer rows is not available as a fix: measured the same day,
+# print_rows of 200, 400, 500, 1000, 1710 and 2000 ALL return CBS's default
+# 100 rows in ~7.6s, and only 9999 returns the full set. There is no middle
+# setting to retreat to, so the page is heavy or it is incomplete.
+#
+# 90s is three times the measured load. These jobs run at 4:45pm Friday and
+# 11:30am Sunday with no deadline pressure; a slow capture costs seconds
+# nobody is waiting on, while a failed one costs the whole lineup.
+_NAV_TIMEOUT_MS = 90000
+
+# One retry on a navigation timeout. The measured failure is a page that is
+# slow, not a page that is broken - so the second attempt usually succeeds,
+# and when it does not the error is the same one the caller already handles.
+# Deliberately ONE retry, not a loop: four position pages plus four
+# rest-of-season pages times unbounded retries is how a background job turns
+# into a hung one.
+_NAV_RETRIES = 1
 
 
 # Pulls, per `<tr>`, the row's own rendered text (`tr.innerText`, the exact
@@ -287,6 +310,24 @@ def check_page_text(text, url, title=""):
     return None
 
 
+def _goto_with_retry(page, url, timeout_ms):
+    """`page.goto`, retried once on timeout. Raises the LAST timeout.
+
+    Separate from `capture` so the retry policy is one readable thing rather
+    than control flow threaded through the capture loop. See `_NAV_RETRIES`.
+    """
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    last = None
+    for attempt in range(_NAV_RETRIES + 1):
+        try:
+            page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
+            return
+        except PlaywrightTimeoutError as exc:
+            last = exc
+    raise last
+
+
 def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS):
     """Fetch each url with the stored login and save its text. Returns {url: path}.
 
@@ -326,13 +367,13 @@ def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS):
                 # domcontentloaded, not networkidle: see _SETTLE_WAIT_MS above
                 # for why networkidle hangs forever on the authenticated site.
                 try:
-                    page.goto(url, timeout=timeout_ms,
-                              wait_until="domcontentloaded")
+                    _goto_with_retry(page, url, timeout_ms)
                 except PlaywrightTimeoutError as exc:
                     raise CaptureError(
-                        "timed out navigating to %s after %dms - CBS may be "
-                        "slow, unreachable, or stuck on an interstitial. "
-                        "Nothing saved. (%s)" % (url, timeout_ms, exc)) from exc
+                        "timed out navigating to %s after %dms x %d attempt(s) "
+                        "- CBS may be slow, unreachable, or stuck on an "
+                        "interstitial. Nothing saved. (%s)"
+                        % (url, timeout_ms, _NAV_RETRIES + 1, exc)) from exc
                 # Blind settle wait: the DOM is ready but CBS renders the
                 # roster client-side afterward. See _SETTLE_WAIT_MS comment.
                 page.wait_for_timeout(_SETTLE_WAIT_MS)
