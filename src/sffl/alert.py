@@ -794,10 +794,13 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         for cand, owner, gain in trade_targets:
             lines.append("  +%-6.1f %-20s %-5s  from %s"
                          % (gain, cand.name, cand.pos, owner))
-        lines.append("  +N is what he would add to YOUR optimal lineup over")
-        lines.append("  the rest of the season, not his projection - a fourth")
-        lines.append("  receiver's points are mostly unreachable in a lineup")
-        lines.append("  that starts one WR/TE and three FLEX.")
+        # ONE short line, not four wrapped ones. This is read on a phone:
+        # ntfy re-wraps at its own width, so prose hard-wrapped for a
+        # terminal breaks mid-sentence and the indent goes ragged (seen in
+        # the 2026-09-04 screenshots). Four lines of caveat under three
+        # lines of data is also the wrong proportion on a small screen.
+        lines.append("  +N = added to YOUR optimal lineup, not his raw "
+                     "projection.")
         lines.append("")
     elif trade_targets == []:
         lines.append("TRADE TARGETS: nobody on another roster would improve")
