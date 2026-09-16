@@ -702,3 +702,23 @@ def test_the_trade_block_cannot_take_the_alert_down(alert_env, capsys):
 def test_no_trade_skips_the_block_entirely(alert_env, capsys):
     rc, out = alert_env.run(capsys, "--no-trade")
     assert "TRADE TARGETS" not in out
+
+
+def test_the_alert_command_accepts_all_three_scheduled_kinds():
+    # ops/ ships a plist per kind; a kind the CLI rejects is a job that fails
+    # every week at 16:45 with a usage error nobody sees.
+    import subprocess, sys, os, glob, re
+    kinds = set()
+    for p in glob.glob("ops/com.sffl.alert.*.plist"):
+        m = re.match(r"com\.sffl\.alert\.([a-z]+)\.plist", os.path.basename(p))
+        if m: kinds.add(m.group(1))
+    assert kinds == {"tuesday", "friday", "sunday"}, kinds
+    from sffl.cli import main
+    import argparse
+    # the parser's own choices must cover every shipped plist
+    import sffl.cli as cli
+    src = open(cli.__file__).read()
+    m = re.search(r'--kind", choices=\[([^\]]+)\]', src)
+    assert m, "could not find --kind choices"
+    declared = set(re.findall(r'"([a-z]+)"', m.group(1)))
+    assert kinds <= declared, "plists exist for kinds the CLI rejects: %s" % (kinds - declared)

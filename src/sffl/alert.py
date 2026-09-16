@@ -150,9 +150,25 @@ STALE_INJURIES_MINUTES = 60
 # fires on a healthy Friday run would be ignored by Sunday.
 STALE_PROJECTIONS_HOURS = 36
 
+# THE THREE MOMENTS OF THE LEAGUE WEEK, and why each exists. They are not
+# three copies of one digest on different days - each can say something the
+# others cannot, and each lands when its advice is still actionable:
+#
+#   TUESDAY  drop/add opens in this league on Tuesday and CBS processes
+#            waivers ~2am Wednesday. This is the ONLY run whose claim advice
+#            can still be acted on. It carries the waiver/bye/trade planning
+#            that Friday used to carry incoherently - the bye look-ahead told
+#            Jeff "a claim has to be in by Tuesday night" in a message that
+#            fired on FRIDAY, after that deadline had passed.
+#   FRIDAY   practice participation (DNP / limited / full) only exists after
+#            Wednesday-to-Friday practices, so Tuesday cannot carry it. This
+#            is a start/sit message, not a claim message.
+#   SUNDAY   official inactives, ninety minutes out. The last word.
 _KINDS = {
+    "tuesday": ("Tuesday waiver window",
+                "Drop/add is open - claims process ~2am Wednesday."),
     "friday": ("Friday practice report",
-               "What to plan around - two days left to make a claim."),
+               "Who practiced, and what it means for Sunday."),
     "sunday": ("Sunday inactives",
                "What changed since Friday. Kickoff is close."),
 }
@@ -552,13 +568,15 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     replacement once they are gone. The split matters because CBS processes
     waivers Wednesday ~2am, so a claim must be in by Tuesday night: the
     warning that fires ON the bye week cannot be acted on, and this one can.
-    FRIDAY carries the full look-ahead (four days of runway); SUNDAY carries
-    ONLY the holes, because it is the last automated message before that
-    deadline and everything else in it is about today's kickoff.
+    TUESDAY carries the full look-ahead, because Tuesday is when a claim can
+    still be filed against that night's processing. FRIDAY and SUNDAY carry
+    ONLY the holes - by then the claim deadline has passed and the useful
+    thing left to say is "you will be a man short", not a list to shop from.
 
-    `trade_targets` is [(candidate, owner, gain)] for the FRIDAY digest only
-    - Sunday is ninety minutes from kickoff and has no use for a trade idea.
-    `None` means the block was not attempted (Sunday, or --no-trade); `[]`
+    `trade_targets` is [(candidate, owner, gain)] for the TUESDAY digest only
+    - it is the planning message, and Sunday is ninety minutes from kickoff
+    with no use for a trade idea.
+    `None` means the block was not attempted (not Tuesday, or --no-trade); `[]`
     means it ran and found nothing worth naming, and the two render
     differently because "we did not look" is not "there is nothing there".
     """
@@ -770,7 +788,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         lines.append("   Waivers process Wednesday ~2am, so a claim has to be")
         lines.append("   in by Tuesday night.")
         lines.append("")
-    if next_bye and kind == "friday":
+    if next_bye and kind == "tuesday":
         lines.append("NEXT WEEK (%s) ON BYE:"
                      % (next_week if next_week is not None else "?"))
         for name, pos in next_bye:

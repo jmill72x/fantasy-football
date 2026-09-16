@@ -1748,7 +1748,11 @@ def _cmd_alert(args):
         # hand-built Namespace by a good deal of the test suite, and a new
         # required attribute would break every one of those callers for a
         # flag they have no opinion about.
-        if args.kind == "friday" and not getattr(args, "no_trade", False):
+        # TUESDAY, not Friday. Drop/add opens Tuesday in this league and CBS
+        # processes waivers ~2am Wednesday, so Tuesday is the only run whose
+        # claim advice can still be acted on - and the trade block is part of
+        # the same planning message. Friday keeps the practice report.
+        if args.kind == "tuesday" and not getattr(args, "no_trade", False):
             try:
                 ros_rows = []
                 # Keyed "<group>-ROS", NOT "<group>": `capture` names the
@@ -2712,7 +2716,8 @@ def main(argv=None):
     cl.set_defaults(func=_cmd_claim)
 
     alr = sub.add_parser("alert", help="capture, score, and push the weekly digest")
-    alr.add_argument("--kind", choices=["friday", "sunday"], required=True)
+    alr.add_argument("--kind", choices=["tuesday", "friday", "sunday"],
+                     required=True)
     alr.add_argument("--league", default=DEFAULT_LEAGUE)
     alr.add_argument("--week", type=int, required=True)
     alr.add_argument("--curves")
