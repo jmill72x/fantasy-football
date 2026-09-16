@@ -289,7 +289,7 @@ class _Sent(object):
     def __init__(self):
         self.calls = []
 
-    def __call__(self, topic, title, body, dry_run=False):
+    def __call__(self, topic, title, body, dry_run=False, actions=None):
         self.calls.append((topic, title, body, dry_run))
         return False
 

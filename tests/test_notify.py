@@ -143,3 +143,58 @@ def test_a_missing_security_binary_is_not_a_missing_entry(monkeypatch):
         notify.topic_from_keychain("sffl-alert-test")
     assert "PATH problem" in str(exc.value)
     assert "no Keychain entry" not in str(exc.value)
+
+
+# --------------------------------------------------------- tap-to-claim actions
+#
+# ntfy renders up to three tap buttons. Jeff's waiver targets get one each,
+# deep-linking to CBS with the add already staged, so a claim can be made
+# from the phone instead of from a terminal.
+
+def test_a_league_url_becomes_a_view_action():
+    from sffl.notify import _actions_header
+    h = _actions_header([("ADD Foo", "https://stripesfantasyfootballleague."
+                          "football.cbssports.com/stats/stats-main?default_add=RB:1")])
+    assert h.startswith("view, ADD Foo, https://stripesfantasyfootballleague")
+
+
+def test_an_off_league_url_is_dropped_entirely():
+    # An action is a thing Jeff TAPS on his phone. An attacker-chosen URL
+    # here is a phishing link delivered by his own tooling.
+    from sffl.notify import _actions_header
+    assert _actions_header([("Click", "https://evil.example.com/phish")]) is None
+
+
+def test_a_comma_in_a_label_cannot_forge_a_second_action():
+    """Labels come from CBS player names - remote data.
+
+    The header format is `view, <label>, <url>`, semicolon-separated. A comma
+    or semicolon inside a label would split it into extra FIELDS and forge a
+    second button pointing wherever the attacker chose. The label may still
+    CONTAIN attacker text - it is displayed, not followed - so what is
+    asserted is structural: exactly one action, exactly three fields, and the
+    URL field is the vetted league one.
+    """
+    from sffl.notify import _actions_header
+    h = _actions_header([("A, view, X, https://evil.example.com",
+                          "https://stripesfantasyfootballleague.football."
+                          "cbssports.com/x")])
+    assert h.count(";") == 0, "label split the header into two actions"
+    fields = h.split(",")
+    assert len(fields) == 3, "expected exactly view/label/url, got %r" % fields
+    assert fields[0].strip() == "view"
+    assert fields[2].strip().startswith(
+        "https://stripesfantasyfootballleague.football.cbssports.com/")
+
+
+def test_at_most_three_actions_are_sent():
+    from sffl.notify import MAX_ACTIONS, _actions_header
+    base = "https://stripesfantasyfootballleague.football.cbssports.com/x"
+    h = _actions_header([("A%d" % i, base) for i in range(6)])
+    assert h.count("view,") == MAX_ACTIONS
+
+
+def test_no_actions_sets_no_header_value():
+    from sffl.notify import _actions_header
+    assert _actions_header(None) is None
+    assert _actions_header([]) is None

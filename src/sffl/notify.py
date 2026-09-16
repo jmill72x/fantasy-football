@@ -24,6 +24,9 @@ import re
 import subprocess
 import urllib.request
 
+LEAGUE_URL_PREFIX = (
+    "https://stripesfantasyfootballleague.football.cbssports.com/")
+
 NTFY_URL = "https://ntfy.sh/%s"
 KEYCHAIN_ACCOUNT = "sffl-alert-ntfy-topic"
 
@@ -103,11 +106,45 @@ def topic_from_keychain(account=KEYCHAIN_ACCOUNT):
         % (account, proc.returncode, _CREATE_CMD % account, detail))
 
 
-def send(topic, title, body, dry_run=False):
+# ntfy renders at most three tap actions per notification, and silently
+# drops the rest - so callers must hand over the three that matter, already
+# ranked, rather than everything they have.
+MAX_ACTIONS = 3
+
+
+def _actions_header(actions):
+    """ntfy `Actions` header value for [(label, url)], or None.
+
+    Format is `view, <label>, <url>` per action, semicolon-separated. A LABEL
+    CONTAINING A COMMA OR SEMICOLON WOULD SPLIT THE HEADER and forge extra
+    actions, so labels are sanitised here rather than trusted: they are built
+    from CBS player names, which are remote data. URLs are accepted only when
+    they point at the league host over https - an action is a thing Jeff taps
+    on his phone, so an attacker-chosen URL here is a phishing link delivered
+    by his own tooling.
+    """
+    out = []
+    for label, url in (actions or [])[:MAX_ACTIONS]:
+        if not url.startswith(LEAGUE_URL_PREFIX):
+            continue
+        clean = "".join(ch for ch in str(label) if ch not in ",;\r\n").strip()
+        if not clean:
+            continue
+        out.append("view, %s, %s" % (clean, url))
+    return "; ".join(out) or None
+
+
+def send(topic, title, body, dry_run=False, actions=None):
     """POST `body` to the topic. Returns True if a request was actually made.
 
     Validated here, not in `topic_from_keychain`, so the guard protects every
     caller regardless of where the topic came from.
+
+    `actions` is [(label, url)] rendered as tappable buttons on the phone -
+    used to deep-link a waiver claim straight into CBS with the add already
+    staged, so Jeff can act on the digest from the notification instead of
+    getting to a terminal. Silently ignored if empty; see `_actions_header`
+    for why the URLs are restricted to the league host.
     """
     if not topic:
         raise ValueError("empty ntfy topic - refusing to post nowhere")
@@ -126,8 +163,11 @@ def send(topic, title, body, dry_run=False):
             "like the job ran correctly, which is worse than no push at all")
     if dry_run:
         return False
+    headers = {"Title": title, "Priority": "default"}
+    act = _actions_header(actions)
+    if act:
+        headers["Actions"] = act
     req = urllib.request.Request(
-        NTFY_URL % topic, data=body.encode("utf-8"),
-        headers={"Title": title, "Priority": "default"})
+        NTFY_URL % topic, data=body.encode("utf-8"), headers=headers)
     urllib.request.urlopen(req, timeout=30).read()
     return True

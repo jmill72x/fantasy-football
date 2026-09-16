@@ -43,6 +43,10 @@ DEFAULT_LEAGUE = "leagues/sffl/2026.yaml"
 # silently run against last week's page because someone forgot to) and
 # scoring an eighth lineup slot never requires a second hand-written URL
 # literal that could drift out of sync with this one.
+CLAIM_STAGE_URL = (
+    "https://stripesfantasyfootballleague.football.cbssports.com"
+    "/stats/stats-main?default_add=%s:%s")
+
 CBS_LEAGUE_BASE = "https://stripesfantasyfootballleague.football.cbssports.com"
 DEFAULT_TEAM_URL = CBS_LEAGUE_BASE + "/teams"
 # `print_rows` IS LOAD-BEARING, not a tuning knob. Without it CBS returns
@@ -1345,6 +1349,12 @@ def _cmd_alert(args):
     from sffl.cbs_roster import parse_lineup_rows
     from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
     from sffl.cbs_weekly import is_out
+    # `delta`/`best_add_drop` power the waiver block below. Imported HERE,
+    # not assumed in scope: they are locals of `_cmd_week`, and referring to
+    # them from this function is what made the first Tuesday run print
+    # "WAIVER TARGETS unavailable: NameError: name 'delta' is not defined" -
+    # the second time that exact mistake shipped (see `owner_codes`).
+    from sffl.lineup import best_add_drop, delta
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import IdentityIndex, normalize_team
     from sffl.injuries import for_roster, load as load_injuries
@@ -1377,6 +1387,8 @@ def _cmd_alert(args):
     # None, not [] - [] would assert "checked, nobody is on bye" on a run
     # that never got far enough to look.
     starters_on_bye = None
+    waiver_targets = None
+    waiver_error = None
     next_bye = None
     next_week_holes = None
     projections_age_hours = None
@@ -1490,6 +1502,7 @@ def _cmd_alert(args):
         # matters more here than shaving a few seconds off a background job.
         group_rows = []
         page_stamps = {}
+        written_paths = {}
         for group in ALERT_GROUPS:
             url = (args.projections_url
                    if group == "RB-WR-TE" and args.projections_url
@@ -1506,6 +1519,7 @@ def _cmd_alert(args):
             # The page stamps its own freshness. Read here, while the file
             # path is still in hand, because nothing downstream keeps it.
             page_stamps[group] = read_report_stamp(written[url])
+            written_paths[group] = written[url]
             if rows and not any(p.player_id for p in rows):
                 id_coverage_losses.append((group, len(rows)))
 
@@ -1727,6 +1741,64 @@ def _cmd_alert(args):
                       team=resolved[r].team)
             for r in roster_rows
             if r in resolved and not is_out(resolved[r].status)])
+
+        # WAIVER TARGETS - the whole reason the Tuesday run exists, and
+        # missing from it until 2026-09-16. The digest reasoned only about
+        # players Jeff ALREADY OWNS: it told him who was hurt and what his
+        # best lineup was, then stopped - on the one day of the week when the
+        # actionable question is "who should I ADD". `sffl week --waivers`
+        # had ranked free agents since August; nothing ever wired it here.
+        #
+        # Ranked by marginal lineup gain, not by projection, for the same
+        # reason the trade block is (see sffl.trade): a fourth receiver's
+        # points are mostly unreachable in a lineup that starts one WR/TE and
+        # three FLEX, so raw projection overvalues depth you already have.
+        # Each target carries the DROP that pays for it - the roster is
+        # capped at 13, so an add with no named release cannot be submitted.
+        if args.kind == "tuesday":
+            try:
+                my_cands = [
+                    Candidate(name=resolved[r].name, pos=resolved[r].pos,
+                              points=score_week(lg, resolved[r], curves),
+                              team=resolved[r].team)
+                    for r in roster_rows if r in resolved]
+                owned_keys = set((c.name, c.pos, c.team) for c in my_cands)
+                # One classifier for the pool, built from the page that
+                # produced most of it. `_cmd_week` keys a classifier per
+                # FILE because its pages can arrive in either row shape;
+                # here every page came from the same `capture()` in this
+                # run, so they share a shape and one classifier is honest.
+                fa_classify = _avail_classifier(
+                    written_paths["RB-WR-TE"],
+                    _load_owner_codes(DEFAULT_PROFILE))
+                free = []
+                for p in projections:
+                    if (p.name, p.pos, p.team) in owned_keys:
+                        continue
+                    if fa_classify(p.avail or "") != "available":
+                        continue      # owned by another manager, or unclear
+                    if is_out(p.status):
+                        continue      # will not play; not a claim worth making
+                    free.append(p)
+                scored = []
+                for p in free:
+                    c = Candidate(name=p.name, pos=p.pos,
+                                  points=score_week(lg, p, curves),
+                                  team=p.team)
+                    g = delta(lg, my_cands, c)
+                    if g > 0:
+                        scored.append((g, c, p))
+                scored.sort(key=lambda t: (-t[0], -t[1].points, t[1].name))
+                waiver_targets = []
+                for g, c, p in scored[:3]:
+                    drop, _net = best_add_drop(lg, my_cands, c)
+                    waiver_targets.append(
+                        (c.name, c.pos, g, drop.name if drop else None,
+                         p.player_id or ""))
+            except Exception as exc:
+                # Same posture as the trade block: a convenience on a job
+                # whose real purpose is injury news. Reported, never fatal.
+                waiver_error = "%s: %s" % (type(exc).__name__, str(exc)[:160])
 
         # EVERY rostered player, not just the eight that got slotted. All
         # thirteen were already CONSIDERED above (`roster_rows` is starters
@@ -1959,6 +2031,7 @@ def _cmd_alert(args):
                    stale_projections=stale_projections,
                    projections_age_hours=projections_age_hours,
                    trade_targets=trade_targets, trade_error=trade_error,
+                   waiver_targets=waiver_targets, waiver_error=waiver_error,
                    starters_on_bye=starters_on_bye,
                    next_week=args.week + 1, next_bye=next_bye,
                    next_week_holes=next_week_holes)
@@ -2086,8 +2159,19 @@ def _cmd_alert(args):
     delivery_error = None
     try:
         topic = topic_from_keychain()
+        # TAP-TO-CLAIM. Each waiver target gets a button that opens CBS with
+        # the add ALREADY STAGED (`?default_add=<POS>:<id>` - the same URL
+        # `sffl claim` drives), so the claim can be made from the phone
+        # instead of from a terminal. Only targets CBS gave us an id for:
+        # without one the link cannot stage anything and would dump Jeff on
+        # a generic page, which is worse than no button.
+        actions = []
+        for name, pos, _gain, _drop, pid in (waiver_targets or []):
+            if pid:
+                actions.append(("ADD %s" % name,
+                                CLAIM_STAGE_URL % (pos, pid)))
         sent = send(topic, "SFFL %s" % args.kind.title(), body,
-                    dry_run=args.dry_run)
+                    dry_run=args.dry_run, actions=actions)
         print("\n[%s]" % ("sent" if sent else "dry run - nothing sent"))
     except (RuntimeError, ValueError, OSError) as exc:
         # Caught here rather than left to propagate as a traceback: this
