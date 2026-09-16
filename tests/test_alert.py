@@ -231,8 +231,12 @@ def test_no_statsdeck_fantasy_points_can_leak_in():
 
 
 def test_an_unknown_kind_raises_rather_than_guessing():
+    # "tuesday" was the example here until it became a REAL kind on
+    # 2026-09-16 (drop/add opens Tuesday in this league). Using a live kind
+    # as the negative case is how that test would have started passing for
+    # the wrong reason.
     with pytest.raises(ValueError):
-        compose("tuesday", 2, [], LINEUP, [])
+        compose("caturday", 2, [], LINEUP, [])
 
 
 # --- current_starters / START-SIT diff -------------------------------------
@@ -915,7 +919,7 @@ def _target(name, pos, pts, gain, owner):
 
 
 def test_trade_targets_render_with_owner_and_lineup_gain():
-    msg = compose("friday", 2, [], BOARD_LINEUP, [],
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [],
                   trade_targets=[_target("Puka Nacua", "WR", 146.9, 68.5, "Team B")])
     assert "TRADE TARGETS" in msg
     assert "Puka Nacua" in msg
@@ -925,9 +929,9 @@ def test_trade_targets_render_with_owner_and_lineup_gain():
 
 def test_not_attempted_and_found_nothing_render_differently():
     # None means "we did not look"; [] means "we looked and there is nothing".
-    not_run = compose("friday", 2, [], BOARD_LINEUP, [])
+    not_run = compose("tuesday", 2, [], BOARD_LINEUP, [])
     assert "TRADE TARGETS" not in not_run
-    empty = compose("friday", 2, [], BOARD_LINEUP, [], trade_targets=[])
+    empty = compose("tuesday", 2, [], BOARD_LINEUP, [], trade_targets=[])
     assert "nobody on another roster" in empty
 
 
@@ -935,7 +939,7 @@ def test_a_failed_trade_block_says_so_rather_than_going_quiet():
     # The block is bolted onto a job whose real purpose is injury news. It
     # may fail; it may not fail SILENTLY, or a broken capture reads as a
     # week with no trade worth making.
-    msg = compose("friday", 2, [], BOARD_LINEUP, [],
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [],
                   trade_error="rest-of-season page capture failed")
     assert "TRADE TARGETS unavailable" in msg
     assert "capture failed" in msg
@@ -950,7 +954,7 @@ def test_the_trade_block_never_appears_on_sunday_by_construction():
 
 
 def test_the_trade_block_sits_above_the_lineup():
-    msg = compose("friday", 2, [], BOARD_LINEUP, [],
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [],
                   trade_targets=[_target("X", "RB", 100.0, 10.0, "T")])
     assert msg.index("TRADE TARGETS") < msg.index("BEST LINEUP")
 
@@ -1013,11 +1017,23 @@ def test_a_benched_bye_player_reads_as_bye_not_as_a_data_problem():
 # week N is four days of runway; Sunday of week N is the LAST automated
 # message before that deadline.
 
-def test_friday_lists_next_weeks_byes_in_full():
-    msg = compose("friday", 2, [], BOARD_LINEUP, [], next_week=6,
+def test_tuesday_lists_next_weeks_byes_in_full():
+    # TUESDAY, not Friday: drop/add opens Tuesday and CBS processes waivers
+    # ~2am Wednesday, so Tuesday is the only run whose claim advice can still
+    # be acted on. Friday used to carry this and told Jeff a claim had to be
+    # in "by Tuesday night" - in a message that fired after that deadline.
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [], next_week=6,
                   next_bye=[("Evan McPherson", "K"), ("Ja'Marr Chase", "WR")])
     assert "NEXT WEEK (6) ON BYE" in msg
     assert "Evan McPherson" in msg and "Ja'Marr Chase" in msg
+
+
+def test_friday_no_longer_lists_the_full_bye_shopping_list():
+    # By Friday the claim deadline has passed; the useful thing left is the
+    # hole warning, not a list to shop from.
+    msg = compose("friday", 2, [], BOARD_LINEUP, [], next_week=6,
+                  next_bye=[("Evan McPherson", "K")])
+    assert "ON BYE" not in msg
 
 
 def test_sunday_does_not_repeat_the_full_bye_list():
@@ -1049,7 +1065,7 @@ def test_the_hole_warning_outranks_the_rest_of_the_digest():
 def test_byes_that_leave_no_hole_produce_no_alarm():
     # Most bye weeks are covered by the bench. Warning about those would
     # make the warning that matters invisible.
-    msg = compose("friday", 2, [], BOARD_LINEUP, [], next_week=7,
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [], next_week=7,
                   next_bye=[("Ladd McConkey", "WR")], next_week_holes=[])
     assert "CANNOT FILL" not in msg
     assert "NEXT WEEK (7) ON BYE" in msg
@@ -1058,3 +1074,40 @@ def test_byes_that_leave_no_hole_produce_no_alarm():
 def test_no_lookahead_data_renders_nothing():
     msg = compose("friday", 2, [], BOARD_LINEUP, [])
     assert "NEXT WEEK" not in msg
+
+
+# ------------------------------------------------- the three kinds are distinct
+#
+# Drop/add opens Tuesday in this league and CBS processes waivers ~2am
+# Wednesday. Before 2026-09-16 the planning content rode on the FRIDAY run,
+# which told Jeff a claim had to be in "by Tuesday night" in a message that
+# fired after that deadline had already passed.
+
+def test_all_three_kinds_compose_and_read_differently():
+    kinds = ("tuesday", "friday", "sunday")
+    heads = {}
+    for k in kinds:
+        msg = compose(k, 2, [], BOARD_LINEUP, [])
+        heads[k] = msg.split("\n", 2)[:2]
+    assert len(set(tuple(v) for v in heads.values())) == 3, (
+        "each run must announce which one it is: %r" % heads)
+
+
+def test_only_tuesday_carries_the_claim_shopping_list():
+    # The list is only actionable while the window is open. Friday and Sunday
+    # get the hole warning instead - see test_an_uncoverable_slot... above.
+    for k in ("friday", "sunday"):
+        msg = compose(k, 2, [], BOARD_LINEUP, [], next_week=6,
+                      next_bye=[("Evan McPherson", "K")])
+        assert "ON BYE" not in msg, k
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [], next_week=6,
+                  next_bye=[("Evan McPherson", "K")])
+    assert "NEXT WEEK (6) ON BYE" in msg
+
+
+def test_tuesdays_subtitle_states_the_processing_deadline():
+    # The whole reason this run exists. If the subtitle stops saying when
+    # claims process, the run has lost its point.
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [])
+    assert "Wednesday" in msg
+    assert "Drop/add is open" in msg

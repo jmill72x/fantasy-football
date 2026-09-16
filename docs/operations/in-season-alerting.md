@@ -8,11 +8,18 @@ first time, and what each failure mode means and how to fix it.
 
 | Job | Fires | Carries |
 |---|---|---|
-| `com.sffl.alert.friday` | Friday 16:45 local | Practice participation - the actionable signal, with two days of runway to make a waiver claim before Sunday. |
+| `com.sffl.alert.tuesday` | Tuesday 16:45 local | **The claim run.** Drop/add opens Tuesday in this league and CBS processes waivers ~2am Wednesday, so this is the only digest whose claim advice can still be acted on. Carries the bye look-ahead and the trade targets. |
+| `com.sffl.alert.friday` | Friday 16:45 local | Practice participation (DNP / limited / full), which only exists after Wednesday-to-Friday practices - so Tuesday cannot carry it. A start/sit message, not a claim message. |
 | `com.sffl.alert.sunday` | Sunday 11:30 local | Official inactives, ninety minutes before the 1pm kickoff window. |
 
-Both are `launchd` **LaunchAgent**s (`ops/com.sffl.alert.friday.plist`,
-`ops/com.sffl.alert.sunday.plist`), each running `ops/run_alert.sh <friday|sunday>`.
+**Why Tuesday was added (2026-09-16).** The planning content used to ride on the
+Friday run, where it was incoherent: the bye look-ahead told Jeff "a claim has to
+be in by Tuesday night" in a message that fired on FRIDAY, after that deadline had
+passed. Friday keeps the hole warning ("you will be a man short") because that
+stays useful once the window shuts; the shopping list moved to Tuesday.
+
+All three are `launchd` **LaunchAgent**s (`ops/com.sffl.alert.<kind>.plist`), each
+running `ops/run_alert.sh <tuesday|friday|sunday>`.
 
 `StartCalendarInterval`'s `Hour`/`Minute` are the **machine's local time**. This Mac's
 local time is already Eastern, which is the league's timezone, so 16:45/11:30 fire at
@@ -70,6 +77,7 @@ silently break every delivery.
    should do automatically - see the note at the end of this section):
    ```
    cp ops/com.sffl.alert.*.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/com.sffl.alert.tuesday.plist
    launchctl load ~/Library/LaunchAgents/com.sffl.alert.friday.plist
    launchctl load ~/Library/LaunchAgents/com.sffl.alert.sunday.plist
    launchctl list | grep com.sffl

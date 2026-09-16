@@ -19,7 +19,7 @@
 # failures elsewhere without that trap.
 set -uo pipefail
 
-KIND="${1:?usage: run_alert.sh friday|sunday [--dry-run]}"
+KIND="${1:?usage: run_alert.sh tuesday|friday|sunday [--dry-run]}"
 
 # A plain scalar, not an array: `/bin/bash` on macOS is 3.2.57 (Apple ships
 # no newer bash for licensing reasons - GPLv3 - and the shebang below pins

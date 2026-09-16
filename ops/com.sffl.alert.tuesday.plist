@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.sffl.alert.tuesday</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/Users/jeff/Projects/fantasy-football/ops/run_alert.sh</string>
+		<string>tuesday</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/Users/jeff/Projects/fantasy-football/logs/alert-tuesday.err</string>
+	<key>StandardOutPath</key>
+	<string>/Users/jeff/Projects/fantasy-football/logs/alert-tuesday.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>16</integer>
+		<key>Minute</key>
+		<integer>45</integer>
+		<key>Weekday</key>
+		<integer>2</integer>
+	</dict>
+	<key>WorkingDirectory</key>
+	<string>/Users/jeff/Projects/fantasy-football</string>
+</dict>
+</plist>
