@@ -70,14 +70,20 @@ INJURIES_FIXTURE = "tests/fixtures/statsdeck_injuries.json"
 
 
 class _Sent(object):
+    actions = []
+
     """Records what `notify.send` was asked to deliver, so a test can prove
     a push was or was not attempted without one ever leaving the machine."""
 
     def __init__(self):
         self.calls = []
 
-    def __call__(self, topic, title, body, dry_run=False):
+    def __call__(self, topic, title, body, dry_run=False, actions=None):
+        # `actions` records the ntfy tap-buttons (added 2026-09-16 for
+        # tap-to-claim). Captured rather than ignored so tests can assert
+        # the deep links point where they claim to.
         self.calls.append((topic, title, body, dry_run))
+        self.actions = list(actions or [])
         return False
 
 
@@ -722,3 +728,33 @@ def test_the_alert_command_accepts_all_three_scheduled_kinds():
     assert m, "could not find --kind choices"
     declared = set(re.findall(r'"([a-z]+)"', m.group(1)))
     assert kinds <= declared, "plists exist for kinds the CLI rejects: %s" % (kinds - declared)
+
+
+def test_the_tuesday_waiver_block_never_reports_a_python_error(alert_env, capsys):
+    """The waiver block must fail on DATA, never on a name it never bound.
+
+    This is the SECOND time that exact bug shipped. The Friday trade block
+    printed "NameError: name 'owner_codes' is not defined" on its first live
+    run; two weeks later the Tuesday waiver block printed "NameError: name
+    'delta' is not defined" on ITS first live run - both because a local of
+    `_cmd_week` was referenced from `_cmd_alert`, and both times the whole
+    suite stayed green because nothing executed the block.
+
+    The fixture pool carries real free agents ("W (9/16)" rows), so this
+    reaches the ranking code rather than dying at the capture.
+    """
+    rc, out = alert_env.run(capsys, "--kind", "tuesday")
+    for wrong in ("NameError", "AttributeError", "TypeError",
+                  "UnboundLocalError", "KeyError"):
+        assert wrong not in out, (
+            "the Tuesday waiver block failed with %s - a bug in the code, "
+            "not a problem with the data:\n%s" % (wrong, out))
+
+
+def test_tuesday_actually_produces_waiver_targets_from_the_fixture(alert_env, capsys):
+    # Not just "no error" - the block must reach an answer. The fixture has
+    # free agents that beat an all-TE roster, so a silent empty result here
+    # means the ranking never ran.
+    rc, out = alert_env.run(capsys, "--kind", "tuesday")
+    assert "WAIVER TARGETS" in out
+    assert "unavailable" not in out.split("WAIVER TARGETS", 1)[1][:40]

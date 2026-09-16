@@ -491,7 +491,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             roster_board=None, week_mismatch=None, stale_projections=None,
             projections_age_hours=None, trade_targets=None, trade_error=None,
             starters_on_bye=None, next_week=None, next_bye=None,
-            next_week_holes=None):
+            next_week_holes=None, waiver_targets=None, waiver_error=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -562,6 +562,14 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     a bye from a genuinely worthless projection. Measured against the real
     week-6 page, where three of Jeff's players including his only kicker are
     out.
+
+    `waiver_targets` is [(name, pos, gain, drop_name, player_id)] for the
+    TUESDAY digest - the free agents worth claiming, each with the rostered
+    player who pays for him. This is the POINT of the Tuesday run and was
+    missing from it until 2026-09-16: the digest reasoned only about players
+    Jeff already owned, on the one day of the week when the question is who
+    to ADD. `gain` is marginal lineup points, not raw projection - see
+    `sffl.trade` for why the distinction decides whether a move is real.
 
     `next_bye` is [(name, pos)] going on bye NEXT week, and
     `next_week_holes` the lineup slots that would have NO rostered
@@ -779,6 +787,25 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
 
     # A HOLE outranks everything else here: it is the only thing in the
     # digest that cannot be fixed after kickoff. Shown on BOTH days.
+    # THE CLAIM BLOCK, above everything else on Tuesday: the waiver window
+    # is open now and shuts at ~2am, which is the only deadline in this
+    # digest that expires before the next one is sent.
+    if waiver_error:
+        lines.append("WAIVER TARGETS unavailable: %s" % waiver_error)
+        lines.append("")
+    elif waiver_targets:
+        lines.append("WAIVER TARGETS - claims process ~2am Wednesday:")
+        for name, pos, gain, drop, _pid in waiver_targets:
+            lines.append("  +%-5.2f ADD  %-20s %-5s" % (gain, name, pos))
+            lines.append("         DROP %s" % (drop or "(open roster spot)"))
+        lines.append("  +N is what he adds to YOUR optimal lineup, not his")
+        lines.append("  raw projection. DROP is the cheapest release today.")
+        lines.append("")
+    elif waiver_targets == []:
+        lines.append("WAIVER TARGETS: no free agent would improve this")
+        lines.append("  week's lineup.")
+        lines.append("")
+
     if next_week_holes:
         lines.append("!! NEXT WEEK (%s) YOU CANNOT FILL: %s"
                      % (next_week if next_week is not None else "?",

@@ -1111,3 +1111,52 @@ def test_tuesdays_subtitle_states_the_processing_deadline():
     msg = compose("tuesday", 2, [], BOARD_LINEUP, [])
     assert "Wednesday" in msg
     assert "Drop/add is open" in msg
+
+
+# ------------------------------------------------------------ waiver targets
+#
+# The POINT of the Tuesday run, and missing from it until 2026-09-16: the
+# digest reasoned only about players Jeff already owned - who was hurt, what
+# his best lineup was - on the one day of the week when the question is who
+# to ADD. `sffl week --waivers` had ranked free agents since August; nothing
+# ever wired it into the digest.
+
+def _wt(name, pos, gain, drop, pid="123"):
+    return (name, pos, gain, drop, pid)
+
+
+def test_tuesday_names_who_to_add_and_who_to_drop_for_him():
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [],
+                  waiver_targets=[_wt("Some Back", "RB", 4.25, "Rico Dowdle")])
+    assert "WAIVER TARGETS" in msg
+    assert "Some Back" in msg and "4.25" in msg
+    # the drop is not optional - the roster is capped, so an add without a
+    # named release cannot be submitted
+    assert "Rico Dowdle" in msg
+
+
+def test_the_claim_block_sits_above_the_lineup():
+    # The waiver window is the only deadline in the digest that expires
+    # before the next one is sent.
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [],
+                  waiver_targets=[_wt("Some Back", "RB", 4.25, "Rico Dowdle")])
+    assert msg.index("WAIVER TARGETS") < msg.index("BEST LINEUP")
+
+
+def test_an_open_roster_spot_says_so_rather_than_inventing_a_drop():
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [],
+                  waiver_targets=[_wt("Some Back", "RB", 4.25, None)])
+    assert "open roster spot" in msg
+
+
+def test_nothing_worth_claiming_reads_differently_from_never_looking():
+    looked = compose("tuesday", 2, [], BOARD_LINEUP, [], waiver_targets=[])
+    assert "no free agent would improve" in looked
+    never = compose("tuesday", 2, [], BOARD_LINEUP, [])
+    assert "WAIVER TARGETS" not in never
+
+
+def test_a_failed_waiver_search_is_reported_not_swallowed():
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [],
+                  waiver_error="RuntimeError: boom")
+    assert "WAIVER TARGETS unavailable" in msg
