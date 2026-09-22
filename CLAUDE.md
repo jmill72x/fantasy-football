@@ -1,8 +1,14 @@
 # fantasy-football
 
-Auction cheatsheet pipeline for the STRIPES Fantasy Football League on CBS, plus a
-read-only in-season path: `sffl week` (waivers, start/sit) and `sffl alert` (the scheduled
-Friday/Sunday phone digest — runbook at `docs/operations/in-season-alerting.md`).
+Auction cheatsheet pipeline for the STRIPES Fantasy Football League on CBS, plus an
+in-season path: `sffl week` (waivers, start/sit), `sffl trade` (rest-of-season valuation,
+read-only — it never contacts another manager), and `sffl alert` (the scheduled
+Tuesday/Friday/Sunday phone digest — runbook at `docs/operations/in-season-alerting.md`).
+
+**`sffl lineup` and `sffl claim` WRITE to the live CBS team** — they set the starting
+lineup and file waiver claims. Both are dry-run by default, require `--confirm`, and
+refuse `--confirm` when stdin is not a TTY so a scheduled job can never submit. This
+path was read-only until 2026-09-01; do not assume it still is.
 
 **Read `NEXT.md` first.** It carries the current state, what to work on next, and the
 facts you must not re-derive.
