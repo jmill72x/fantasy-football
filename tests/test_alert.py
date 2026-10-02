@@ -1187,3 +1187,32 @@ def test_empty_intel_with_hidden_items_says_both():
                    "INTEL")
     assert "nothing new" in block
     assert "2 older item(s) hidden" in block
+
+
+# ------------------------------------------------ Friday waiver targets
+#
+# Jeff, 2026-10-02: Friday had no waiver targets, "that needs to be added,
+# just like Tue". After Wednesday's run every free agent carries his own
+# clear date ("W (10/3)"), so Friday tags each row instead of borrowing
+# Tuesday's single "~2am Wednesday" deadline.
+
+def test_friday_shows_waiver_targets_with_each_players_clear_date():
+    msg = compose("friday", 2, [], BOARD_LINEUP, [], waiver_targets=[
+        ("Some Back", "RB", 3.1, "Rico Dowdle", "1", "W (10/3)")])
+    block = _block(msg, "WAIVER TARGETS")
+    assert "Some Back" in block and "Rico Dowdle" in block
+    assert "waivers, clears 10/3" in block
+    assert "2am Wednesday" not in block
+
+
+def test_a_true_free_agent_says_add_now():
+    msg = compose("friday", 2, [], BOARD_LINEUP, [], waiver_targets=[
+        ("Some Back", "RB", 3.1, "Rico Dowdle", "1", "FA")])
+    assert "free agent - add now" in msg
+
+
+def test_tuesday_keeps_its_single_deadline_and_no_per_row_tag():
+    msg = compose("tuesday", 2, [], BOARD_LINEUP, [], waiver_targets=[
+        ("Some Back", "RB", 3.1, "Rico Dowdle", "1", "W (10/3)")])
+    assert "claims process ~2am Wednesday" in msg
+    assert "clears 10/3" not in msg

@@ -1756,7 +1756,11 @@ def _cmd_alert(args):
         # three FLEX, so raw projection overvalues depth you already have.
         # Each target carries the DROP that pays for it - the roster is
         # capped at 13, so an add with no named release cannot be submitted.
-        if args.kind == "tuesday":
+        # Tuesday AND Friday (Jeff, 2026-10-02: "just like Tue"). Friday's
+        # targets mostly carry their own waiver-clear date (W (10/3)), so
+        # each one is tagged with its CBS availability token below rather
+        # than borrowing Tuesday's "claims process ~2am Wednesday" line.
+        if args.kind in ("tuesday", "friday"):
             try:
                 my_cands = [
                     Candidate(name=resolved[r].name, pos=resolved[r].pos,
@@ -1795,7 +1799,7 @@ def _cmd_alert(args):
                     drop, _net = best_add_drop(lg, my_cands, c)
                     waiver_targets.append(
                         (c.name, c.pos, g, drop.name if drop else None,
-                         p.player_id or ""))
+                         p.player_id or "", (p.avail or "").strip()))
             except Exception as exc:
                 # Same posture as the trade block: a convenience on a job
                 # whose real purpose is injury news. Reported, never fatal.
@@ -2172,7 +2176,8 @@ def _cmd_alert(args):
         # without one the link cannot stage anything and would dump Jeff on
         # a generic page, which is worse than no button.
         actions = []
-        for name, pos, _gain, _drop, pid in (waiver_targets or []):
+        for t in (waiver_targets or []):
+            name, pos, pid = t[0], t[1], t[4]
             if pid:
                 actions.append(("ADD %s" % name,
                                 CLAIM_STAGE_URL % (pos, pid)))

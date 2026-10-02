@@ -484,6 +484,24 @@ def _bench_block(roster_board, lineup_result):
     return out
 
 
+def _avail_tag(avail, kind):
+    """Short note on how/when a waiver target can actually be had.
+
+    "W (10/3)" -> "waivers, clears 10/3"; "FA" -> "free agent - add now".
+    Omitted on Tuesday, whose header already states the one deadline that
+    matters that day.
+    """
+    if kind == "tuesday" or not avail:
+        return ""
+    a = avail.strip()
+    if a.upper() == "FA":
+        return "  free agent - add now"
+    if a.upper().startswith("W"):
+        inner = a[a.find("(") + 1:a.rfind(")")] if "(" in a else ""
+        return "  waivers, clears %s" % inner if inner else "  on waivers"
+    return ""
+
+
 def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             capture_error=None, current_starters=None,
             unevaluated_starters=None, injury_error=None,
@@ -802,9 +820,18 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         lines.append("WAIVER TARGETS unavailable: %s" % waiver_error)
         lines.append("")
     elif waiver_targets:
-        lines.append("WAIVER TARGETS - claims process ~2am Wednesday:")
-        for name, pos, gain, drop, _pid in waiver_targets:
-            lines.append("  +%-5.2f ADD  %-20s %-5s" % (gain, name, pos))
+        if kind == "tuesday":
+            lines.append("WAIVER TARGETS - claims process ~2am Wednesday:")
+        else:
+            # After Wednesday's run each player carries his OWN clear date
+            # (CBS shows "W (10/3)"), so the per-row tag below is the truth
+            # and a single deadline in the header would be wrong.
+            lines.append("WAIVER TARGETS (each shows when he clears):")
+        for t in waiver_targets:
+            name, pos, gain, drop = t[0], t[1], t[2], t[3]
+            avail = t[5] if len(t) > 5 else ""
+            lines.append("  +%-5.2f ADD  %-20s %-5s%s"
+                         % (gain, name, pos, _avail_tag(avail, kind)))
             lines.append("         DROP %s" % (drop or "(open roster spot)"))
         lines.append("  +N is what he adds to YOUR optimal lineup, not his")
         lines.append("  raw projection. DROP is the cheapest release today.")
