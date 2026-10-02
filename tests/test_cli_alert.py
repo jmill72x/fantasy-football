@@ -758,3 +758,27 @@ def test_tuesday_actually_produces_waiver_targets_from_the_fixture(alert_env, ca
     rc, out = alert_env.run(capsys, "--kind", "tuesday")
     assert "WAIVER TARGETS" in out
     assert "unavailable" not in out.split("WAIVER TARGETS", 1)[1][:40]
+
+
+def test_stale_intel_is_dropped_and_fresh_intel_kept_end_to_end(alert_env, capsys):
+    """Drives the real _cmd_alert path, not just compose.
+
+    Dates are computed from today so this cannot itself go stale - the very
+    failure it guards against. The two NameErrors this file already pins
+    shipped because a new digest block was only ever tested through compose.
+    """
+    import datetime, json
+    today = datetime.date.today()
+    fresh = (today - datetime.timedelta(days=1)).isoformat()
+    old = (today - datetime.timedelta(days=20)).isoformat()
+    path = alert_env.tmp / "injuries-friday.json"
+    path.write_text(json.dumps({"report": [], "intel": [
+        {"player": "Courtland Sutton", "team": "DEN", "source": "web_digest",
+         "status": "Questionable", "notes": "FRESH NOTE", "reported_date": fresh},
+        {"player": "Courtland Sutton", "team": "DEN", "source": "web_digest",
+         "status": "Out", "notes": "STALE NOTE", "reported_date": old},
+    ]}))
+    code, out = alert_env.run(capsys, "--injuries", str(path))
+    assert "FRESH NOTE" in out
+    assert "STALE NOTE" not in out
+    assert "1 older item(s) hidden" in out

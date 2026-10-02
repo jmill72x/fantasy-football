@@ -1160,3 +1160,30 @@ def test_a_failed_waiver_search_is_reported_not_swallowed():
     msg = compose("tuesday", 2, [], BOARD_LINEUP, [],
                   waiver_error="RuntimeError: boom")
     assert "WAIVER TARGETS unavailable" in msg
+
+
+def test_hidden_stale_intel_is_said_not_silent():
+    # A hidden item must never read as a clean slate.
+    msg = compose("friday", 2, [CHASE_INTEL], LINEUP, [], stale_intel_dropped=2)
+    assert "2 older item(s) hidden" in msg
+
+
+def test_no_stale_intel_prints_no_hidden_line():
+    msg = compose("friday", 2, [CHASE_INTEL], LINEUP, [])
+    assert "hidden" not in msg
+
+
+def test_real_intel_is_never_followed_by_nothing_new():
+    # Caught by reading rendered output, not by the suite: an `if` inserted
+    # between intel's if/else stole the else, so "nothing new." printed under
+    # actual intel. Both cases pinned.
+    block = _block(compose("friday", 2, [CHASE_INTEL], LINEUP, []), "INTEL")
+    assert "Ja'Marr Chase" in block
+    assert "nothing new" not in block
+
+
+def test_empty_intel_with_hidden_items_says_both():
+    block = _block(compose("friday", 2, [], LINEUP, [], stale_intel_dropped=2),
+                   "INTEL")
+    assert "nothing new" in block
+    assert "2 older item(s) hidden" in block
