@@ -491,7 +491,8 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             roster_board=None, week_mismatch=None, stale_projections=None,
             projections_age_hours=None, trade_targets=None, trade_error=None,
             starters_on_bye=None, next_week=None, next_bye=None,
-            next_week_holes=None, waiver_targets=None, waiver_error=None):
+            next_week_holes=None, waiver_targets=None, waiver_error=None,
+            stale_intel_dropped=0):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -778,6 +779,13 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         lines.extend(_report_line(r) for r in intel)
     else:
         lines.append(no_news or "  nothing new.")
+    if stale_intel_dropped:
+        # Said, not silent: a hidden item must never read as a clean slate.
+        # Kept OUTSIDE the if/else above - it was once inserted between them,
+        # which re-attached the `else` to THIS condition and printed "nothing
+        # new." directly beneath real intel whenever nothing was hidden.
+        lines.append("  (%d older item(s) hidden - about games already played)"
+                     % stale_intel_dropped)
     lines.append("")
 
     if sidelined:

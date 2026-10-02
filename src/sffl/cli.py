@@ -1357,7 +1357,7 @@ def _cmd_alert(args):
     from sffl.lineup import best_add_drop, delta
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import IdentityIndex, normalize_team
-    from sffl.injuries import for_roster, load as load_injuries
+    from sffl.injuries import for_roster, fresh_intel, load as load_injuries
     from sffl.league import load_league
     from sffl.lineup import Candidate, best_lineup
     from sffl.notify import send, topic_from_keychain
@@ -1387,6 +1387,7 @@ def _cmd_alert(args):
     # None, not [] - [] would assert "checked, nobody is on bye" on a run
     # that never got far enough to look.
     starters_on_bye = None
+    stale_intel_dropped = 0
     waiver_targets = None
     waiver_error = None
     next_bye = None
@@ -1969,6 +1970,10 @@ def _cmd_alert(args):
     else:
         try:
             reports = for_roster(load_injuries(args.injuries), roster_names)
+            # Drop intel about games already played - see
+            # injuries.INTEL_MAX_AGE_DAYS for the Week-2-note-in-Week-4 bug.
+            reports, stale_intel_dropped = fresh_intel(
+                reports, datetime.date.today())
             injuries_age_minutes = int(
                 (datetime.datetime.now()
                  - datetime.datetime.fromtimestamp(
@@ -2033,6 +2038,7 @@ def _cmd_alert(args):
                    trade_targets=trade_targets, trade_error=trade_error,
                    waiver_targets=waiver_targets, waiver_error=waiver_error,
                    starters_on_bye=starters_on_bye,
+                   stale_intel_dropped=stale_intel_dropped,
                    next_week=args.week + 1, next_bye=next_bye,
                    next_week_holes=next_week_holes)
 

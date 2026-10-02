@@ -184,3 +184,53 @@ def test_an_official_row_with_no_status_field_at_all_stays_empty(tmp_path):
         "intel": [],
     }))
     assert load(str(p))[0].status == ""
+
+
+# ------------------------------------------------------------- intel age
+#
+# A Week 4 Friday alert told Jeff McConkey was "trending toward suiting up in
+# Week 2" and Bowers "could return in Week 3" - while Bowers sat in the
+# optimal lineup. The intel feed is a ~4-week rolling window, and for a
+# player nobody has written about lately the newest item IS the stale one.
+
+import datetime as _dt
+
+
+def _r(source, date, name="Ladd McConkey"):
+    from sffl.injuries import Report
+    return Report(name=name, team="LAC", status="Day-to-Day", practice="",
+                  reported_date=date, detail="x", source=source)
+
+
+def test_intel_older_than_a_league_week_is_dropped_and_counted():
+    from sffl.injuries import fresh_intel
+    today = _dt.date(2026, 10, 2)
+    kept, dropped = fresh_intel([_r("intel", "2026-09-15"),
+                                 _r("intel", "2026-10-01")], today)
+    assert [r.reported_date for r in kept] == ["2026-10-01"]
+    assert dropped == 1
+
+
+def test_the_boundary_is_one_league_week_inclusive():
+    from sffl.injuries import INTEL_MAX_AGE_DAYS, fresh_intel
+    today = _dt.date(2026, 10, 2)
+    edge = (today - _dt.timedelta(days=INTEL_MAX_AGE_DAYS)).isoformat()
+    past = (today - _dt.timedelta(days=INTEL_MAX_AGE_DAYS + 1)).isoformat()
+    kept, dropped = fresh_intel([_r("intel", edge), _r("intel", past)], today)
+    assert [r.reported_date for r in kept] == [edge] and dropped == 1
+
+
+def test_official_rows_are_never_aged_out():
+    # The official report is the record, and usually carries no date anyway.
+    from sffl.injuries import fresh_intel
+    kept, dropped = fresh_intel([_r("official", "2026-08-01")],
+                                _dt.date(2026, 10, 2))
+    assert len(kept) == 1 and dropped == 0
+
+
+def test_undated_or_garbled_intel_is_kept_not_silently_hidden():
+    # Unknown age is not "old". Hiding it would be a claim we cannot make.
+    from sffl.injuries import fresh_intel
+    kept, dropped = fresh_intel([_r("intel", ""), _r("intel", "soon")],
+                                _dt.date(2026, 10, 2))
+    assert len(kept) == 2 and dropped == 0

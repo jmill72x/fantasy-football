@@ -201,3 +201,48 @@ def for_roster(reports, roster_names):
         seen_names.add(key)
         out.extend(by_key.get(key, []))
     return out
+
+
+# Intel is news about the NEXT game. StatsDeck's intel feed is a rolling
+# window roughly four weeks deep (measured 2026-10-02: items dated 09-08
+# through 10-02), and for a player nobody has written about lately the
+# newest item IS the old one. Without an age limit the digest kept showing
+# it: a Week 4 Friday alert told Jeff McConkey was "trending toward suiting
+# up in Week 2" and Bowers "could return in Week 3" - while Bowers sat in
+# the optimal lineup at FLEX1. Stale intel is not merely noise; it actively
+# contradicts the lineup printed under it.
+#
+# One league week, because that is one game cycle: anything older is about
+# a game that has already been played.
+INTEL_MAX_AGE_DAYS = 7
+
+
+def fresh_intel(reports, today, max_age_days=INTEL_MAX_AGE_DAYS):
+    """(kept, n_dropped): `reports` with intel older than `max_age_days` removed.
+
+    OFFICIAL rows are never dropped - the official report is the record, and
+    CBS/nflverse rows usually carry no date to age anyway.
+
+    An intel row with NO date is KEPT. Its age is unknown, and silently
+    hiding it would be a claim this code cannot make. Every intel row in the
+    2026-10-02 payload was dated, so this is a fallback, not the common case.
+
+    `today` is passed in, never read from the clock here, so this stays as
+    testable as the rest of the module.
+    """
+    import datetime
+    kept, dropped = [], 0
+    for r in reports:
+        if r.source == "official" or not r.reported_date:
+            kept.append(r)
+            continue
+        try:
+            d = datetime.datetime.strptime(r.reported_date[:10], "%Y-%m-%d").date()
+        except ValueError:
+            kept.append(r)            # unparseable date: same as no date
+            continue
+        if (today - d).days > max_age_days:
+            dropped += 1
+        else:
+            kept.append(r)
+    return kept, dropped
