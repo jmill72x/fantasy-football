@@ -9,7 +9,7 @@ first time, and what each failure mode means and how to fix it.
 | Job | Fires | Carries |
 |---|---|---|
 | `com.sffl.alert.tuesday` | Tuesday 16:45 local | **The claim run.** Drop/add opens Tuesday in this league and CBS processes waivers ~2am Wednesday, so this is the only digest whose claim advice can still be acted on. Carries the bye look-ahead and the trade targets. |
-| `com.sffl.alert.friday` | Friday 16:45 local | Practice participation (DNP / limited / full), which only exists after Wednesday-to-Friday practices - so Tuesday cannot carry it. A start/sit message, not a claim message. |
+| `com.sffl.alert.friday` | Friday 16:45 local | Practice participation (DNP / limited / full), which only exists after Wednesday-to-Friday practices - so Tuesday cannot carry it. Also carries waiver targets (added 2026-10-02), each tagged with its own CBS clear date - after Wednesday's run players clear on different days. |
 | `com.sffl.alert.sunday` | Sunday 11:30 local | Official inactives, ninety minutes before the 1pm kickoff window. |
 
 **Why Tuesday was added (2026-09-16).** The planning content used to ride on the

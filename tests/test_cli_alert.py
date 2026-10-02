@@ -782,3 +782,20 @@ def test_stale_intel_is_dropped_and_fresh_intel_kept_end_to_end(alert_env, capsy
     assert "FRESH NOTE" in out
     assert "STALE NOTE" not in out
     assert "1 older item(s) hidden" in out
+
+
+def test_friday_produces_waiver_targets_end_to_end(alert_env, capsys):
+    # The harness default kind is Friday. Executes the real block - the two
+    # NameErrors this file pins both shipped from blocks tested only via
+    # compose.
+    rc, out = alert_env.run(capsys)
+    assert "WAIVER TARGETS" in out
+    head = out.split("WAIVER TARGETS", 1)[1][:60]
+    assert "unavailable" not in head
+    for wrong in ("NameError", "TypeError", "KeyError", "IndexError"):
+        assert wrong not in out, wrong
+
+
+def test_sunday_still_has_no_waiver_block(alert_env, capsys):
+    rc, out = alert_env.run(capsys, "--kind", "sunday")
+    assert "WAIVER TARGETS" not in out
