@@ -48,8 +48,28 @@ already false when written; verify with `git merge-base --is-ancestor 09e1b0d ma
 See the status table below and "What works today."
 
 **A sixth: in-season automation** — capture, StatsDeck injury extraction, and the
-scheduled Friday/Sunday ntfy alerts. **Also MERGED to `main` 2026-08-29, as commit
-`93314a1`.** Its runbook is `docs/operations/in-season-alerting.md`.
+scheduled ntfy alerts (Friday and Sunday at merge; a Tuesday run was added 2026-09-16).
+**Also MERGED to `main` 2026-08-29, as commit `93314a1`.** Its runbook is
+`docs/operations/in-season-alerting.md`.
+
+**What the alerts gained in September and October, all on `main`:**
+
+- **2026-09-02, byes.** Bye players are marked BYE, and one still in the lineup gets a
+  loud warning. A HOLE (a slot nobody rostered can play once next week's byes are out)
+  is warned on every run, found by re-running the optimizer rather than by counting
+  positions; the full next-week bye list rides on the planning digest.
+- **2026-09-04, capture timeout.** Since 2026-08-31 every projections page is fetched
+  with `?print_rows=9999` (CBS otherwise returns 100 rows, and no smaller value returns
+  more). The full page takes ~33 s to load, so the navigation timeout is now 90 s with
+  one retry; at 30 s the first scheduled Friday run lost 5 of 8 lineup slots.
+- **2026-09-16, the Tuesday job** (`com.sffl.alert.tuesday`, 16:45, when drop/add
+  opens). It carries the claim advice: the bye list, the top 3 trade targets (moved off
+  Friday), and waiver targets ranked by marginal lineup gain, each with the drop that
+  pays for it and an ntfy ADD button that opens CBS with the add staged.
+- **2026-10-02, Friday waiver targets and stale intel.** Friday carries waiver targets
+  too, each tagged with its own CBS clear date; Sunday has none. Intel older than 7 days
+  is hidden from the digest, with the hidden count printed; official-report rows and
+  undated intel are always kept.
 
 **A seventh, still later addition: full position coverage (TQB/K/DST) — MERGED to
 `main` 2026-08-30 as `26031e8`; the `position-coverage` branch is gone.** (This
@@ -64,7 +84,9 @@ count above and below this note was WRONG until today.** Four gitignored weekly-
 files carried the SAME real entity under two different `player_id`s, with byte-identical
 week-by-week stats under both: `data/weekly/2025/RB.csv` (TreVeyon Henderson, Kyle
 Monangai - two separate pairs), `_held_back/TQB.full.csv` (Eagles), `_held_back/
-WR.full.csv` (Jaxon Smith-Njigba), `_held_back/DST.full.csv` (Vikings, ids 1916/1918).
+WR.full.csv` (Jaxon Smith-Njigba), `_held_back/DST.full.csv` (Vikings, ids 1916/1918 -
+but 1918 is the Giants' CBS id carrying a copy of the Vikings' season, and the dedup
+keeps 1918, the wrong one; see Open questions, item 8).
 **The corrected real per-file player counts are TQB 31 (not 32), DST 21 (not 22), WR 28
 (not 29), RB 34 (not 36), TE 12 (unaffected).** The build-set total is **46 players / 777
 player-weeks** (was quoted as 48/811) and the full dataset (build set + held-back) is
@@ -170,8 +192,8 @@ the PDF/iPad path is no longer the primary artifact and no annotation app needs 
 | **Plan 3 — Excel + PDF renderers** | ✅ merged — 203 tests. `sffl render` writes both |
 | **Plan 4 — silent auction planner** | ✅ merged — 279 tests. `sffl plan`; the table is on PDF p17 |
 | **In-season core — weekly waivers & start/sit (read-only)** | ✅ **merged 2026-08-29 (`09e1b0d`)** — 409 tests at merge, three pre-merge fix waves. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop. **ALL OF THIS IS NOW DONE — see the row below** |
-| **Write path + trades** | ✅ **DONE 2026-09-01/02.** `sffl trade` (rest-of-season valuation, targets by owner, give/get evaluation, drafted proposals — never contacts a manager); `sffl lineup` (live-verified round trip on the real team, atomic commit); `sffl claim` (waiver add+drop, dry-run verified). All three: DRY RUN by default, `--confirm` to act, and `--confirm` REFUSED when stdin is not a TTY so a scheduled job can never submit. The Friday digest carries the top 3 trade targets. **`(add, drop)` pairing done 2026-08-31.** THE ONE UNPROVEN PATH: `sffl claim` has never pressed Submit — every layer beneath it is verified, but the final POST is unexercised because it ends in a real drop and Jeff declined to spend one. Add/drop IS open (CBS: "5 waiver offers remaining", "processed on 9/16") |
-| **In-season automation — capture, injury fetch, scheduled alerts** | ✅ **merged 2026-08-29 (`93314a1`)** — `sffl alert`, `ops/run_alert.sh`, two launchd LaunchAgents. Runbook: `docs/operations/in-season-alerting.md`. (ntfy/launchd delivery was listed as "deferred" on the row above until 2026-08-30; it is not — it shipped here) |
+| **Write path + trades** | ✅ **DONE 2026-09-01/02.** `sffl trade` (rest-of-season valuation, targets by owner, give/get evaluation, drafted proposals — never contacts a manager); `sffl lineup` (live-verified round trip on the real team, atomic commit); `sffl claim` (waiver add+drop, dry-run verified). All three: DRY RUN by default, `--confirm` to act, and `--confirm` REFUSED when stdin is not a TTY so a scheduled job can never submit. The Tuesday digest carries the top 3 trade targets (moved from Friday 2026-09-16). **`(add, drop)` pairing done 2026-08-31.** THE ONE UNPROVEN PATH: `sffl claim` has never pressed Submit — every layer beneath it is verified, but the final POST is unexercised because it ends in a real drop and Jeff declined to spend one. Add/drop IS open (CBS: "5 waiver offers remaining", "processed on 9/16") |
+| **In-season automation — capture, injury fetch, scheduled alerts** | ✅ **merged 2026-08-29 (`93314a1`)** — `sffl alert`, `ops/run_alert.sh`, three launchd LaunchAgents (the Tuesday one added 2026-09-16). Runbook: `docs/operations/in-season-alerting.md`. (ntfy/launchd delivery was listed as "deferred" on the row above until 2026-08-30; it is not — it shipped here) |
 | **Full position coverage — TQB/K/DST** | ✅ MERGED (`26031e8`) — 909 tests. All eight lineup slots captured and scored |
 
 Verify state in one command:
@@ -1071,6 +1093,17 @@ a small negative on a handful of players. Fix it with the 2026 rules pass, not t
    that function claimed `delta` overstated the gain; it does not. The value
    is naming the release, not correcting the number.
 
+8. **`_held_back/DST.full.csv` carries the Vikings' season twice, and the dedup keeps
+   the wrong id.** Their real CBS id is `1916`; the other 17 rows are a pasted copy
+   under `1918`, which CBS's own page says is the **Giants**. `load_weekly` keeps
+   whichever id appears first in the file, and `1918` does, so the loaded data carries
+   Vikings stats under the Giants' id. Harmless where it sits (the id only drives
+   fold-splitting), but appending real Giants rows under `1918` would put two different
+   stat lines under one id that the dedup cannot collapse - the fit/holdout leak again.
+   **Open: delete the 17 `1918` rows, pending Jeff's OK.** The file is licensed and
+   gitignored, and the sandbox blocked the edit; `data/weekly/2025/_reconstructed/
+   README.md` documents the defect.
+
 ## OUTSIDE RANKINGS — the standing rule (reaffirmed 2026-08-19)
 
 **Do not adopt an outside ranking or projection as a validating source unless it is
@@ -1100,6 +1133,19 @@ few names using an incompatible yardstick tells you nothing about the model.
 **What outside coverage IS good for: news, not numbers.** Injury, suspension and
 depth-chart items are exactly what the board cannot know — that is the `Snapshot` item on
 `Key & Intel`. Read it for events; never for values.
+
+**Firecrawl's "Alexandria" fantasy tool — passed on, 2026-10-07** (the session's verdict
+after Jeff asked for research; he did not reply). It is a points-and-rankings layer, not
+a stat-line feed: three of its six sources publish rankings only, its per-player endpoint
+hands back finished PPR/half/standard points (formats this league doesn't use), and its
+board was a week stale. Only FFToday (staff weekly projections) and StartWho (sportsbook
+props) might carry raw stat lines.
+
+**Optional, not started: FFToday directly as a second weekly source**, to flag
+low-confidence start/sit calls by how far the two sources disagree. Only worth building
+if close calls are costing points. Under the rule above it must be validated against
+real results before it touches a lineup, and its data stays gitignored like the other
+vendor extracts.
 
 ## NEXT UP — the 2026 prices are the first OUT-OF-SAMPLE test
 

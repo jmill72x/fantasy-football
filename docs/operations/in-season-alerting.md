@@ -1,6 +1,6 @@
 # In-season alerting: what it does, and what to do when it doesn't
 
-Two unattended jobs run `sffl alert` against the live CBS league site and push a digest
+Three unattended jobs run `sffl alert` against the live CBS league site and push a digest
 to Jeff's phone over ntfy. This doc is the runbook: what runs when, how to set it up the
 first time, and what each failure mode means and how to fix it.
 
@@ -128,6 +128,7 @@ setup. If it's listed, check the last exit status in that same output (a non-zer
 exit status without a queued next run can indicate the job crashed before reaching
 `sffl alert` at all - e.g. the `cd` in `run_alert.sh` failing), then read the error log:
 ```
+tail logs/alert-tuesday.err
 tail logs/alert-friday.err
 tail logs/alert-sunday.err
 ```
@@ -141,6 +142,13 @@ months. Fix:
 ```
 Log in when the browser window opens, then press Return as prompted. No further action
 needed; the next scheduled run reuses the refreshed session.
+
+**A navigation timeout is a different failure.** The message reads `timed out navigating
+to <url> after 90000ms x 2 attempt(s)`: CBS was slow, unreachable, or stuck on an
+interstitial. The timeout is 90 s with one retry on purpose. Every projections page is
+fetched with `?print_rows=9999` (otherwise CBS returns only its top 100 rows), and the
+full RB/WR/TE page takes ~33 s to load. Don't tighten it: at 30 s the first scheduled
+Friday run (2026-09-04) lost five of eight lineup slots.
 
 ## "The alert says a page was refused"
 
@@ -184,6 +192,15 @@ the fetch step was skipped entirely (`sffl alert --injuries` pointed by hand at 
 file); a *failed* fetch removes the file rather than leaving it behind. The run counts as
 degraded and exits non-zero.
 
+## "The digest says older item(s) hidden"
+
+Working as intended. StatsDeck's intel feed is a rolling window about four weeks deep, so
+for a player nobody has written about lately the newest item is an old one, about a game
+already played. Since 2026-10-02 the digest drops intel older than 7 days
+(`injuries.INTEL_MAX_AGE_DAYS`, one game cycle) and prints how many it hid, so a hidden
+item never reads as a quiet week. Official-report rows are never aged out, and undated
+intel is kept, because unknown age is not "old".
+
 ## "The alert lists players under NOT EVALUATED"
 
 Working as intended, and deliberately not phrased as advice. Players that could not be
@@ -215,6 +232,18 @@ the section:
 The four reasons are `POSITION_NOT_CAPTURED`, `PROJECTION_PAGE_FAILED`,
 `PROJECTION_MISSING` and `ROSTER_NAME_AMBIGUOUS` in `src/sffl/alert.py`, which carries the
 full rationale for keeping them distinct.
+
+## "The ADD button opened a plain player list"
+
+Each waiver target in the Tuesday and Friday digests carries an ntfy ADD button that opens
+CBS with the add already staged (`?default_add=<POS>:<id>`). Two things to know on the
+phone:
+
+- **If it lands on a plain player list, tap the button again.** You were probably not
+  logged in: CBS sent you through its login page and lost the staged add on the way. The
+  second tap goes straight through on the session you now have.
+- **The staged add sits in the collapsed TRANSACTION DETAILS bar** at the bottom of the
+  page. Tap it to open it and pick the drop.
 
 ## "The roster is wrong" (wrong manager's team)
 
