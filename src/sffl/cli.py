@@ -1335,6 +1335,7 @@ def _cmd_alert(args):
     real one with nobody on it.
     """
     import datetime
+    import http.client
     import os
 
     from sffl.alert import (POSITION_NOT_CAPTURED, PROJECTION_MISSING,
@@ -2187,16 +2188,22 @@ def _cmd_alert(args):
         topic = topic_from_keychain()
         sent = send(topic, title, body, dry_run=args.dry_run, actions=actions)
         print("\n[%s]" % ("sent" if sent else "dry run - nothing sent"))
-    except (RuntimeError, ValueError, OSError) as exc:
+    except (RuntimeError, ValueError, OSError,
+            http.client.HTTPException) as exc:
         # Caught here rather than left to propagate as a traceback: this
         # runs unattended at 4:45pm on a Friday, and a raw Python traceback
-        # in a log file is not an actionable failure, it is a puzzle.
+        # in a log file is not an actionable failure, it is a puzzle - and
+        # one escaping here would also skip the Discord post below.
         # RuntimeError is the no-Keychain-entry case (its message already
         # names the exact `security add-generic-password` fix - surfaced
         # verbatim); ValueError is an empty topic/body reaching `send`;
         # OSError is the base of `urllib.error.URLError`, a real network
-        # failure talking to ntfy.sh. All three mean the same thing to
-        # launchd's log: the alert was built correctly but not delivered.
+        # failure talking to ntfy.sh; `http.client.HTTPException` is
+        # ntfy.sh's response going wrong part-way - cut short
+        # (`IncompleteRead`) or a garbled status line (`BadStatusLine`) -
+        # which `urlopen(...).read()` can raise and which is NOT an OSError.
+        # All four mean the same thing to launchd's log: the alert was
+        # built correctly but not delivered.
         print("\n[DELIVERY FAILED] %s" % exc)
         delivery_error = exc
 
@@ -2208,9 +2215,9 @@ def _cmd_alert(args):
     # log it is the same thing: a correct alert that was not delivered.
     # RuntimeError is the poster missing, or exiting non-zero after printing
     # its own one-line reason to stderr (which names neither the URL nor the
-    # body); ValueError is a body that cannot be encoded; OSError is a
-    # poster that exists but cannot be started. Caught, like ntfy's, so the
-    # log shows a failure line rather than a traceback.
+    # body); ValueError is a blank body or one that cannot be encoded;
+    # OSError is a poster that exists but cannot be started. Caught, like
+    # ntfy's, so the log shows a failure line rather than a traceback.
     discord_error = None
     try:
         sent = send_discord(title, body, dry_run=args.dry_run,

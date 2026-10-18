@@ -54,6 +54,7 @@ a same-capture subset (see test_cbs_weekly_groups.py's module docstring),
 so the same bounds must hold here.
 """
 
+import http.client
 import json
 import os
 import shutil
@@ -517,6 +518,23 @@ def test_a_discord_failure_exits_non_zero_without_skipping_ntfy(
     assert len(alert_env.sent_calls) == 1
     assert "[dry run - nothing sent]" in out
     assert "BEST LINEUP" in out
+
+
+def test_an_incomplete_ntfy_response_still_tries_discord(
+        alert_env, capsys, monkeypatch):
+    # `urlopen(...).read()` can raise http.client errors that are NOT
+    # OSErrors - a response cut short is `IncompleteRead`. One escaping as a
+    # traceback would also skip the Discord post that comes after ntfy.
+    def truncated(*a, **k):
+        raise http.client.IncompleteRead(b"partial")
+
+    monkeypatch.setattr("sffl.notify.send", truncated)
+    code, out = alert_env.run(capsys)
+    assert code == 1
+    assert "[DELIVERY FAILED] IncompleteRead" in out
+    assert len(alert_env.discord_calls) == 1, (
+        "the ntfy failure skipped the Discord post")
+    assert "[discord dry run - nothing sent]" in out
 
 
 def test_nothing_in_this_module_can_reach_the_network(alert_env, capsys):

@@ -204,7 +204,10 @@ def send(topic, title, body, dry_run=False, actions=None):
 # passed), 2 on a refusal or a configuration problem - an unknown feed, an
 # empty or secret-shaped body, no webhook in the Keychain - and 3 when
 # Discord or the network failed. It bounds its own network and Keychain
-# calls, which is why nothing here adds a timeout of its own.
+# calls, which is why nothing here adds a timeout of its own. "Not found"
+# can also mean the poster IS there but its shebang interpreter is not:
+# exec reports ENOENT for both, so that message names the poster's path
+# either way - check its `#!` line before assuming the file is missing.
 DISCORD_POSTER = os.path.expanduser("~/Projects/jarvis/bin/discord-post")
 
 
@@ -229,12 +232,21 @@ def send_discord(title, body, dry_run=False, actions=None,
     many messages it posted, or why it would not - naming neither the
     webhook URL nor the body, and that line belongs in this run's log.
 
-    Raises RuntimeError when the poster is missing or exits non-zero,
-    carrying only its path or its exit status - NEVER THE BODY. One reason
-    the poster refuses a body is that it looks like it holds a secret, and
-    an error quoting the body would print exactly that text wherever the
-    error is shown. Any other OSError from starting the poster propagates.
+    Raises ValueError for a blank body, before the poster is run. Raises
+    RuntimeError when the poster is missing or exits non-zero, carrying
+    only its path or its exit status - NEVER THE BODY. One reason the
+    poster refuses a body is that it looks like it holds a secret, and an
+    error quoting the body would print exactly that text wherever the error
+    is shown. Any other OSError from starting the poster propagates.
     """
+    # Refused HERE, not left to the poster: the poster does refuse an empty
+    # body, but the claim links appended below make its stdin non-empty, so
+    # a blank digest would post its links alone.
+    if not body or not body.strip():
+        raise ValueError(
+            "empty alert body - refusing to post to Discord. A post with no "
+            "body looks like the job ran correctly, which is worse than no "
+            "post at all")
     argv = [poster, "--agent", "john-madden", "--title", title]
     if dry_run:
         argv.append("--dry-run")
@@ -249,7 +261,8 @@ def send_discord(title, body, dry_run=False, actions=None,
     try:
         proc = runner(argv, input=text.encode("utf-8"))
     except FileNotFoundError:
-        raise RuntimeError("jarvis discord-post not found at %s" % poster)
+        raise RuntimeError(
+            "jarvis discord-post not found at %s" % poster) from None
     if proc.returncode != 0:
         raise RuntimeError("discord-post exited %d" % proc.returncode)
     return not dry_run

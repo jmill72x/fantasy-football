@@ -1,4 +1,5 @@
 import subprocess
+import sys
 
 import pytest
 
@@ -210,6 +211,8 @@ def test_no_actions_sets_no_header_value():
 # and no test may do either.
 
 _FAKE_POSTER = "/fake/jarvis/bin/discord-post"
+_CLAIM_URL = ("https://stripesfantasyfootballleague.football.cbssports.com"
+              "/stats/stats-main?default_add=RB:1")
 
 
 class _FakeRunner(object):
@@ -251,13 +254,11 @@ def test_send_discord_drops_non_league_actions():
     # The same rule as ntfy's buttons, through the same filter: a link in
     # the alert is a thing Jeff taps, so only the league's own https pages
     # are offered. The off-site link and the plain-http one both vanish.
-    league = ("https://stripesfantasyfootballleague.football.cbssports.com"
-              "/stats/stats-main?default_add=RB:1")
     run = _FakeRunner()
     notify.send_discord(
         "SFFL Tuesday", "WAIVER TARGETS • Foo",
         actions=[("Click", "https://evil.example.com/phish"),
-                 ("ADD Foo", league),
+                 ("ADD Foo", _CLAIM_URL),
                  ("Plain", "http://stripesfantasyfootballleague.football."
                            "cbssports.com/x")],
         runner=run, poster=_FAKE_POSTER)
@@ -266,7 +267,72 @@ def test_send_discord_drops_non_league_actions():
     # pipe would encode with whatever the locale happened to be.
     assert isinstance(stdin, bytes)
     assert stdin.decode("utf-8") == (
-        "WAIVER TARGETS • Foo\n\nADD Foo: " + league)
+        "WAIVER TARGETS • Foo\n\nADD Foo: " + _CLAIM_URL)
+
+
+def test_send_discord_strips_line_breaks_from_labels():
+    # Labels are built from CBS player names - remote data. A line break in
+    # one would forge an extra line in the Discord post, reading as an
+    # instruction of its own. The poster turns a lone "\r" into a line break
+    # as well, so both are stripped.
+    run = _FakeRunner()
+    notify.send_discord("SFFL Tuesday", "body",
+                        actions=[("ADD Foo\nDROP Bar", _CLAIM_URL),
+                                 ("ADD Baz\rDROP Qux", _CLAIM_URL)],
+                        runner=run, poster=_FAKE_POSTER)
+    assert run.calls[0][1]["input"].decode("utf-8") == (
+        "body\n\nADD FooDROP Bar: %s\nADD BazDROP Qux: %s"
+        % (_CLAIM_URL, _CLAIM_URL))
+
+
+def test_send_discord_refuses_a_blank_body_even_with_links():
+    # The poster refuses an empty body itself, but the claim links make its
+    # stdin non-empty, so a blank digest would post the links alone - a post
+    # that looks like the job ran. Refused before the poster is ever run,
+    # on a dry run as well as a real one.
+    run = _FakeRunner()
+    for blank, dry_run in (("", False), ("  \n\t", True)):
+        with pytest.raises(ValueError) as exc:
+            notify.send_discord("SFFL Tuesday", blank, dry_run=dry_run,
+                                actions=[("ADD Foo", _CLAIM_URL)],
+                                runner=run, poster=_FAKE_POSTER)
+        assert "empty alert body" in str(exc.value)
+    assert run.calls == []
+
+
+class _BufferedStdout(object):
+    """Stands in for sys.stdout as launchd leaves it - a file Python
+    buffers - recording whether everything written to it was flushed."""
+
+    def __init__(self):
+        self.flushed = True
+
+    def write(self, text):
+        self.flushed = False
+        return len(text)
+
+    def flush(self):
+        self.flushed = True
+
+
+def test_send_discord_flushes_stdout_before_the_poster_runs(monkeypatch):
+    # The poster writes straight to the stdout it inherits. Under launchd
+    # that is a log file Python buffers, so without a flush first the
+    # poster's line would land in the log ahead of the digest printed
+    # before it.
+    out = _BufferedStdout()
+    monkeypatch.setattr(sys, "stdout", out)
+    print("the digest")
+    flushed_when_run = []
+
+    def runner(argv, **kwargs):
+        flushed_when_run.append(out.flushed)
+        return subprocess.CompletedProcess(argv, 0)
+
+    notify.send_discord("SFFL Tuesday", "the digest", runner=runner,
+                        poster=_FAKE_POSTER)
+    assert flushed_when_run == [True], (
+        "the poster ran with the digest still in stdout's buffer")
 
 
 def test_send_discord_error_hides_body():
@@ -287,5 +353,8 @@ def test_send_discord_error_hides_body():
     assert str(exited.value) == "discord-post exited 2"
     assert str(missing.value) == (
         "jarvis discord-post not found at %s" % _FAKE_POSTER)
+    # Raised `from None`: if it ever escapes, the log gets one traceback,
+    # not the FileNotFoundError's as well.
+    assert missing.value.__suppress_context__
     for exc in (exited, missing):
         assert "SENTINEL-BODY-7Q4" not in str(exc.value)

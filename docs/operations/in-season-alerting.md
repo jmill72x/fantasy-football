@@ -259,6 +259,17 @@ see the unlock message, the entry is fine and creating a new one would only over
 working topic. Any other failure is reported with `security`'s own message and its exit
 code, unclassified, rather than being filed under "missing entry".
 
+**Discord is a separate delivery, after the ntfy push.** Each alert also goes to
+the #john-madden feed through the Jarvis poster, `~/Projects/jarvis/bin/discord-post`,
+and neither channel's failure skips the other. A Discord failure is its own line in
+`logs/alert-<kind>.log`, `[DISCORD DELIVERY FAILED] <reason>` - usually
+`discord-post exited N`. The poster's own reason goes to `logs/alert-<kind>.err`:
+`[discord] not posted: <reason>` for a refusal or a configuration problem (exit 2, e.g.
+no webhook in the Keychain), or
+`[discord] post to #john-madden failed on message N of M: <status>` when Discord or the
+network failed (exit 3). A Discord-only failure still makes the run exit 1, even though
+the phone push went out.
+
 ## What is deliberately NOT automated
 
 The alert **recommends, it never acts**. Waiver-wire submission and lineup edits stay
