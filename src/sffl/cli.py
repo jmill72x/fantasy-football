@@ -1360,7 +1360,7 @@ def _cmd_alert(args):
     from sffl.injuries import for_roster, fresh_intel, load as load_injuries
     from sffl.league import load_league
     from sffl.lineup import Candidate, best_lineup
-    from sffl.notify import send, topic_from_keychain
+    from sffl.notify import send, send_discord, topic_from_keychain
     from sffl.pool import score_week
 
     lg = load_league(args.league)
@@ -2158,6 +2158,22 @@ def _cmd_alert(args):
 
     print(body)
 
+    # TAP-TO-CLAIM. Each waiver target gets a link - an ntfy button, a line
+    # in the Discord post - that opens CBS with the add ALREADY STAGED
+    # (`?default_add=<POS>:<id>` - the same URL `sffl claim` drives), so the
+    # claim can be made from the phone instead of from a terminal. Only
+    # targets CBS gave us an id for: without one the link cannot stage
+    # anything and would dump Jeff on a generic page, which is worse than no
+    # link. Built HERE, before either channel is tried, not inside ntfy's
+    # `try` after the topic is read: there, an ntfy Keychain failure would
+    # cost the Discord post its links too.
+    actions = []
+    for t in (waiver_targets or []):
+        name, pos, pid = t[0], t[1], t[4]
+        if pid:
+            actions.append(("ADD %s" % name, CLAIM_STAGE_URL % (pos, pid)))
+    title = "SFFL %s" % args.kind.title()
+
     # ORDERING: the topic is fetched HERE, after the digest above is already
     # composed and printed, not before capture/scoring even starts. This
     # runs unattended under launchd, so a run that produced a correct alert
@@ -2169,20 +2185,7 @@ def _cmd_alert(args):
     delivery_error = None
     try:
         topic = topic_from_keychain()
-        # TAP-TO-CLAIM. Each waiver target gets a button that opens CBS with
-        # the add ALREADY STAGED (`?default_add=<POS>:<id>` - the same URL
-        # `sffl claim` drives), so the claim can be made from the phone
-        # instead of from a terminal. Only targets CBS gave us an id for:
-        # without one the link cannot stage anything and would dump Jeff on
-        # a generic page, which is worse than no button.
-        actions = []
-        for t in (waiver_targets or []):
-            name, pos, pid = t[0], t[1], t[4]
-            if pid:
-                actions.append(("ADD %s" % name,
-                                CLAIM_STAGE_URL % (pos, pid)))
-        sent = send(topic, "SFFL %s" % args.kind.title(), body,
-                    dry_run=args.dry_run, actions=actions)
+        sent = send(topic, title, body, dry_run=args.dry_run, actions=actions)
         print("\n[%s]" % ("sent" if sent else "dry run - nothing sent"))
     except (RuntimeError, ValueError, OSError) as exc:
         # Caught here rather than left to propagate as a traceback: this
@@ -2197,6 +2200,27 @@ def _cmd_alert(args):
         print("\n[DELIVERY FAILED] %s" % exc)
         delivery_error = exc
 
+    # DISCORD, the second channel: the same alert goes to #john-madden
+    # through the Jarvis toolkit's poster, which reads that feed's webhook
+    # URL from the Keychain itself. Its own `try`, AFTER ntfy's, so neither
+    # channel's failure can skip the other - and a Discord failure makes the
+    # exit code non-zero exactly as an ntfy one does, because to launchd's
+    # log it is the same thing: a correct alert that was not delivered.
+    # RuntimeError is the poster missing, or exiting non-zero after printing
+    # its own one-line reason to stderr (which names neither the URL nor the
+    # body); ValueError is a body that cannot be encoded; OSError is a
+    # poster that exists but cannot be started. Caught, like ntfy's, so the
+    # log shows a failure line rather than a traceback.
+    discord_error = None
+    try:
+        sent = send_discord(title, body, dry_run=args.dry_run,
+                            actions=actions)
+        print("\n[%s]" % ("discord sent" if sent
+                          else "discord dry run - nothing sent"))
+    except (RuntimeError, ValueError, OSError) as exc:
+        print("\n[DISCORD DELIVERY FAILED] %s" % exc)
+        discord_error = exc
+
     # A capture failure, an all-projections failure, a DEGRADED run (the
     # injury fetch produced nothing, or produced something that is not
     # from this run, or one to three of the four position-group pages
@@ -2207,16 +2231,17 @@ def _cmd_alert(args):
     # see `residual_projection_duplicates`), or the projections failing a
     # week/freshness check - `week_mismatch`, `stale_projections`: a lineup
     # built on the wrong week's or days-old numbers is wrong in a way no
-    # other signal in this run reveals - or a delivery failure is each
-    # visible in a way launchd's log must be able to see, so each makes
-    # the exit code non-zero - but they are DIFFERENT failures (nothing
-    # produced, vs. an alert missing half its content, vs. a correct alert
-    # that could not be pushed), and the printed body above, not the exit
-    # code, is what tells them apart. A missing --injuries argument is NOT
-    # counted here: that is a deliberate invocation, not a failed step, and
-    # it is still stated in the body.
+    # other signal in this run reveals - or a delivery failure on either
+    # channel, ntfy or Discord, is each visible in a way launchd's log must
+    # be able to see, so each makes the exit code non-zero - but they are
+    # DIFFERENT failures (nothing produced, vs. an alert missing half its
+    # content, vs. a correct alert that could not be pushed), and the
+    # printed body above, not the exit code, is what tells them apart. A
+    # missing --injuries argument is NOT counted here: that is a deliberate
+    # invocation, not a failed step, and it is still stated in the body.
     return 1 if (capture_error or projections_capture_error
-                or injury_fetch_failed or delivery_error or group_failures
+                or injury_fetch_failed or delivery_error or discord_error
+                or group_failures
                 or cross_group_duplicates or id_coverage_losses
                 or residual_projection_duplicates
                 or week_mismatch or stale_projections) else 0

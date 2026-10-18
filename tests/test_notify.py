@@ -1,3 +1,5 @@
+import subprocess
+
 import pytest
 
 from sffl import notify
@@ -198,3 +200,92 @@ def test_no_actions_sets_no_header_value():
     from sffl.notify import _actions_header
     assert _actions_header(None) is None
     assert _actions_header([]) is None
+
+
+# ------------------------------------------------------------- Discord feed
+#
+# Each alert also goes to #john-madden through the Jarvis toolkit's poster.
+# Every test hands `send_discord` a fake runner and a fake poster path: the
+# real poster reads a webhook URL from the Keychain and posts to Discord,
+# and no test may do either.
+
+_FAKE_POSTER = "/fake/jarvis/bin/discord-post"
+
+
+class _FakeRunner(object):
+    """Stands in for `subprocess.run`, recording each poster invocation."""
+
+    def __init__(self, returncode=0, raises=None):
+        self.returncode = returncode
+        self.raises = raises
+        self.calls = []
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append((argv, kwargs))
+        if self.raises is not None:
+            raise self.raises
+        return subprocess.CompletedProcess(argv, self.returncode)
+
+
+def test_send_discord_dry_run_passes_flag():
+    # The poster is TOLD it is a dry run rather than skipped, so a dry run
+    # still proves it exists and accepts the body - it runs every input
+    # check, but never reads the Keychain and never sends.
+    run = _FakeRunner()
+    assert notify.send_discord("SFFL Tuesday", "body", dry_run=True,
+                               runner=run, poster=_FAKE_POSTER) is False
+    (argv, kwargs), = run.calls
+    assert argv == [_FAKE_POSTER, "--agent", "john-madden",
+                    "--title", "SFFL Tuesday", "--dry-run"]
+    # Neither stream is captured: the poster's one value-free line ("dry
+    # run: N message(s)", or why it refused) belongs in the alert's log.
+    for key in ("stdout", "stderr", "capture_output"):
+        assert key not in kwargs, key
+    # Only a real run omits the flag, and only a real run reports a post.
+    assert notify.send_discord("SFFL Tuesday", "body", runner=run,
+                               poster=_FAKE_POSTER) is True
+    assert run.calls[1][0] == argv[:-1]
+
+
+def test_send_discord_drops_non_league_actions():
+    # The same rule as ntfy's buttons, through the same filter: a link in
+    # the alert is a thing Jeff taps, so only the league's own https pages
+    # are offered. The off-site link and the plain-http one both vanish.
+    league = ("https://stripesfantasyfootballleague.football.cbssports.com"
+              "/stats/stats-main?default_add=RB:1")
+    run = _FakeRunner()
+    notify.send_discord(
+        "SFFL Tuesday", "WAIVER TARGETS • Foo",
+        actions=[("Click", "https://evil.example.com/phish"),
+                 ("ADD Foo", league),
+                 ("Plain", "http://stripesfantasyfootballleague.football."
+                           "cbssports.com/x")],
+        runner=run, poster=_FAKE_POSTER)
+    stdin = run.calls[0][1]["input"]
+    # Bytes, encoded here as UTF-8: launchd sets no LANG, so a text-mode
+    # pipe would encode with whatever the locale happened to be.
+    assert isinstance(stdin, bytes)
+    assert stdin.decode("utf-8") == (
+        "WAIVER TARGETS • Foo\n\nADD Foo: " + league)
+
+
+def test_send_discord_error_hides_body():
+    # These messages land in the alert's launchd log. One reason the poster
+    # refuses a body is that it looks like it holds a secret, so an error
+    # quoting the body would print exactly what was refused. A distinctive
+    # sentinel makes a leak impossible to miss.
+    sentinel = "SENTINEL-BODY-7Q4 leak-check"
+    with pytest.raises(RuntimeError) as exited:
+        notify.send_discord("SFFL Tuesday", sentinel,
+                            runner=_FakeRunner(returncode=2),
+                            poster=_FAKE_POSTER)
+    no_poster = _FakeRunner(raises=FileNotFoundError(
+        2, "No such file or directory", _FAKE_POSTER))
+    with pytest.raises(RuntimeError) as missing:
+        notify.send_discord("SFFL Tuesday", sentinel, runner=no_poster,
+                            poster=_FAKE_POSTER)
+    assert str(exited.value) == "discord-post exited 2"
+    assert str(missing.value) == (
+        "jarvis discord-post not found at %s" % _FAKE_POSTER)
+    for exc in (exited, missing):
+        assert "SENTINEL-BODY-7Q4" not in str(exc.value)

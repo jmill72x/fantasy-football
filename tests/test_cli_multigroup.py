@@ -297,7 +297,8 @@ class _Sent(object):
 @pytest.fixture
 def alert_env(tmp_path, monkeypatch):
     """Same stubbing discipline as test_cli_alert.py's fixture: only
-    `sffl.capture.capture` and `sffl.notify`'s two functions are stubbed.
+    `sffl.capture.capture` and `sffl.notify`'s three delivery functions are
+    stubbed - the Discord one too, so no run here starts the Jarvis poster.
     `capture()` here is called once per page (never a combined dict) -
     exactly the shape `_cmd_alert` uses so a failure on one page cannot
     prevent the other three from being attempted."""
@@ -316,6 +317,7 @@ def alert_env(tmp_path, monkeypatch):
     monkeypatch.setattr("sffl.notify.send", sent)
     monkeypatch.setattr("sffl.notify.topic_from_keychain",
                         lambda *a, **k: "stub-topic")
+    monkeypatch.setattr("sffl.notify.send_discord", lambda *a, **k: False)
 
     state = {
         "group_errors": {},
