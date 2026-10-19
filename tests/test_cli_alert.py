@@ -7,12 +7,14 @@ tests at all: the whole suite passed with the function deleted. All three
 Criticals from the final review lived in or were reachable through it.
 
 WHAT IS STUBBED, AND ONLY WHAT IS STUBBED. `sffl.capture.capture` (it
-launches a real browser and logs into CBS) and `sffl.notify`'s two functions
-(one reads the login Keychain, the other POSTs to ntfy.sh). NOTHING ELSE.
+launches a real browser and logs into CBS) and `sffl.notify`'s three
+delivery functions (one reads the login Keychain, one POSTs to ntfy.sh, one
+runs the Jarvis poster that posts to Discord). NOTHING ELSE.
 Every parser, the scorer, the optimizer and the composer run for real,
 against the committed fixtures copied into tmp_path - so these are genuine
 integration tests of everything between the two boundaries, and no test here
-can reach the network, open a browser, call StatsDeck, or send a push.
+can reach the network, open a browser, call StatsDeck, send a push, or post
+to Discord.
 
 The fixtures are COPIED rather than read in place because `_cmd_alert` reads
 file mtimes to compute the roster and injuries ages; a checked-out file's
@@ -52,6 +54,7 @@ a same-capture subset (see test_cbs_weekly_groups.py's module docstring),
 so the same bounds must hold here.
 """
 
+import http.client
 import json
 import os
 import shutil
@@ -84,6 +87,19 @@ class _Sent(object):
         # the deep links point where they claim to.
         self.calls.append((topic, title, body, dry_run))
         self.actions = list(actions or [])
+        return False
+
+
+class _DiscordSent(object):
+    """Records what `notify.send_discord` was asked to post, so a test can
+    prove a Discord post was or was not attempted without the Jarvis poster
+    ever running."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __call__(self, title, body, dry_run=False, actions=None):
+        self.calls.append((title, body, dry_run, list(actions or [])))
         return False
 
 
@@ -120,6 +136,8 @@ def alert_env(tmp_path, monkeypatch):
     monkeypatch.setattr("sffl.notify.send", sent)
     monkeypatch.setattr("sffl.notify.topic_from_keychain",
                         lambda *a, **k: "stub-topic")
+    discord = _DiscordSent()
+    monkeypatch.setattr("sffl.notify.send_discord", discord)
 
     # "roster" and each of the four `sffl.cli.ALERT_GROUPS` names are the
     # only keys `_cmd_alert` ever calls `capture()` with - one at a time.
@@ -148,6 +166,7 @@ def alert_env(tmp_path, monkeypatch):
     class _Env(object):
         tmp = tmp_path
         sent_calls = sent.calls
+        discord_calls = discord.calls
 
         def fail_capture(self, exc):
             """Every capture() call fails - nothing at all is verified."""
@@ -456,6 +475,66 @@ def test_a_delivery_failure_exits_non_zero_without_a_traceback(
     assert code == 1
     assert "[DELIVERY FAILED]" in out
     assert "BEST LINEUP" in out
+
+
+def test_cli_alert_still_tries_discord_when_ntfy_fails(
+        alert_env, capsys, monkeypatch):
+    # Two channels whose failures must stay independent. An ntfy Keychain
+    # failure must neither skip the Discord post nor strip its tap-to-claim
+    # links - those used to be built only after the ntfy topic was read.
+    def boom(*a, **k):
+        raise RuntimeError("no Keychain entry for account 'x'")
+
+    monkeypatch.setattr("sffl.notify.topic_from_keychain", boom)
+    code, out = alert_env.run(capsys, "--kind", "tuesday")
+    assert code == 1
+    assert "[DELIVERY FAILED]" in out
+    assert len(alert_env.discord_calls) == 1, (
+        "the ntfy failure skipped the Discord post")
+    title, body, dry_run, actions = alert_env.discord_calls[0]
+    assert title == "SFFL Tuesday"
+    assert "WAIVER TARGETS" in body
+    assert dry_run is True
+    assert actions, "the ntfy failure cost the Discord post its claim links"
+    for label, url in actions:
+        assert label.startswith("ADD ")
+        assert "default_add=" in url
+    assert "[discord dry run - nothing sent]" in out
+
+
+def test_a_discord_failure_exits_non_zero_without_skipping_ntfy(
+        alert_env, capsys, monkeypatch):
+    # The other direction. Discord goes second, so it cannot skip ntfy - but
+    # its failure is still a correct alert that was not delivered, which
+    # launchd's log must see in the exit code. Otherwise this run exits 0.
+    def boom(*a, **k):
+        raise RuntimeError("discord-post exited 2")
+
+    monkeypatch.setattr("sffl.notify.send_discord", boom)
+    path = _injuries_file(alert_env.tmp)
+    code, out = alert_env.run(capsys, "--injuries", str(path))
+    assert code == 1
+    assert "[DISCORD DELIVERY FAILED] discord-post exited 2" in out
+    assert len(alert_env.sent_calls) == 1
+    assert "[dry run - nothing sent]" in out
+    assert "BEST LINEUP" in out
+
+
+def test_an_incomplete_ntfy_response_still_tries_discord(
+        alert_env, capsys, monkeypatch):
+    # `urlopen(...).read()` can raise http.client errors that are NOT
+    # OSErrors - a response cut short is `IncompleteRead`. One escaping as a
+    # traceback would also skip the Discord post that comes after ntfy.
+    def truncated(*a, **k):
+        raise http.client.IncompleteRead(b"partial")
+
+    monkeypatch.setattr("sffl.notify.send", truncated)
+    code, out = alert_env.run(capsys)
+    assert code == 1
+    assert "[DELIVERY FAILED] IncompleteRead" in out
+    assert len(alert_env.discord_calls) == 1, (
+        "the ntfy failure skipped the Discord post")
+    assert "[discord dry run - nothing sent]" in out
 
 
 def test_nothing_in_this_module_can_reach_the_network(alert_env, capsys):

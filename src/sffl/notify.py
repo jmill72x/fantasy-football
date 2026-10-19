@@ -1,8 +1,8 @@
-"""Push one message to ntfy. THE ONLY MODULE THAT POSTS ANYWHERE.
+"""Push one alert to ntfy and to Discord. THE ONLY MODULE THAT POSTS ANYWHERE.
 
 The topic is a secret - anyone holding it can push to Jeff's phone - so it
 lives in the login Keychain and never in this public repo. `dry_run` is the
-seam every test uses; nothing here is exercised against the network.
+seam every ntfy test uses; nothing here is exercised against the network.
 
 `PushNotification` IS DELIBERATELY NOT USED. It requires Remote Control to be
 connected, and a launchd job at 4:45pm on a Friday cannot rely on that.
@@ -18,10 +18,21 @@ reach, so the offending topic is never echoed into the exception. The same
 rule holds for `topic_from_keychain`, which reports `security`'s own stderr
 verbatim: that stream carries diagnostics, never the stored value, which
 `security` writes only to stdout and only on success.
+
+DISCORD IS REACHED ONLY THROUGH THE JARVIS TOOLKIT'S POSTER (`DISCORD_POSTER`),
+which reads #john-madden's webhook URL from the Keychain itself. That URL is
+a secret too, and it never passes through this repo: `send_discord` hands the
+poster a title and a body, never a URL. The poster's own output names neither
+the URL nor the body, so it is left to reach the log, and the errors
+`send_discord` raises carry only an exit status or the poster's path. Its
+tests inject `runner` rather than lean on `dry_run`, because a Discord dry
+run still runs the poster.
 """
 
+import os
 import re
 import subprocess
+import sys
 import urllib.request
 
 LEAGUE_URL_PREFIX = (
@@ -112,16 +123,19 @@ def topic_from_keychain(account=KEYCHAIN_ACCOUNT):
 MAX_ACTIONS = 3
 
 
-def _actions_header(actions):
-    """ntfy `Actions` header value for [(label, url)], or None.
+def _allowed_actions(actions):
+    """[(clean_label, url)] for the actions that may be offered at all.
 
-    Format is `view, <label>, <url>` per action, semicolon-separated. A LABEL
-    CONTAINING A COMMA OR SEMICOLON WOULD SPLIT THE HEADER and forge extra
-    actions, so labels are sanitised here rather than trusted: they are built
-    from CBS player names, which are remote data. URLs are accepted only when
-    they point at the league host over https - an action is a thing Jeff taps
-    on his phone, so an attacker-chosen URL here is a phishing link delivered
-    by his own tooling.
+    ntfy's buttons and Discord's link lines both come from here, so the two
+    channels can never disagree about what is safe to tap. URLs are accepted
+    only when they point at the league host over https - an action is a
+    thing Jeff taps on his phone, so an attacker-chosen URL here is a
+    phishing link delivered by his own tooling. Labels are sanitised rather
+    than trusted, because they are built from CBS player names, which are
+    remote data: a comma or semicolon would split ntfy's header (see
+    `_actions_header`), and a line break would forge an extra line in the
+    Discord post. A label with nothing left after that is dropped, action
+    and all.
     """
     out = []
     for label, url in (actions or [])[:MAX_ACTIONS]:
@@ -130,8 +144,20 @@ def _actions_header(actions):
         clean = "".join(ch for ch in str(label) if ch not in ",;\r\n").strip()
         if not clean:
             continue
-        out.append("view, %s, %s" % (clean, url))
-    return "; ".join(out) or None
+        out.append((clean, url))
+    return out
+
+
+def _actions_header(actions):
+    """ntfy `Actions` header value for [(label, url)], or None.
+
+    Format is `view, <label>, <url>` per action, semicolon-separated. A LABEL
+    CONTAINING A COMMA OR SEMICOLON WOULD SPLIT THE HEADER and forge extra
+    actions, which is one of the reasons every action is vetted by
+    `_allowed_actions` before it gets here.
+    """
+    return "; ".join("view, %s, %s" % action
+                     for action in _allowed_actions(actions)) or None
 
 
 def send(topic, title, body, dry_run=False, actions=None):
@@ -171,3 +197,72 @@ def send(topic, title, body, dry_run=False, actions=None):
         NTFY_URL % topic, data=body.encode("utf-8"), headers=headers)
     urllib.request.urlopen(req, timeout=30).read()
     return True
+
+
+# The Jarvis toolkit's poster: `discord-post --agent <slug> [--title T]
+# [--dry-run]`, body on stdin. It exits 0 when it posted (or a dry run
+# passed), 2 on a refusal or a configuration problem - an unknown feed, an
+# empty or secret-shaped body, no webhook in the Keychain - and 3 when
+# Discord or the network failed. It bounds its own network and Keychain
+# calls, which is why nothing here adds a timeout of its own. "Not found"
+# can also mean the poster IS there but its shebang interpreter is not:
+# exec reports ENOENT for both, so that message names the poster's path
+# either way - check its `#!` line before assuming the file is missing.
+DISCORD_POSTER = os.path.expanduser("~/Projects/jarvis/bin/discord-post")
+
+
+def send_discord(title, body, dry_run=False, actions=None,
+                 runner=subprocess.run, poster=DISCORD_POSTER):
+    """Post `body` to #john-madden. Returns True if it was actually posted.
+
+    A dry run still RUNS the poster, with `--dry-run`, rather than skipping
+    it: the poster then makes the same input checks a real post does - the
+    feed, the body, the secret scan - but never reads the Keychain or sends
+    anything, so a rehearsal proves the body would be accepted. It returns
+    False.
+
+    `actions` are the [(label, url)] ntfy gets as buttons. Discord has no
+    buttons, so each becomes a `<label>: <url>` line after a blank line,
+    which Discord renders as a tappable link. They go through the same
+    `_allowed_actions` vetting, so both channels offer the same links.
+
+    THE BODY GOES ON STDIN AS UTF-8 BYTES, not text: launchd sets no LANG,
+    so a text-mode pipe would encode with whatever the locale happened to
+    be. NEITHER OUTPUT STREAM IS CAPTURED: the poster prints one line - how
+    many messages it posted, or why it would not - naming neither the
+    webhook URL nor the body, and that line belongs in this run's log.
+
+    Raises ValueError for a blank body, before the poster is run. Raises
+    RuntimeError when the poster is missing or exits non-zero, carrying
+    only its path or its exit status - NEVER THE BODY. One reason the
+    poster refuses a body is that it looks like it holds a secret, and an
+    error quoting the body would print exactly that text wherever the error
+    is shown. Any other OSError from starting the poster propagates.
+    """
+    # Refused HERE, not left to the poster: the poster does refuse an empty
+    # body, but the claim links appended below make its stdin non-empty, so
+    # a blank digest would post its links alone.
+    if not body or not body.strip():
+        raise ValueError(
+            "empty alert body - refusing to post to Discord. A post with no "
+            "body looks like the job ran correctly, which is worse than no "
+            "post at all")
+    argv = [poster, "--agent", "john-madden", "--title", title]
+    if dry_run:
+        argv.append("--dry-run")
+    text = body
+    links = _allowed_actions(actions)
+    if links:
+        text += "\n\n" + "\n".join("%s: %s" % link for link in links)
+    # Flushed first: the poster writes straight to this process's stdout,
+    # which under launchd is a log file Python buffers - unflushed, the
+    # poster's line would land in the log ahead of the digest it reports on.
+    sys.stdout.flush()
+    try:
+        proc = runner(argv, input=text.encode("utf-8"))
+    except FileNotFoundError:
+        raise RuntimeError(
+            "jarvis discord-post not found at %s" % poster) from None
+    if proc.returncode != 0:
+        raise RuntimeError("discord-post exited %d" % proc.returncode)
+    return not dry_run
