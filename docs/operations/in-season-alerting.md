@@ -113,9 +113,9 @@ exist. Both bounds are simple `min`/`max` calls in the script; there's no fallba
 if a week outside `[1, 18]` would otherwise have been computed, it's just clamped.
 
 **The date is 2026's and must be changed every season.** Nothing warns when it's stale: in
-2027 the 2026 date makes every run clamp to week 18. Before week 1, set `start` (line 57
+2027 the 2026 date makes every run clamp to week 18. Before week 1, set `start` (line 59
 of `ops/run_alert.sh`) to the Wednesday of the new season's week-1 week, and change
-`--curves` (line 84) if the curves changed. `docs/operations/preseason-runbook.md`, step
+`--curves` (line 91) if the curves changed. `docs/operations/preseason-runbook.md`, step
 13, has the whole switch-over.
 
 ## "I got no alert"
@@ -304,6 +304,44 @@ no webhook in the Keychain), or
 `[discord] post to #john-madden failed on message N of M: <status>` when Discord or the
 network failed (exit 3). A Discord-only failure still makes the run exit 1, even though
 the phone push went out.
+
+## Weekly data collection, and "COLLECT FAILED"
+
+After `sffl alert` has run (never on a dry run), `ops/run_alert.sh` runs
+`sffl collect`, which keeps this run's CBS pages before the next run overwrites
+`data/captures/`. Added 2026-10-19: Jeff's words, "yes do a fully automatic data
+download. you don't need my permission each time for that."
+
+- **What:** the pages this run refreshed (the four weekly groups, the four
+  rest-of-season pages when the run took them, the roster, the injury file), plus
+  CBS's actual results for a week (`/stats/stats-main/all:<scope>/<wk>:p/standard/stats`):
+  Tuesday takes the week just played, Friday takes it again after CBS's stat
+  corrections, Sunday takes none. A page older than the run's start is left out
+  and named in the unit's `COLLECTED.txt`.
+- **Where:** one dated folder per unit (`<date>-<kind>` or `<date>-results`) under
+  `wkNN/` in the local archive (`~/Archive/fantasy-football-data/<season>/cbs-weekly/`),
+  on the Pi (`Documents/fantasy-football-data/<season>/cbs-weekly/`) and in the
+  private data repo (`<season>/cbs/weekly/`), each with a `MANIFEST.sha256`. The data
+  repo's top-level manifest gets the new files, and the job commits only those paths
+  (`chore: automated: ...`) and pushes main. That commit and push is Jeff's standing
+  exception to C&P, for the private data repo only.
+- **Never overwrites:** a unit already at a destination is checked against its manifest
+  and left alone. Re-running the same day fills in only the missing copies.
+- **Auth:** the Pi and GitHub take `~/.ssh/id_ed25519` directly, with no agent and no
+  prompt (`BatchMode=yes`). Checked from an empty environment on 2026-10-19.
+
+**If it fails,** the digest has already gone out. The log shows `COLLECT FAILED <where>
+<unit>: <reason>`, the `.err` log says `ERROR: weekly data collection failed`, a short
+"SFFL data collection FAILED" note goes to ntfy and #john-madden, and the job exits
+non-zero. A push that failed goes out with the next run's push. To retry by hand, same
+day, from the repo root:
+```
+PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect --kind tuesday --week <N> \
+  --since <epoch the run started> --results-week <N>
+```
+`--since 0` takes whatever is in `data/captures/` now, so check the files' dates first.
+`--no-pi`, `--no-repo` and `--no-push` turn a destination off. `--backfill-weeks 1-5`
+captures past weeks' projections and results as CBS serves them today.
 
 ## What is deliberately NOT automated
 

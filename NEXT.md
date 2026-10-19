@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `918` passed
+- full_suite: `929` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -120,18 +120,33 @@ old commits are gone from it.
   `history_scan.py` over this checkout on 2026-10-19: 779 blobs, 0 commit messages
   flagged, and the 2 blob hits were the coincidence described above.
 
-**Still open: the weekly CBS collection (P1) doesn't exist yet.** The 2026-10-19 audit
-found nothing collecting 2026 data anywhere:
+**The weekly CBS collection is automatic (built 2026-10-19).** Every scheduled alert run
+ends with `sffl collect` (`ops/run_alert.sh`, after the digest; skipped on dry runs). It
+keeps that run's pages and CBS's actual results in dated units that are never
+overwritten, in the archive, on the Pi and in the data repo, then commits and pushes the
+data repo itself. That push is Jeff's standing exception to C&P (2026-10-19: "yes do a
+fully automatic data download. you don't need my permission each time for that"), for
+the private data repo and the job's own commits only. How it works and what to do when
+it fails: `docs/operations/in-season-alerting.md`, "Weekly data collection". Layout and
+the season-results plan: the preseason runbook, "Collect and archive" and "End of season".
 
-- `data/captures/` is overwritten by every run, dry runs included. `data/weekly/` holds
-  only 2025. The archive, the Pi and the data repo have no `cbs-weekly/` or
-  `2026/cbs/weekly/` at all. The one 2026 in-season record is the 2026-10-19 snapshot
-  (week 6 pages, plus a few stray August and September pages).
-- Nothing collects actual results (CBS points and game logs) for 2026. The step-6 curves
-  rebuild and the step-12 RB/FLEX test both need them, and CBS drops them when it rolls
-  the season over.
-- Whether CBS still serves weeks 1 to 5 (projections or results) is unchecked.
-- Until it's automated, follow the runbook's manual routine each Tuesday.
+- **Collected so far (2026-10-19, all three copies checksum-verified, data repo main
+  `401fa0f` on GitHub):** weeks 1 to 5 backfilled (projections and actual results; CBS
+  still served both, each week with its own opponents), and week 6's captures from that
+  day's Tuesday-kind rehearsal (`wk06/2026-10-19-tuesday`). Week 6 results come with the
+  Tuesday 10-20 run.
+- **Results** are CBS's stats pages (`/stats/stats-main/all:<scope>/<wk>:p/standard/stats`,
+  with FPTS): Tuesday takes the week just played, Friday takes it again after stat
+  corrections. They're raw pages, not yet the game-log CSVs `poc/build_calibration.py`
+  reads; converting them (and checking that they carry every scored stat) is part of the
+  step-6 work.
+- **Season results:** week 18's arrive with the Tuesday 2027-01-12 run; then a final
+  `sffl collect --backfill-weeks 1-18` sweep before CBS rolls over (runbook, "End of
+  season").
+- **Auth from launchd:** `~/.ssh/id_ed25519` has no passphrase, so the Pi and GitHub
+  accept it with no agent and no TTY. Both were checked from an empty environment.
+- Code: `src/sffl/collect.py`, `_cmd_collect` in `src/sffl/cli.py`, `tests/test_collect.py`
+  (a temp archive and a temp bare repo, a fake Pi).
 
 **2027 readiness audit (2026-10-19).** The runbook was walked as if in August 2027, with
 the 2026 files standing in for 2027:
@@ -146,12 +161,14 @@ the 2026 files standing in for 2027:
 | 7, 8. Price the board, plan | OK: `render` and `plan` run as written and print the CROSS-SEASON note. Fixed: `value` takes no `--byes` |
 | 9, 10, 11. Print, sealed bid, league data | Unchanged: needs Jeff (the two-sheet print has still never been verified) |
 | 12. Out-of-sample test, refit | Gap: the out-of-sample price scoring has no command (the 2026 result was measured ad hoc), so it isn't reproducible. `fit-market` runs and reproduces `market/2026.yaml` (only `fitted_on` differs) |
-| 13. In-season switch-over | OK: week-1 date and `--curves` at `ops/run_alert.sh` lines 57 and 84. `ops/run_alert.sh tuesday --dry-run` ran (injury fetch stubbed, see below) |
-| Collect and archive | Gap: not built (above) |
+| 13. In-season switch-over | OK: week-1 date and `--curves` at `ops/run_alert.sh` lines 59 and 91 (since the 10-19 collection step). `ops/run_alert.sh tuesday --dry-run` ran (injury fetch stubbed, see below) |
+| Collect and archive | Built 2026-10-19 after the audit (above) |
 | Removed files | OK: nothing in the runbook, the in-season runbook, README or CLAUDE.md names a file the cleanup or rewrite removed |
 
 The dry run calls `ops/fetch_injuries.sh`, which starts a `claude -p` session. An agent
-that may not start sessions can rehearse with `CLAUDE_BIN=<a stub that exits 1>`: the
+that may not start sessions can rehearse with `CLAUDE_BIN=<a stub that exits 1>` (honoured
+exactly since 2026-10-19; before that only the stub's folder went on PATH, so a stub not
+named `claude` let the real one run): the
 fetch fails as designed, the digest is marked DEGRADED and exits 1, and the rest of the
 run is real. The fetch deletes `data/captures/injuries-<kind>.json` first, so back that
 file up and put it back afterwards.

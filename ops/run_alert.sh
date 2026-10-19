@@ -1,5 +1,7 @@
 #!/bin/bash
-# launchd entry point. One argument: friday | sunday.
+# launchd entry point. One argument: tuesday | friday | sunday. After the
+# alert it runs the weekly data collection (`sffl collect`, see the block at
+# the end), except on a dry run.
 # Optional second argument (or DRY_RUN=1 in the environment): rehearse the
 # exact scheduled command with `--dry-run`, so a human can verify a run
 # without editing this file. `ops/run_alert.sh friday --dry-run` and
@@ -43,7 +45,7 @@ mkdir -p logs data/captures
 # additions), and ops/fetch_injuries.sh below shells out to the `claude` CLI.
 # Resolve it explicitly rather than depending on however this script happens
 # to be invoked. Verified on this machine with `command -v claude`.
-CLAUDE_BIN="${CLAUDE_BIN:-/Users/jeff/.local/bin/claude}"
+export CLAUDE_BIN="${CLAUDE_BIN:-/Users/jeff/.local/bin/claude}"
 export PATH="$(dirname "$CLAUDE_BIN"):$PATH"
 
 WEEK=$(./.venv/bin/python -c "
@@ -70,6 +72,11 @@ print(min(18, max(1, week)))
 # the script aborting first - the script must survive a failed fetch long
 # enough to hand the missing file off to `sffl alert`, which is what
 # actually reports it (both in the pushed body and in the exit code).
+# When this run started, in epoch seconds. `sffl collect` (below) keeps only
+# the captures written at or after it, so a page left over from an earlier
+# run - one that failed to refresh this time - is never filed under this week.
+RUN_START=$(date +%s)
+
 INJ="data/captures/injuries-${KIND}.json"
 ops/fetch_injuries.sh "$INJ" || echo "WARN: injury fetch failed; continuing" >&2
 
@@ -89,3 +96,41 @@ PYTHONPATH=src ./.venv/bin/python -m sffl.cli alert \
   # (no embedded whitespace/glob chars to mis-split), so this is safe. Do
   # not "fix" this by quoting it - quoting would pass a single empty-string
   # argument to argparse on the no-flag path instead of omitting the flag.
+ALERT_RC=$?
+
+# WEEKLY DATA COLLECTION - after the digest has gone out, so it can never stop
+# or delay it, and never on a dry run (a rehearsal's captures are not a
+# week's record). `sffl collect` copies this run's pages, plus CBS's actual
+# results for the week just played, into dated, never-overwritten folders in
+# the local archive, on the Pi and in the private data repo, then commits and
+# pushes that repo (Jeff's standing OK, 2026-10-19: that repo and these
+# commits only). Results: Tuesday takes the week just played (first final
+# numbers), Friday takes it again after CBS's stat corrections, Sunday none.
+# A failure is printed, pushed as a short note (--notify) and makes this
+# script exit non-zero, so launchd's status shows it; the alert's own
+# failure, if any, wins the exit code.
+COLLECT_RC=0
+if [ -z "$DRY_RUN_FLAG" ]; then
+    case "$KIND" in
+        tuesday) RESULTS_WEEK="$WEEK" ;;
+        friday)  RESULTS_WEEK=$((WEEK - 1)) ;;
+        *)       RESULTS_WEEK=0 ;;
+    esac
+    PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect \
+      --kind "$KIND" \
+      --week "$WEEK" \
+      --since "$RUN_START" \
+      --results-week "$RESULTS_WEEK" \
+      --notify
+    COLLECT_RC=$?
+    if [ "$COLLECT_RC" -ne 0 ]; then
+        echo "ERROR: weekly data collection failed (exit $COLLECT_RC); the alert itself already ran" >&2
+    fi
+else
+    echo "dry run: weekly data collection skipped"
+fi
+
+if [ "$ALERT_RC" -ne 0 ]; then
+    exit "$ALERT_RC"
+fi
+exit "$COLLECT_RC"

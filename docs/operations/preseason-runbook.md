@@ -72,7 +72,7 @@ recreate it with `./.venv/bin/python ops/cbs_login.py`.
 | The weekend before the auction | Fresh Draft Sharks export, final board, print, sealed bid (steps 4, 7 to 10). 2026: refresh 08-21 to 08-23, bid due 08-24, auction 08-26 |
 | The days after the auction | Prices, bids, TQB map, out-of-sample check, refit (steps 11 and 12) |
 | Before week 1 | In-season switch-over (step 13) |
-| Every week in season | Collect and archive (below) |
+| Every week in season | Collect and archive: automatic with each alert run; check it ran (below) |
 | After the last week, before CBS rolls over | Season results, then the curves decision (step 6) |
 
 ## Season-bound values
@@ -85,8 +85,8 @@ None of these warns when it's stale. Each one is a 2026 value in code or a scrip
 | Bye weeks | `DEFAULT_BYES`, `src/sffl/render/rows.py:21` | `leagues/nfl-byes-2026.yaml` | Step 3: write `leagues/nfl-byes-2027.yaml`; pass `--byes` or move the default |
 | TQB starter map | `DEFAULT_TQB_STARTERS`, `src/sffl/fit.py:25` | `identity/tqb-2025-starters.yaml` | Read only with `--prices`. Step 11 writes the 2027 map after the auction |
 | Market model | the `--market` flag | `market/2026.yaml` | Use it as is before the 2027 auction (step 7); fit `market/2027.yaml` after it (step 12) |
-| Calibration curves | `--curves` everywhere; `ops/run_alert.sh` line 84 | `calibration/2025.yaml` | Step 6 |
-| Alert week-1 date | `ops/run_alert.sh` line 57 | `datetime.date(2026, 9, 9)` | Step 13 |
+| Calibration curves | `--curves` everywhere; `ops/run_alert.sh` line 91 | `calibration/2025.yaml` | Step 6 |
+| Alert week-1 date | `ops/run_alert.sh` line 59 | `datetime.date(2026, 9, 9)` | Step 13 |
 | CBS parse season | `season=2026` default in `cbs_weekly.parse` | 2026 | CLI callers pass the league profile's season, so step 2 covers it |
 
 ## Steps, in order
@@ -174,7 +174,7 @@ Unmatched players are reported loudly. Add any fixes to `identity/aliases.yaml`.
   FOLLOW-UP RAN"). Only another season adds power here: 2025 is exhausted.
 
 If the curves change, pass the new file to every `--curves`, including
-`ops/run_alert.sh` line 84, and refit the market model on the new curves (step 12).
+`ops/run_alert.sh` line 91, and refit the market model on the new curves (step 12).
 
 ### 7. Price the board before the auction
 
@@ -255,15 +255,15 @@ curves change (`tests/test_docs_match_artifacts.py` checks it).
 
 ### 13. Before week 1: in-season switch-over
 
-- Change the week-1 date in `ops/run_alert.sh` line 57 to the Wednesday of 2027's
+- Change the week-1 date in `ops/run_alert.sh` line 59 to the Wednesday of 2027's
   week-1 week (2026 used Wednesday 2026-09-09). The week number is computed from it; see
   `docs/operations/in-season-alerting.md`, "The week number".
-- Change `--curves` on line 84 if step 6 changed the curves.
+- Change `--curves` on line 91 if step 6 changed the curves.
 - Refresh the CBS login if it has expired: `./.venv/bin/python ops/cbs_login.py`.
 - Rehearse with `ops/run_alert.sh tuesday --dry-run`. If CBS changed its pages, the
   `expect_tokens` guards refuse them loudly. A dry run still captures, so it overwrites
-  `data/captures/` and re-runs the injury fetch (a `claude -p` call): in season, archive
-  the week first (below).
+  `data/captures/` and re-runs the injury fetch (a `claude -p` call). It collects nothing
+  (below); the scheduled runs have already kept their own pages.
 - The launchd jobs and their schedules are Vision's; ask through Jarvis if they need to be
   reloaded.
 
@@ -273,40 +273,53 @@ Next season's model changes compare projections with what actually happened, so 
 week's CBS projections and every week's actual results must be kept, before CBS rolls the
 season over and drops them.
 
-**State on 2026-10-19 (audited):** this isn't automated yet (board item, P1), and nothing
-has been collected. The alert jobs save the current week's CBS pages to `data/captures/`,
-but each run, dry runs included, overwrites the last, and nothing collects actual
-results. The archive, the Pi and the data repo hold no weekly folder yet. The only 2026
-in-season pages kept are the 2026-10-19 snapshot (week 6). Whether CBS still serves
-weeks 1 to 5 is unchecked.
+**Automatic since 2026-10-19.** Each scheduled alert run ends with `sffl collect`
+(`ops/run_alert.sh`, after the digest is sent; skipped on dry runs). It copies the pages
+that run captured, and CBS's actual results for the week (Tuesday: the week just played;
+Friday: the same week again, after stat corrections), into dated units that are never
+overwritten, in all three copies, then commits and pushes the private data repo itself
+(Jeff's standing OK, 2026-10-19, for that repo and those commits only). How it works and
+what to do when it fails: `docs/operations/in-season-alerting.md`, "Weekly data
+collection".
 
-Until it's automated, after the Tuesday run each week (the pages are the eight groups in
-NEXT.md's `weekly_groups`, plus the roster and the injury files):
+| Copy | Weekly path |
+|---|---|
+| Local archive | `~/Archive/fantasy-football-data/<season>/cbs-weekly/wkNN/<unit>/` |
+| Pi | `Documents/fantasy-football-data/<season>/cbs-weekly/wkNN/<unit>/` |
+| Data repo | `<season>/cbs/weekly/wkNN/<unit>/` |
 
-```bash
-cd ~/Projects/fantasy-football
-WK=wk07                                     # the NFL week the pages are for
-D=~/Archive/fantasy-football-data/2026/cbs-weekly/$WK
-test ! -e "$D" && (umask 077 && mkdir -p "$D" && cd data/captures \
-  && cp -p RB-WR-TE.txt tqb.txt k.txt dst.txt RB-WR-TE-ROS.txt TQB-ROS.txt K-ROS.txt \
-       DST-ROS.txt roster.txt injuries-*.json "$D"/ \
-  && cd "$D" && shasum -a 256 * > MANIFEST.sha256)
-PI=$(ssh jeff@pinas 'ls -d /srv/dev-disk-by-uuid-*/Documents' | head -1)/fantasy-football-data/2026
-ssh jeff@pinas "mkdir -p -m 700 '$PI/cbs-weekly' && test ! -e '$PI/cbs-weekly/$WK'" \
-  && scp -p -r "$D" "jeff@pinas:$PI/cbs-weekly/" \
-  && ssh jeff@pinas "cd '$PI/cbs-weekly/$WK' && sha256sum -c MANIFEST.sha256"
-```
+A unit is `<date>-<kind>` (the run's own captures: the eight `weekly_groups` pages in
+NEXT.md when the run took them, the roster and the injury file), `<date>-results` (the
+four actual-stats pages, `results-<group>.txt`, with CBS's FPTS) or `<date>-backfill` (a
+past week's projections and results as CBS served them that day). Each has a
+`COLLECTED.txt` and a `MANIFEST.sha256`.
 
-The copy refuses to overwrite a week already on the Pi. Actual results (CBS points and
-the game logs, in the format of `data/weekly/2025/`) need their own collection; the
-design spec's "Method, proven" section describes how the 2025 set was gathered.
+**2026 status:** weeks 1 to 5 were backfilled on 2026-10-19 (CBS still served both their
+projections and their actual results); week 6's captures were collected the same day,
+and the scheduled runs collect from Tuesday 2026-10-20 on.
 
-Then add the same week to the private data repo, under `<season>/cbs/weekly/<wk>/`, with
-the commands in that repo's README ("Adding a week"). It never overwrites a week either.
+**Each week, check it ran:** `ls ~/Archive/fantasy-football-data/<season>/cbs-weekly/`
+shows one `wkNN/` per week, and the data repo's `git log` shows the `chore: automated`
+commits. A failure also pushes a note to the phone and #john-madden.
+
+**The results are raw CBS pages, not yet game logs.** `poc/build_calibration.py` and the
+RB/FLEX test read the game-log CSV format of `data/weekly/2025/` (built from per-player
+game logs, as the design spec's "Method, proven" describes). Converting the weekly stats
+pages into that format is part of the step-6 change, and it needs checking that the pages
+carry every stat the scoring uses before relying on them alone.
 
 ## End of season
 
-- Collect the full season's results before CBS rolls over.
+- **Season results, by the Tuesday after week 18** (2027-01-12 for 2026; the alert's week
+  is clamped at 18, so that run collects week 18's results itself). Then, before CBS
+  rolls over, take one final sweep of every week, which picks up late stat corrections,
+  and check that all 18 weeks are there:
+  ```bash
+  PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect --backfill-weeks 1-18
+  ls ~/Archive/fantasy-football-data/<season>/cbs-weekly/
+  ```
+  If it can't wait for CBS, also convert the pages to game logs (step 6) while the
+  site still serves the per-player game logs as a cross-check.
 - Archive, verify both copies, and add the season to the private data repo
   (`jmill72x/fantasy-football-data`).
 - Decide on the curves (step 6) and the RB/FLEX test (step 12) while the data is fresh.

@@ -131,6 +131,192 @@ def _projections_url(group, week):
                                        PROJECTIONS_PAGE_ROWS)
 
 
+# A week's ACTUAL results: the same stats-main page with `stats` in place of
+# `projections`, same layout plus CBS's own FPTS. Verified live 2026-10-19:
+# weeks 1 to 6 of 2026 were all served (week-1 opponents, real fantasy
+# points). CBS drops per-week data when it rolls the season over, which is
+# why `sffl collect` captures these every week instead of at season's end.
+STATS_URL_TEMPLATE = (
+    CBS_LEAGUE_BASE + "/stats/stats-main/all:%s/%d:p/standard/stats"
+    "?print_rows=%d")
+
+
+def _stats_url(group, week):
+    """The CBS weekly actual-stats URL for one position group's page."""
+    return STATS_URL_TEMPLATE % (GROUP_SCOPES[group], week,
+                                 PROJECTIONS_PAGE_ROWS)
+
+
+def _capture_keys(kind):
+    """What one `sffl alert` run of `kind` can write to data/captures."""
+    return (["roster"] + list(ALERT_GROUPS)
+            + [ROS_GROUPS[g] for g in ALERT_GROUPS]
+            + ["injuries-%s.json" % kind])
+
+
+def _parse_weeks(text):
+    """`1-5` or `1,3,4` -> [1, 2, 3, 4, 5] / [1, 3, 4]."""
+    weeks = []
+    for part in (text or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            lo, hi = part.split("-", 1)
+            weeks.extend(range(int(lo), int(hi) + 1))
+        else:
+            weeks.append(int(part))
+    for w in weeks:
+        if not 1 <= w <= 18:
+            raise ValueError("week %d is outside 1-18" % w)
+    return weeks
+
+
+def _capture_live_pages(pages, profile_dir, tmp, capture_fn):
+    """Capture each (key, url) on its own, so one bad page loses only itself.
+
+    Returns ({dest_name: path}, [(key, reason), ...]).
+    """
+    from sffl.capture import CaptureError
+
+    got, bad = {}, []
+    for key, url in pages:
+        try:
+            written = capture_fn({key: url}, tmp, profile_dir)
+            got[key + ".txt"] = written[url]
+        except (CaptureError, OSError) as exc:
+            bad.append((key, str(exc)))
+        except Exception as exc:  # a Playwright error is not a CaptureError
+            bad.append((key, "%s: %s" % (type(exc).__name__, exc)))
+    return got, bad
+
+
+def _cmd_collect(args, capture_fn=None, runner=None):
+    """Copy this week's CBS pages to the archive, the Pi and the data repo.
+
+    Run by ops/run_alert.sh AFTER the alert has been sent, never on a dry
+    run. Three kinds of unit (see sffl.collect): the run's own captures
+    (`--kind` with `--since`), a week's actual results captured live
+    (`--results-week`), and a backfill of past weeks' projections and results
+    (`--backfill-weeks`). Reads CBS, never writes it. Exit 1 if any step
+    failed; the failure is printed and, with --notify, pushed.
+    """
+    import datetime
+    import shutil
+    import subprocess
+    import tempfile
+
+    from sffl import collect as col
+
+    if capture_fn is None:
+        from sffl.capture import capture as capture_fn
+    if runner is None:
+        runner = subprocess.run
+
+    season = load_league(args.league).season
+    day = (datetime.date.fromisoformat(args.date) if args.date
+           else datetime.date.today())
+    units, steps, labels = [], [], []
+    tmp = None
+    try:
+        if args.kind:
+            if args.week is None or args.since is None:
+                raise ValueError("--kind needs --week and --since")
+            unit = col.unit_name(day, args.kind)
+            fresh, missing = col.fresh_files(args.captures,
+                                             _capture_keys(args.kind),
+                                             args.since)
+            if ("roster.txt" not in fresh
+                    or not any(g + ".txt" in fresh for g in ALERT_GROUPS)):
+                steps.append(col.Step(
+                    "capture", unit, col.SKIPPED,
+                    "this run did not refresh the roster and a projections "
+                    "page, so there is nothing of this week's to keep (the "
+                    "alert's own output says why)"))
+            else:
+                units.append((args.week, unit, fresh, col.note_text(
+                    "projections, roster and injuries captured by the %s "
+                    "alert run" % args.kind, season, args.week, unit,
+                    missing)))
+                labels.append("wk%02d %s" % (args.week, unit))
+
+        live = []
+        if args.results_week:
+            live.append((args.results_week, col.unit_name(day, "results"),
+                         [("results-" + g, _stats_url(g, args.results_week))
+                          for g in ALERT_GROUPS],
+                         "actual results (CBS stats pages, with FPTS)"))
+        for w in _parse_weeks(args.backfill_weeks):
+            live.append((w, col.unit_name(day, "backfill"),
+                         [(g, _projections_url(g, w)) for g in ALERT_GROUPS]
+                         + [("results-" + g, _stats_url(g, w))
+                            for g in ALERT_GROUPS],
+                         "backfill: the week's projections and actual "
+                         "results as CBS served them on %s" % day))
+        for w, unit, pages, what in live:
+            tmp = tmp or tempfile.mkdtemp(prefix="sffl-collect-")
+            wtmp = os.path.join(tmp, "wk%02d-%s" % (w, unit))
+            got, bad = _capture_live_pages(pages, args.profile_dir, wtmp,
+                                           capture_fn)
+            for key, why in bad:
+                steps.append(col.Step("capture", "wk%02d/%s %s" % (w, unit, key),
+                                      col.FAILED, why[:300]))
+            if got:
+                units.append((w, unit, got, col.note_text(
+                    what, season, w, unit, [k + ".txt" for k, _ in bad])))
+                labels.append("wk%02d %s" % (w, unit))
+
+        if units:
+            msg = "chore: automated: %s CBS pages, %s" % (
+                season, ", ".join(labels))
+            steps.extend(col.collect_units(
+                units, os.path.expanduser(args.archive), season,
+                repo=(None if args.no_repo
+                      else os.path.expanduser(args.data_repo)),
+                pi_host=None if args.no_pi else args.pi_host,
+                push=not args.no_push, message=msg, runner=runner))
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    for s in steps:
+        print(s.line())
+    bad = col.failed(steps)
+    if not bad:
+        print("COLLECT DONE: %d unit(s), no failures" % len(units))
+        return 0
+    print("COLLECT FAILED: %d step(s) - see the lines above. The alert itself "
+          "already ran; this is only the data copy." % len(bad))
+    if args.notify:
+        _notify_collect_failure(bad, args)
+    return 1
+
+
+def _notify_collect_failure(bad, args):
+    """Push a short failure note on the alert's own channels. Never raises."""
+    import http.client
+
+    from sffl.notify import send, send_discord, topic_from_keychain
+
+    title = "SFFL data collection FAILED"
+    lines = ["The %s digest went out; copying this week's CBS pages did not "
+             "fully work:" % (args.kind or "collect")]
+    for s in bad[:6]:
+        lines.append("- %s %s: %s" % (s.where, s.unit, s.detail[:160]))
+    lines.append("Nothing was overwritten. Rerunning the same collect "
+                 "fills in only the missing copies.")
+    body = "\n".join(lines)
+    try:
+        send(topic_from_keychain(), title, body)
+    except (RuntimeError, ValueError, OSError,
+            http.client.HTTPException) as exc:
+        print("[COLLECT NOTIFY FAILED] ntfy: %s" % exc)
+    try:
+        send_discord(title, body)
+    except (RuntimeError, ValueError, OSError) as exc:
+        print("[COLLECT NOTIFY FAILED] discord: %s" % exc)
+
+
 def _banner(title, body):
     """Print an unmissable block. Used where a run must SAY what it could not check.
 
@@ -2868,6 +3054,36 @@ def main(argv=None):
                      help="skip the Friday digest's trade block, and the "
                           "four rest-of-season page captures it needs")
     alr.set_defaults(func=_cmd_alert)
+
+    co = sub.add_parser("collect", help="copy this week's CBS pages to the "
+                                        "archive, the Pi and the private "
+                                        "data repo (reads CBS, never writes)")
+    co.add_argument("--kind", choices=["tuesday", "friday", "sunday"],
+                    help="collect what this alert run captured")
+    co.add_argument("--week", type=int, help="the week --kind's pages are for")
+    co.add_argument("--since", type=float,
+                    help="epoch seconds the run started; older captures are "
+                         "left out")
+    co.add_argument("--results-week", type=int, default=0,
+                    help="also capture this week's actual results (0: none)")
+    co.add_argument("--backfill-weeks", default="",
+                    help="capture past weeks' projections and results, "
+                         "e.g. 1-5")
+    co.add_argument("--date", help="YYYY-MM-DD for the unit names "
+                                   "(default today)")
+    co.add_argument("--league", default=DEFAULT_LEAGUE)
+    co.add_argument("--captures", default="data/captures")
+    co.add_argument("--profile-dir", default="data/browser-profile")
+    co.add_argument("--archive", default="~/Archive/fantasy-football-data")
+    co.add_argument("--data-repo", default="~/Projects/fantasy-football-data")
+    co.add_argument("--pi-host", default="jeff@pinas")
+    co.add_argument("--no-pi", action="store_true")
+    co.add_argument("--no-repo", action="store_true")
+    co.add_argument("--no-push", action="store_true")
+    co.add_argument("--notify", action="store_true",
+                    help="push a short note on the alert's channels if a "
+                         "step fails")
+    co.set_defaults(func=_cmd_collect)
 
     args = ap.parse_args(argv)
     if not getattr(args, "func", None):

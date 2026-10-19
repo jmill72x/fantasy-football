@@ -30,7 +30,12 @@ OUT="${1:?usage: fetch_injuries.sh <output.json>}"
 # not an error under `set -e`.
 rm -f "$OUT"
 
-claude -p "Call the StatsDeck get_injuries tool with no player filter. Its \
+# CLAUDE_BIN, when set, is the exact binary to run - not just a directory to
+# put on PATH. On 2026-10-19 a rehearsal passed CLAUDE_BIN=<stub named
+# claude-stub>; run_alert.sh only put the stub's folder on PATH, a bare
+# `claude` here still found the real one, and a real `claude -p` session ran.
+# Unset (the scheduled runs), this is the same `claude` run_alert.sh resolved.
+"${CLAUDE_BIN:-claude}" -p "Call the StatsDeck get_injuries tool with no player filter. Its \
 result has a data object containing two arrays: report (the official \
 injury report) and intel (dated news/intel). Write a JSON object of the \
 form {\"report\": [...], \"intel\": [...]} to ${OUT}, copying every row of \

@@ -18,6 +18,9 @@ facts you must not re-derive.
 - **This repo is public.** `data/extracts/` (licensed vendor projections) and
   `data/weekly/` (CBS stat lines) are gitignored. Never commit a file from either, and
   extend `.gitignore` before adding any new data path.
+- **`sffl collect` commits and pushes the PRIVATE data repo on its own** (Jeff's standing
+  OK, 2026-10-19), only for its own collected files and manifest lines. It never touches
+  this public repo, which still needs Jeff's OK for every commit.
 - **The scoring engine in `src/sffl/scoring.py` is validated against ~250 real CBS
   weekly observations.** Do not modify it without new ground-truth evidence.
 - **Python 3.9.6 only.** No `match` statements, no PEP 604 (`int | None`) annotations.
