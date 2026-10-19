@@ -18,19 +18,19 @@ def test_every_line_parses_and_nothing_is_silently_dropped():
 def test_stats_land_in_the_right_slots():
     r = by_name(parse(FIXTURE, group="RB-WR-TE", week=1))["Braelon Allen"]
     assert r.pos == "RB" and r.team == "NYJ"
-    assert r.stats["rush_yds"] == 36.8
+    assert r.stats["rush_yds"] == 41.1
     assert r.stats["rush_td"] == 0.4
-    assert r.stats["rec_ct"] == 0.9
-    assert r.stats["rec_yds"] == 7.9
-    assert r.stats["fum_lost"] == 0.2
+    assert r.stats["rec_ct"] == 0.7
+    assert r.stats["rec_yds"] == 8.3
+    assert r.stats["fum_lost"] == 0.3
 
 
 def test_a_non_numeric_expert_rank_does_not_shift_the_stat_block():
     """EXPERT is 'N/R' for unranked players. Counting fields from the LEFT
     would shift every stat after it by one and produce a plausible wrong line."""
     r = by_name(parse(FIXTURE, group="RB-WR-TE", week=1))["Elic Ayomanor"]
-    assert r.stats["rec_ct"] == 2.6
-    assert r.stats["rec_yds"] == 36.0
+    assert r.stats["rec_ct"] == 2.5
+    assert r.stats["rec_yds"] == 45.4
     assert r.stats["rush_yds"] == 0.0
 
 
@@ -95,12 +95,12 @@ def test_a_column_appended_after_the_stat_block_raises(tmp_path):
     tokens whenever the line has at least 11 - so appending one column to a
     real, well-formed line does NOT trip the block-width check. It just
     reads a different, still-plausible 11 columns, shifted by one: this
-    exact line, unpatched, reads rush_yds as 3.9 (was 36.8) and rec_ct as
-    7.9 (was 0.9) - the precise silent misread C1 names. expect_tokens
+    exact line, unpatched, reads rush_yds as 4.2 (was 41.1) and rec_ct as
+    8.3 (was 0.7) - the precise silent misread C1 names. expect_tokens
     catches it by checking the WHOLE post-team segment, not just the
     trailing slice."""
     bad = tmp_path / "extra_column.txt"
-    # Braelon Allen's real line (17 tokens after the team code) with one
+    # Braelon Allen's fixture line (17 tokens after the team code) with one
     # extra trailing token - simulates CBS appending a new column.
     bad.write_text(
         "W (9/16) Braelon Allen RB • NYJ @TEN 16 13 36 5 49 "
@@ -113,9 +113,9 @@ def test_a_column_removed_from_the_stat_block_raises(tmp_path):
     """The other direction: dropping the trailing column still leaves 16
     tokens, well over the 11 the trailing slice needs, so the old
     block-width check could not see this shift either - it would silently
-    read EXPERT (55) as rush_att and shift every other field by one."""
+    read EXPERT (49) as rush_att and shift every other field by one."""
     bad = tmp_path / "missing_column.txt"
-    # Braelon Allen's real line (17 tokens after the team code) with the
+    # Braelon Allen's fixture line (17 tokens after the team code) with the
     # trailing column dropped.
     bad.write_text(
         "W (9/16) Braelon Allen RB • NYJ @TEN 16 13 36 5 49 "
@@ -310,9 +310,11 @@ def test_status_reaches_the_projection_record(tmp_path):
 # Round 2 (in-season pipeline against the real captured page): the
 # Playwright `capture()` path used by the scheduled job emits TAB-delimited
 # rows, not the space-delimited text the browser-tool capture used for
-# FIXTURE above. TAB_FIXTURE is real data - the 100 player rows from a real
-# captured page, sanitized only in the fantasy TEAM NAME column (this repo
-# is public); every NFL player name and stat is untouched.
+# FIXTURE above. TAB_FIXTURE keeps a real captured page's exact layout - 100
+# player rows, tabs, trailing spaces, ids, N/R, waiver tokens, placeholder
+# team names - but since 2026-10-19 its ids and numbers are CONSTRUCTED (this
+# repo is public; see tests/fixtures/README.md). The real page is kept in the
+# private data repo.
 
 
 def test_the_real_tab_delimited_capture_all_parses_as_one_group():
@@ -330,8 +332,8 @@ def test_a_tab_row_stats_land_in_the_right_slots():
     the same guarantee."""
     r = by_name(parse(TAB_FIXTURE, group="RB-WR-TE", week=1))["Puka Nacua"]
     assert r.pos == "WR" and r.team == "LAR"
-    assert r.stats["rush_att"] == 0.9
-    assert r.stats["rec_yds"] == 100.0
+    assert r.stats["rush_att"] == 1.2
+    assert r.stats["rec_yds"] == 115.4
     assert r.stats["fum_lost"] == 0.0
 
 
@@ -402,7 +404,7 @@ def test_the_space_delimited_fixture_is_unaffected_by_the_tab_path():
     assert len(rows) == 8
     r = by_name(rows)["Braelon Allen"]
     assert r.pos == "RB" and r.team == "NYJ"
-    assert r.stats["rush_yds"] == 36.8
+    assert r.stats["rush_yds"] == 41.1
 
 
 # --- Task 3b: an optional leading "id=<digits>\t" prefix -------------------
@@ -410,12 +412,12 @@ def test_the_space_delimited_fixture_is_unaffected_by_the_tab_path():
 def test_a_leading_id_prefix_lands_on_player_id(tmp_path):
     page = tmp_path / "tab_id.txt"
     stats = "\t".join(["1"] * 16)
-    page.write_text("id=2966320\t\tTeam I...\tJa'Marr Chase WR • CIN\tTB\t%s\n"
+    page.write_text("id=9845591\t\tTeam I...\tJa'Marr Chase WR • CIN\tTB\t%s\n"
                     % stats)
     rows = parse(str(page), group="RB-WR-TE", week=1)
     assert len(rows) == 1
     assert rows[0].name == "Ja'Marr Chase"
-    assert rows[0].player_id == "2966320"
+    assert rows[0].player_id == "9845591"
 
 
 def test_a_row_with_no_id_prefix_falls_back_to_the_empty_string(tmp_path):
@@ -471,18 +473,19 @@ def test_an_id_prefix_does_not_hide_a_real_column_shift(tmp_path):
     assert "expected 17" in str(exc.value)
 
 
-def test_the_real_tab_fixture_carries_real_ids_on_nearly_every_row():
-    """This fixture was regenerated from a real live capture (2026-08-30,
-    Task 3b) - 99 of its 100 rows now carry a genuine CBS `player_id`. The
-    one holdout (Michael Wilson, ARI - no longer on the live page as of
-    this regeneration, most likely normal roster churn) exercises the
-    documented FALLBACK path naturally, on real data, rather than only in a
-    hand-constructed test - both paths matter and both must keep parsing."""
+def test_the_tab_fixture_carries_ids_on_nearly_every_row():
+    """This fixture's layout comes from a real live capture (2026-08-30,
+    Task 3b), where 99 of its 100 rows carried a CBS `player_id`; since
+    2026-10-19 the ids themselves are constructed, the shape is not. The one
+    holdout (Michael Wilson, ARI - no longer on the live page at that
+    capture, most likely normal roster churn) exercises the documented
+    FALLBACK path in the captured layout, not only in a hand-built one-line
+    test - both paths matter and both must keep parsing."""
     rows = parse(TAB_FIXTURE, group="RB-WR-TE", week=1)
     assert len(rows) == 100
     by_name = dict((r.name, r) for r in rows)
-    assert by_name["Ja'Marr Chase"].player_id == "2966320"
-    assert by_name["Puka Nacua"].player_id == "3121687"
+    assert by_name["Ja'Marr Chase"].player_id == "9845591"
+    assert by_name["Puka Nacua"].player_id == "9477011"
     assert by_name["Michael Wilson"].player_id == ""
     with_id = [r for r in rows if r.player_id]
     assert len(with_id) == 99

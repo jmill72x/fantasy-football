@@ -5,10 +5,16 @@ across eight hand-picked low-projection lines, which is not evidence of a
 general improvement - those were chosen because band edges bite hardest there.
 This measures a whole saved page.
 
-    PYTHONPATH=src ./.venv/bin/python poc/measure_weekly_calibration.py \
-        tests/fixtures/cbs_weekly_rbwrte.txt
+    PYTHONPATH=src ./.venv/bin/python poc/measure_weekly_calibration.py [PAGE]
+
+With no PAGE it reads the REAL 8-row week-1 page, which is kept in the private
+data repo (REAL_PAGE below), not in this public repo. The tracked
+tests/fixtures/cbs_weekly_rbwrte.txt has the same layout and the same league
+scores, but its stat lines are constructed (2026-10-19), so the calibrated
+column it produces is illustrative only and must not be quoted as a result.
 """
 
+import os
 import sys
 
 from sffl.calibrate import load_curves
@@ -41,6 +47,20 @@ def main(path):
           "\n  or waiver decision is whether it changes the ORDER of two players.")
 
 
+REAL_PAGE = os.path.expanduser(
+    "~/Projects/fantasy-football-data/2026/cbs/snapshot-2026-10-19/"
+    "test-fixtures/cbs_weekly_rbwrte.txt")
+FIXTURE = "tests/fixtures/cbs_weekly_rbwrte.txt"
+
+
 if __name__ == "__main__":
-    main(sys.argv[1] if len(sys.argv) > 1
-         else "tests/fixtures/cbs_weekly_rbwrte.txt")
+    if len(sys.argv) > 1:
+        page = sys.argv[1]
+    elif os.path.exists(REAL_PAGE):
+        page = REAL_PAGE
+    else:
+        page = FIXTURE
+        print("NOTE: the private data repo is not here, so this reads the "
+              "CONSTRUCTED fixture - its calibrated figures are illustrative, "
+              "not a measurement.\n")
+    main(page)

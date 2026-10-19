@@ -55,8 +55,8 @@ def test_footballguys_lowercase_td_folds_to_dst_not_a_typo():
 # --- Task 3b: resolve_key, the id-first join with player_key as fallback --
 
 def test_resolve_key_uses_the_id_when_one_is_present():
-    key = resolve_key("2966320", "Ja'Marr Chase", "CIN", "WR")
-    assert key == "id:2966320"
+    key = resolve_key("9845591", "Ja'Marr Chase", "CIN", "WR")
+    assert key == "id:9845591"
 
 
 def test_resolve_key_falls_back_to_player_key_when_there_is_no_id():
@@ -94,8 +94,8 @@ def test_resolve_key_distinguishes_same_name_team_position_by_id_alone():
 
 def test_identity_index_finds_by_id():
     idx = IdentityIndex()
-    idx.add("2966320", "Ja'Marr Chase", "CIN", "WR", "chase-row")
-    assert idx.get("2966320", "Ja'Marr Chase", "CIN", "WR") == "chase-row"
+    idx.add("9845591", "Ja'Marr Chase", "CIN", "WR", "chase-row")
+    assert idx.get("9845591", "Ja'Marr Chase", "CIN", "WR") == "chase-row"
 
 
 def test_identity_index_finds_by_composite_when_neither_side_has_an_id():
@@ -115,7 +115,7 @@ def test_identity_index_falls_back_to_composite_when_the_lookup_id_misses():
     idx.add("", "Ja'Marr Chase", "CIN", "WR", "chase-row")  # no id stored
     # Looked up WITH an id the stored row does not have (asymmetric loss):
     # must still find it via composite, not return None.
-    assert idx.get("2966320", "Ja'Marr Chase", "CIN", "WR") == "chase-row"
+    assert idx.get("9845591", "Ja'Marr Chase", "CIN", "WR") == "chase-row"
 
 
 def test_identity_index_finds_by_composite_when_the_stored_row_has_an_id_too():
@@ -123,7 +123,7 @@ def test_identity_index_finds_by_composite_when_the_stored_row_has_an_id_too():
     both), but the lookup itself carries none. Every id-bearing row must
     ALSO be reachable via its own composite key."""
     idx = IdentityIndex()
-    idx.add("2966320", "Ja'Marr Chase", "CIN", "WR", "chase-row")
+    idx.add("9845591", "Ja'Marr Chase", "CIN", "WR", "chase-row")
     assert idx.get("", "Ja'Marr Chase", "CIN", "WR") == "chase-row"
 
 

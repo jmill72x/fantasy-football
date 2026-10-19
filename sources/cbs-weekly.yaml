@@ -35,12 +35,12 @@ groups:
   # Verified against a real 2026-08-30 capture (data/captures/tqb.txt): the
   # 11-column trailing stat block is PASSING (ATT COMP YDS TD INT), RUSHING
   # (ATT YDS AVG TD), FUMBLES (LOST), FPTS - in exactly this order, matching
-  # the map below field for field. Cross-check: this row's pass_yds (265.1),
-  # pass_td (2.3), pass_int (0.7) plugged into the league's own bands/points
-  # plus rush_yds (35, below the 50-yard floor) and rush_td (0.2) totals
-  # ~18.4 points, against the page's own FPTS of 18.45 - close enough (CBS's
-  # own FPTS uses a scoring config we don't control) to confirm the columns
-  # are aligned, not just plausible.
+  # the map below field for field. Cross-check: one real row's mapped
+  # passing and rushing stats, plugged into the league's own bands/points,
+  # totalled within 0.05 of the page's own FPTS - close enough (CBS's own
+  # FPTS uses a scoring config we don't control) to confirm the columns are
+  # aligned, not just plausible. (Real rows stay in the private data repo;
+  # tests/test_cbs_weekly_groups.py repeats the check on a constructed row.)
   #
   # pass_att, rush_att and fum_lost are carried but not in scoring.STAT_KEYS
   # (not scored by this league) - same convention as RB-WR-TE's rush_att/tgt.
@@ -73,8 +73,8 @@ groups:
   # average), so the AVG/TOTAL pair for each of yards-against and
   # points-against is redundant here - TOTAL is kept, AVG is discarded, for
   # consistency with how every other group prefers the non-averaged column.
-  # Cross-check: def_ya lands in the hundreds (248) and def_pa in the tens
-  # (19.6) on the sample row, as expected.
+  # Cross-check: def_ya lands in the hundreds and def_pa in the tens on the
+  # real capture's rows, as expected.
   DST:
     stats: [def_sack, def_fum_rec, def_int, _, def_td, def_safety,
             _, def_ya, _, def_pa, _]
@@ -126,9 +126,9 @@ groups:
   #
   # Verified column order against the real capture: TOTAL (FG ATT), 1-19
   # (FG ATT), 20-29 (FG ATT), 30-39 (FG ATT), 40-49 (FG ATT), 50+ (FG ATT),
-  # XP ATT, FPTS. Cross-check: the five distance bands' FG-made values sum
-  # to ~TOTAL FG (0.0+0.5+0.7+0.7+0.3 = 2.2 against a stated total of 2.1 -
-  # rounding), confirming the pairs are aligned.
+  # XP ATT, FPTS. Cross-check: on the real capture the five distance bands'
+  # FG-made values summed to within 0.1 of TOTAL FG (rounding), confirming
+  # the pairs are aligned.
   K:
     stats: [_, _, fg_u30, fg_att_u50, fg_u30, fg_att_u50, fg_30_39, fg_att_u50,
             fg_40_49, fg_att_u50, fg_50_59, _, xp_made, _, _]
@@ -151,7 +151,7 @@ groups:
   # changed. Verified on Jahmyr Gibbs's real ROS row (2026-09-01): every
   # mapped stat landed in its own column, then the last two were both
   # ignored - and the last divided by 17 games equalled the one before it,
-  # confirms those last two columns are FPTS/G and FPTS as claimed.
+  # which is what confirms those two columns are FPTS/G and FPTS as claimed.
   RB-WR-TE-ROS:
     stats: [rush_att, rush_yds, _, rush_td, tgt, rec_ct, rec_yds, _, rec_td,
             fum_lost, _, _]

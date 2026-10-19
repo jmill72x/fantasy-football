@@ -791,12 +791,14 @@ positional mapping.
 - [ ] **Step 1: Create the fixture**
 
 Create `tests/fixtures/draftsharks_sample.csv` — a hand-written excerpt with the
-real header shape and four rows, one per position family:
+real header shape and four rows, one per position family. (The numbers are invented: the
+export is licensed, so no real projection belongs in this public repo. The rows below
+match today's fixture.)
 
 ```csv
 Rank,Team,Player,"Fantasy Position",Games,"3D Proj",Total,Att.,Comp,YDs,TDs,Int,Total,YDs,TDs,Total,Rec,YDs,TDs,Total,"PR YDs","KR YDs",TDs,Total,XPs,"FGs < 30",30-39,40-49,50-59,60+,Total,"Opp Pts","Opp Yds",Sacks,INTs,"Fum Rec",TDs,Total,Solo,Assists,Sacks,"Pass Defended",Ints,"Forced Fumble","Fum Rec",TDs,"3D Value"
 1,BUF,Josh Allen,QB,17,,,,300.0,3500.0,22.0,8.0,,400.0,5.0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
-1,BUF,Josh Allen,QB,17,,,,300.0,3500.0,22.0,8.0,,400.0,5.0,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,,
+2,DET,Jahmyr Gibbs,RB,17,,,,,,,,,1200.0,10.0,,70.0,550.0,3.0,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 3,CIN,Ja'Marr Chase,WR,17,,,,,,,,,,,,100.0,1400.0,10.0,,,,,,,,,,,,,,,,,,,,,,,,,,,,
 4,PHI,Eagles,DEF,17,,,,,,,,,,,,,,,,,,,,,,,,,,,280.0,4600.0,35.0,11.0,7.0,2.0,,,,,,,,,,,
 ```

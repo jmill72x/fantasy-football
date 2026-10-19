@@ -53,8 +53,40 @@ the same day from the archive above (manifest verified first), organised by seas
 source and week, with its own `MANIFEST.sha256` and a verified `git bundle --all` of this
 repo (`bundles/fantasy-football-2026-10-19.bundle`, main at `d378a31`), taken before the
 history rewrite. Its README says how to add each week. The Pi stays the fallback. Its
-first commit was staged, not pushed, on 2026-10-19: check `git -C
-~/Projects/fantasy-football-data log origin/main` before relying on GitHub having it.
+first commit (`8ab9bfb`) is on GitHub (checked with `ls-remote` 2026-10-19).
+
+**Today's files hold no licensed or real CBS content (HEAD cleanup, 2026-10-19).** Ordinary
+commits, no history change:
+
+- The six CBS fixtures (`tests/fixtures/cbs_weekly_*.txt`, `cbs_team_page.txt`) are now
+  **constructed**: the real layout, names, teams, opponents and byes, with invented ids and
+  numbers. Each row scores exactly what the real row scored, so every test kept its
+  meaning. `tests/fixtures/README.md` has the rules. The real pages are in the data repo
+  (`2026/cbs/snapshot-2026-10-19/test-fixtures/`, sha256-checked before the swap).
+- The Draft Sharks rows and figures left in the scoring-and-ingest plan, `pool.py`'s
+  docstring and the design spec now quote the invented fixture. NEXT.md's lost-fumble
+  figures are rounded to ranges.
+- Real CBS rows quoted in the in-season-core and full-position-coverage plan and spec,
+  in `sources/cbs-weekly.yaml`'s comments and inline in the tests are gone too.
+- Verified by a rescan of every tracked file against the private originals (the vendor
+  extracts, the real fixtures, all CBS captures, the old licensed fixture blobs): 0
+  findings. The same scan finds 445 at `a4dacd3`. The script, which reads the private
+  data and so stays out of this repo, is
+  `~/.local/state/jarvis/reports/fantasy-rewrite-tools/rescan.py` (run it with the repo
+  path; `--tree` scans HEAD). The generator and repair scripts that built the fixtures sit
+  beside it.
+- **Not cleaned, by decision:** the 2025 CBS game logs behind the scoring validation
+  (`tests/fixtures/weekly_sample.csv`, `tests/test_scoring.py`'s golden lines, the
+  `poc/validate_*.py` and `seed_weekly.py` logs). They're Jeff's call (the history-risk
+  report, section 3c). Single real CBS ids in `src/` docstrings and NEXT.md prose stay,
+  as public identifiers.
+
+**The history rewrite is the last step.** The plan, with Jeff's 2026-10-19 decisions
+(remap the personal author email to the noreply address, force-push in a quiet window
+between alert runs, ask GitHub Support to purge), is
+`~/.local/state/jarvis/reports/fantasy-history-rewrite-plan-2026-10-19.md`. It runs in a
+fresh clone, never here: this checkout holds the gitignored data, the venv and the CBS
+login.
 
 **Still open:**
 
@@ -1492,9 +1524,14 @@ measures the same comparison — `scoring.score_game` (CBS's banded point estima
 player-weeks — **corrected 2026-08-30 to 46/777**, see the dedup note near the top of
 this file) — on real data instead of a chosen sample.
 
-**The input is 8 fixture rows from one saved CBS week-1 projections page
-(`tests/fixtures/cbs_weekly_rbwrte.txt`), not a real full page.** It was the only real
-weekly projection data captured before the season started.
+**The input is the 8 real rows from one saved CBS week-1 projections page, not a real
+full page.** It was the only real weekly projection data captured before the season
+started. Since 2026-10-19 it lives in the private data repo (`2026/cbs/snapshot-2026-10-19/
+test-fixtures/cbs_weekly_rbwrte.txt`), and the script reads it from there by default. The
+tracked `tests/fixtures/cbs_weekly_rbwrte.txt` is a constructed copy with the same league
+scores. The script's calibrated figures from that copy are illustrative only, and it says so
+when the data repo is missing. Re-run on the real page 2026-10-19 after the swap: same
+output as below.
 
 **RE-RUN 2026-10-19 — the result below replaces the 08-28 one, which had gone stale.** The
 curves changed after 08-28 (the isotonic adoption and the `pass_yds` revert, `e82d2e2`,
@@ -1520,10 +1557,7 @@ three times as the curves changed: it reordered before the C1 monotone-envelope 
 (`c1702e3`), agreed with CBS after it (the 08-28 reading of this section: "zero
 reorder"), and reorders again on today's curves. The two are a tenth of a point apart on
 both scorers. On this sample, calibration doesn't move a real ranking decision by a
-margin that means anything. When the 6 real CBS fixtures leave the repo (the HEAD
-cleanup), the real page is kept privately in the data archive
-(`real-fixtures-2026-10-19/` in `~/Archive/fantasy-football-data/2026/`); point the script
-at it to re-run.
+margin that means anything.
 
 This 8-row sample is itself low-projection and TE/WR/RB-only, so it still cannot speak
 to whether calibration changes orderings among higher-projection players, whose

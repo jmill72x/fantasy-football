@@ -558,7 +558,8 @@ git commit -m "feat(lineup): exact best-legal-lineup optimizer and marginal delt
 
 CBS renders the table as text; `get_page_text` returns one line per player. Fetching is an operator step — this task parses a saved file.
 
-Sample line, verified from the live league site on 2026-08-28:
+Sample line (constructed 2026-10-19 in the exact layout of a line verified from the live league site on
+2026-08-28; the real page is kept in the private data repo, not here):
 
 ```
 W (9/16) Harold Fannin Jr. TE • CLE @JAC 21 11 80 74 11 0.3 0.7 2.3 0.1 8.3 5.8 44.1 7.6 0.5 0.2 4.77
@@ -577,7 +578,7 @@ Reading right to left the stat block is fixed for the RB-WR-TE view: `rush_att r
 
 - [ ] **Step 1: Create the fixture**
 
-Create `tests/fixtures/cbs_weekly_rbwrte.txt` with exactly these eight lines (real projections captured 2026-08-28; no licensed vendor content, these are CBS's own league-view numbers for free agents).
+Create `tests/fixtures/cbs_weekly_rbwrte.txt` with exactly these eight lines. (As first written, these were real CBS projections captured 2026-08-28. Since 2026-10-19 they are constructed for this public repo: same names, teams, opponents and byes, invented numbers that score exactly what the real rows scored, so the rankings below still hold. The real page is in the private data repo.)
 
 **Eight, not five, and the count matters:** there are five flex slots, so a five-player fixture can never produce a benched player and the start/sit and bench-stash assertions in Tasks 5 and 6 could not pass.
 

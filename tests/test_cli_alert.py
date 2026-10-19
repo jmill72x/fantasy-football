@@ -559,8 +559,8 @@ def test_the_injuries_fixture_is_the_shape_fetch_injuries_writes():
 # --- TASK 4: the all-eight-slots regression guard --------------------------
 
 # The fixture roster's own current K and DST starters (see
-# tests/fixtures/cbs_team_page.txt) - real CBS player ids, lifted from the
-# same 2026-08-30 capture this whole branch is built on. Neither name is on
+# tests/fixtures/cbs_team_page.txt) - the fixture's CBS player ids
+# (constructed since 2026-10-19, consistent across every CBS fixture). Neither name is on
 # the committed K_FIXTURE/DST_FIXTURE (those two fixtures were captured with
 # only 3 rows each - see test_cbs_weekly_groups.py), which is WHY every
 # other test in this file (e.g.
@@ -668,9 +668,10 @@ def test_tqb_score_agrees_with_cbs_fpts_within_the_measured_tolerance():
     Tolerance -0.05 to +0.98 is measured, not guessed: a prior review
     checked our score minus CBS's FPTS across ALL 32 TQB rows of the real
     2026-08-30 capture and found exactly that range (see
-    test_cbs_weekly_groups.py's Chargers reconciliation, 18.40 vs 18.45,
-    for one row of the same measurement). This fixture's 4 rows are a
-    subset of that same capture, so the same bounds must hold.
+    test_cbs_weekly_groups.py's Chargers reconciliation, 18.40 vs 18.45 on
+    the real capture, for one row of the same measurement). This fixture's
+    4 rows keep that capture's layout and league scores; since 2026-10-19
+    their FPTS is constructed inside these same bounds.
     """
     from sffl.league import load_league
     from sffl.pool import score_week

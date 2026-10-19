@@ -8,8 +8,8 @@ from sffl.cbs_roster import (_ROW, RosterRow, find_name_position_collisions,
 
 FIXTURE = "tests/fixtures/cbs_team_page.txt"
 
-# Mirrors `cbs_roster._ID_PREFIX` - the fixture now carries real CBS ids
-# (Task 3b), so a test that re-derives page order by matching `_ROW`
+# Mirrors `cbs_roster._ID_PREFIX` - the fixture carries CBS-style ids
+# (Task 3b; constructed since 2026-10-19), so a test that re-derives page order by matching `_ROW`
 # directly against RAW file lines (bypassing `_iter_lines`, which strips
 # this prefix before `_ROW` ever sees a line) must strip it too.
 _STRIP_ID = re.compile(r"^id=\d+\t")
@@ -212,9 +212,9 @@ def test_parse_lineup_rows_matches_parse_lineup_when_there_is_no_collision():
     name_starters, name_reserves = parse_lineup(FIXTURE)
     assert [r.name for r in starters] == name_starters
     assert [r.name for r in reserves] == name_reserves
-    assert starters[0] == RosterRow("Chargers", "TQB", "LAC", "1974")
+    assert starters[0] == RosterRow("Chargers", "TQB", "LAC", "8987")
     assert reserves[-1] == RosterRow("Courtland Sutton", "WR", "DEN",
-                                     "2218461")
+                                     "9443231")
 
 
 def test_parse_lineup_rows_keeps_both_sides_of_a_real_collision(tmp_path):
@@ -253,12 +253,12 @@ def test_parse_lineup_rows_collapses_only_an_exact_triple_match(tmp_path):
 def test_a_leading_id_prefix_lands_on_the_roster_rows_player_id(tmp_path):
     p = tmp_path / "with_id.txt"
     p.write_text(
-        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "id=9845591\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
         "RESERVES\n"
     )
     starters, _reserves = parse_lineup_rows(str(p))
-    assert starters == [RosterRow("Ja'Marr Chase", "WR", "CIN", "2966320")]
-    assert starters[0].player_id == "2966320"
+    assert starters == [RosterRow("Ja'Marr Chase", "WR", "CIN", "9845591")]
+    assert starters[0].player_id == "9845591"
 
 
 def test_a_roster_row_with_no_id_prefix_falls_back_to_the_empty_string(tmp_path):
@@ -282,7 +282,7 @@ def test_an_id_prefix_does_not_change_ROW_matching_for_any_other_parser(tmp_path
     or not, since none of them consume `player_id`."""
     p = tmp_path / "with_id.txt"
     p.write_text(
-        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "id=9845591\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
         "RESERVES\n"
     )
     assert parse_roster(str(p)) == ["Ja'Marr Chase"]
@@ -326,19 +326,19 @@ def test_parse_lineup_rows_collapses_a_repeat_even_when_only_one_side_has_an_id(
     p = tmp_path / "one_sided_id.txt"
     p.write_text(
         "\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
-        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "id=9845591\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
         "RESERVES\n"
     )
     starters, _reserves = parse_lineup_rows(str(p))
-    assert starters == [RosterRow("Ja'Marr Chase", "WR", "CIN", "2966320")]
+    assert starters == [RosterRow("Ja'Marr Chase", "WR", "CIN", "9845591")]
 
     # And the reverse order - id-bearing occurrence FIRST, id-less SECOND -
     # must not let the id-less repeat blank out the id already captured.
     p2 = tmp_path / "one_sided_id_reversed.txt"
     p2.write_text(
-        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
+        "id=9845591\t\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
         "\tWR\tJa'Marr Chase WR • CIN \tTB\t\n"
         "RESERVES\n"
     )
     starters2, _reserves2 = parse_lineup_rows(str(p2))
-    assert starters2 == [RosterRow("Ja'Marr Chase", "WR", "CIN", "2966320")]
+    assert starters2 == [RosterRow("Ja'Marr Chase", "WR", "CIN", "9845591")]

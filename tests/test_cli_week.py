@@ -253,7 +253,7 @@ def test_a_name_collision_after_normalization_warns_instead_of_silently_dropping
     proj = tmp_path / "collide.txt"
     proj.write_text(
         "W (9/16) Collision Test RB • NYJ @TEN 16 13 36 5 49 "
-        "5.0 20.0 3.8 0.4 1.4 0.7 8.3 11.9 0.1 0.3 1.70\n"
+        "9.7 41.1 4.2 0.4 1.3 0.7 8.3 11.9 0.1 0.3 1.63\n"
         "W (9/16) Collision Test Jr. RB • NYJ @TEN 16 13 36 5 49 "
         "5.0 20.0 3.8 0.4 1.4 0.7 8.3 11.9 0.1 0.3 1.70\n"
     )
@@ -356,17 +356,17 @@ def test_a_zero_delta_claim_is_never_labelled_with_a_real_slot(tmp_path, capsys)
     bench, never as the slot the tie happened to resolve into."""
     proj = tmp_path / "ties.txt"
     proj.write_text(
-        "FA Player One RB • DAL @LAR 22 11 86 63 8 "
+        "FA Player One RB • DAL @LAR 21 11 80 74 11 "
         "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 2.0 0.0 0.0\n"
-        "FA Player Two WR • DAL @LAR 22 11 86 63 8 "
+        "FA Player Two WR • DAL @LAR 21 11 80 74 11 "
         "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.8 0.0 0.0\n"
-        "FA Player Three WR • DAL @LAR 22 11 86 63 8 "
+        "FA Player Three WR • DAL @LAR 21 11 80 74 11 "
         "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.6 0.0 0.0\n"
-        "FA Player Four WR • DAL @LAR 22 11 86 63 8 "
+        "FA Player Four WR • DAL @LAR 21 11 80 74 11 "
         "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.4 0.0 0.0\n"
-        "FA Player Zulu WR • DAL @LAR 22 11 86 63 8 "
+        "FA Player Zulu WR • DAL @LAR 21 11 80 74 11 "
         "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.2 0.0 0.0\n"
-        "FA Player Alpha WR • DAL @LAR 22 11 86 63 8 "
+        "FA Player Alpha WR • DAL @LAR 21 11 80 74 11 "
         "0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 1.2 0.0 0.0\n"
     )
     r = roster_file(tmp_path, ["Player One", "Player Two", "Player Three",
@@ -395,9 +395,9 @@ def test_calibrated_waivers_rank_the_higher_yardage_back_first(tmp_path, capsys)
     the worse one can no longer win outright, not that every tie must break
     a particular way by coincidence."""
     lines = open(PROJ).read().splitlines()
-    lines.append("FA Higher Yards Back RB • SF @LAR 22 11 86 63 8 "
+    lines.append("FA Higher Yards Back RB • SF @LAR 21 11 80 74 11 "
                  "5.0 25.7 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0")
-    lines.append("FA Lower Yards Back RB • SF @LAR 22 11 86 63 8 "
+    lines.append("FA Lower Yards Back RB • SF @LAR 21 11 80 74 11 "
                  "5.0 21.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0")
     proj = tmp_path / "with_backs.txt"
     proj.write_text("\n".join(lines) + "\n")
@@ -469,15 +469,15 @@ def test_a_ruled_out_player_does_not_start_and_is_named_in_output(tmp_path, caps
     player on the same roster must still start (Q is flagged, not excluded)."""
     # Base lineup from fixture, but replace one with an O-designated player
     # who has more points than anyone on the roster. Harold Fannin Jr. scores
-    # 4.81 normally; we replace him with "Highest Scorer Out" at 9.99 pts
+    # 4.80 normally; we replace him with "Highest Scorer Out" at 9.99 pts
     # designated O - definitely would start without the exclusion filter.
     lines = open(PROJ).read().splitlines()
     lines.append(
         "FA Highest Scorer Out O RB • DAL @LAR 21 11 80 74 11 "
-        "9.7 99.9 3.8 0.4 1.4 0.7 8.3 11.9 0.1 0.3 9.99" % _owner_code())
+        "9.7 99.9 3.8 0.4 1.4 0.7 8.3 11.9 0.1 0.3 9.99")
     # Also add a Q-designated player with modest but positive projection
     lines.append(
-        "FA Questionable Player Q WR • SF @LAR 22 11 86 63 8 "
+        "FA Questionable Player Q WR • SF @LAR 21 11 80 74 11 "
         "0.0 0.0 0.0 0.0 5.0 2.0 30.0 15.0 0.5 0.0 2.00")
     proj = tmp_path / "with_out.txt"
     proj.write_text("\n".join(lines) + "\n")
@@ -514,7 +514,7 @@ def test_an_out_free_agent_does_not_appear_in_waiver_ranking(tmp_path, capsys):
     # Create a projection with an O-designated free agent
     lines = open(PROJ).read().splitlines()
     lines.append(
-        "FA Sidelined Free Agent O WR • KC @DEN 22 11 86 63 8 "
+        "FA Sidelined Free Agent O WR • KC @DEN 21 11 80 74 11 "
         "0.0 0.0 0.0 0.0 9.9 5.0 75.0 15.0 0.5 0.0 5.99")
     proj = tmp_path / "with_out_fa.txt"
     proj.write_text("\n".join(lines) + "\n")

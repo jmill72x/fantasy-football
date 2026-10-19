@@ -628,24 +628,24 @@ def _rename_patriots_dst_to_chargers(text):
     "Chargers DST • LAC ", reproducing a manager who rostered the SAME
     real NFL team for both the TQB and DST slots.
 
-    The row's id is rewritten too - from Patriots' own real id (1931) to
-    the REAL Chargers DST id (1924), which is what `tests/fixtures/
+    The row's id is rewritten too - from Patriots' own id (8100) to the
+    Chargers DST id (8219), which is what `tests/fixtures/
     cbs_weekly_dst.txt` (Task 3b regenerated both fixtures from the SAME
     live capture, 2026-08-30) actually carries for that row. Carrying
     Patriots' id forward unchanged would attach the WRONG entity's id to a
     row that now DISPLAYS a different team - `identity.resolve_key` trusts
     an id over the (renamed) composite fields, so it would look up
-    Patriots' real projection by id 1931 and never find "Chargers DST" at
+    Patriots' projection by id 8100 and never find "Chargers DST" at
     all (UNFILLED, not resolved) - a mismatch a real capture could never
     produce, since both pages' ids for the SAME entity are pulled from the
-    SAME `playerpage/<id>` link mechanism and always agree. Using the real
-    id 1924 keeps this reproduction internally consistent AND upgrades what
+    SAME `playerpage/<id>` link mechanism and always agree. Using the
+    Chargers id 8219 keeps this reproduction internally consistent AND upgrades what
     it proves: the Chargers TQB+DST case (Task 3's original bug) now
     resolves via the id join, one step stronger than the composite
     fallback it required before this task."""
     return text.replace(
-        "id=1931\t\tDST\tPatriots DST • NE \t",
-        "id=1924\t\tDST\tChargers DST • LAC \t")
+        "id=8100\t\tDST\tPatriots DST • NE \t",
+        "id=8219\t\tDST\tChargers DST • LAC \t")
 
 
 _LEADING_ID = re.compile(r"^id=\d+\t")
@@ -683,8 +683,8 @@ def test_a_roster_row_matches_a_projection_by_id_even_when_names_disagree(
     as "Jamarr C.", a mismatch `identity.normalize_name` does NOT paper
     over. The (name, team, pos) composite key would therefore fail to
     match these two rows at all; the shared CBS id must still resolve them
-    to the SAME real player and score him at his real, unmistakable line
-    (8.01 pts, not zero and not "no projection")."""
+    to the SAME player and score him at his own, unmistakable line
+    (8.00 pts, not zero and not "no projection")."""
     with open("tests/fixtures/cbs_weekly_tab_rbwrte.txt") as fh:
         proj_text = fh.read()
     proj_text = _replace_line_containing(
@@ -699,7 +699,7 @@ def test_a_roster_row_matches_a_projection_by_id_even_when_names_disagree(
         roster_text = fh.read()
     roster_text = _replace_line_containing(
         roster_text, "Ja'Marr Chase",
-        "id=2966320\t\tWR\tJa'Marr Chase WR • CIN \tTB\t")
+        "id=9845591\t\tWR\tJa'Marr Chase WR • CIN \tTB\t")
     roster = tmp_path / "roster_id_name_mismatch.txt"
     roster.write_text(roster_text)
     alert_env.set_path("roster", roster)
@@ -807,8 +807,8 @@ def test_asymmetric_id_loss_degrades_to_the_composite_join_not_to_nothing(
         alert_env, capsys, tmp_path):
     """THE PROHIBITED OUTCOME, reproduced by the round-1 reviewer against
     `identity.resolve_key` used as the roster<->projections join: the
-    roster fixture carries REAL CBS ids (Task 3b regenerated it from a
-    live capture); if EVERY projection page this run loses its ids (a
+    roster fixture carries CBS ids (Task 3b regenerated it from a live
+    capture; the ids are constructed since 2026-10-19); if EVERY projection page this run loses its ids (a
     plausible, independent capture degradation - each page is captured
     separately, see `_cmd_alert`'s own docstring), `resolve_key` computes
     an `"id:<n>"` key for every roster row and NOTHING in a composite-only

@@ -81,7 +81,7 @@ Sample (constructed, real layout): `Chargers DST • LAC | ARI | 19 | 7 | 70 | 5
 
 Note **DST has no EXPERT column** — that is why it is 16 tokens, not 17.
 
-`def_ya` = 284 and `def_pa` = 19.4 are both present, which is what the banded defense scoring
+`def_ya` (hundreds) and `def_pa` (tens) are both present, which is what the banded defense scoring
 needs. **`DWN` is unidentified** and must be confirmed against a second week before being
 mapped or discarded; do not guess it into a scoring key. For a single week, the AVG and TOTAL
 columns are equal — take TOTAL and say why.
@@ -102,7 +102,7 @@ AVAIL | PLAYER | OPP | OVP | BYE | ROST | START | EXPERT
 
 Sample (constructed, real layout): `Jake Bates K • DET | NO | 16 | 6 | 77 | 77 | 18 | 2.2 2.8 | 0.0 0.0 | 0.4 0.6 | 0.6 0.8 | 0.8 0.8 | 0.4 0.6 | 3.4 3.8 | 5.60`
 (on the real capture the five distance bands summed to within 0.1 of the stated total —
-cross-check the parser can assert.)
+rounding, and a useful cross-check the parser can assert.)
 
 **THE COMPLICATION — CBS's distance bands do not match the league's.**
 

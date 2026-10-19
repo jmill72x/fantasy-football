@@ -1,11 +1,16 @@
 """Tests for the TQB, K and DST column maps added to sources/cbs-weekly.yaml.
 
-Every fixture row below is verified byte-identical (apart from the owner
-column, which is anonymized - this repo is public) to a real CBS capture
-made 2026-08-30 (data/captures/{tqb,k,dst}.txt). The expected values in
-these tests were read off that same real capture, not copied from the
-implementation plan - see task-2-report.md for the corrections that were
-necessary because the plan's three maps were hypotheses, not verified fact.
+The fixture rows keep the exact layout of a real CBS capture made
+2026-08-30 (data/captures/{tqb,k,dst}.txt): column count and order, tabs,
+trailing spaces, `---`, `N/R` and waiver tokens. The column maps were
+verified against that real capture - see task-2-report.md for the
+corrections that were necessary because the plan's three maps were
+hypotheses, not verified fact. Since 2026-10-19 the ids and numbers in the
+rows are CONSTRUCTED (this repo is public; see tests/fixtures/README.md):
+each row scores exactly what the real row it replaced scored under this
+league, and its FPTS is invented inside the tolerance windows measured on
+the real capture, so every reconciliation below still holds.
+The expected values are read off the constructed rows.
 """
 
 import pytest
@@ -32,14 +37,14 @@ def test_tqb_every_line_parses():
 
 def test_tqb_stats_land_in_the_right_slots():
     # "Player" on this page is the Chargers' aggregate Team-QB line, not an
-    # individual - real capture, 2026-08-30.
+    # individual - the layout of the real 2026-08-30 capture.
     r = by_name(parse(TQB_FIXTURE, group="TQB", week=1))["Chargers"]
     assert r.pos == "TQB" and r.team == "LAC"
-    assert r.stats["pass_cmp"] == 23.8
-    assert r.stats["pass_yds"] == 265.1
-    assert r.stats["pass_td"] == 2.3
+    assert r.stats["pass_cmp"] == 21.6
+    assert r.stats["pass_yds"] == 243.2
+    assert r.stats["pass_td"] == 2.7
     assert r.stats["pass_int"] == 0.7
-    assert r.stats["rush_yds"] == 35.0
+    assert r.stats["rush_yds"] == 33.0
     assert r.stats["rush_td"] == 0.2
     assert r.stats["fum_lost"] == 0.1
     # Sanity per the brief: passing yards in the hundreds, TDs/INTs small.
@@ -56,9 +61,10 @@ def test_tqb_fpts_reconciles_with_league_scoring():
     [20,24]=3; pass_td 2.7*5=13.5; pass_int 0.7*-1=-0.7; rush_yds 33 is
     below the 50-yard floor=0; rush_td 0.2*3=0.6 (this simplified score_game
     has no TD-length bonus, unlike the full weekly scorer). Total 18.4,
-    against the page's own FPTS of 18.45 - CBS's FPTS uses a scoring config
-    this project does not control, so exact equality isn't expected, but
-    this close a match confirms the columns are aligned, not merely
+    against the row's FPTS of 17.93 - CBS's FPTS uses a scoring config
+    this project does not control, so exact equality isn't expected. On
+    the real 2026-08-30 capture this row came to 18.4 against 18.45, and a
+    match that close is what confirmed the columns are aligned, not merely
     plausible.
     """
     from sffl.scoring import band_points
@@ -71,7 +77,7 @@ def test_tqb_fpts_reconciles_with_league_scoring():
              + r.stats["pass_int"] * lg.points["pass_int"]
              + band_points(lg.bands["rush_yds"], r.stats["rush_yds"])
              + r.stats["rush_td"] * lg.points["rush_td"])
-    assert abs(total - 18.45) < 1.0
+    assert abs(total - 17.93) < 1.0
 
 
 def test_tqb_expect_tokens_refuses_a_column_added(tmp_path):
@@ -106,10 +112,10 @@ def test_k_every_line_parses():
 def test_k_stats_land_in_the_right_slots():
     r = by_name(parse(K_FIXTURE, group="K", week=1))["Jake Bates"]
     assert r.pos == "K" and r.team == "DET"
-    assert r.stats["fg_u30"] == 0.5      # CBS 1-19 (0.0) + 20-29 (0.5)
-    assert r.stats["fg_30_39"] == 0.7
-    assert r.stats["fg_40_49"] == 0.7
-    assert r.stats["xp_made"] == 3.5
+    assert r.stats["fg_u30"] == 0.4      # CBS 1-19 (0.0) + 20-29 (0.4)
+    assert r.stats["fg_30_39"] == 0.6
+    assert r.stats["fg_40_49"] == 0.8
+    assert r.stats["xp_made"] == 3.4
     # The internal sub-50-attempts accumulator must not leak into the
     # scored stats - it exists only to compute fg_missed (see below) and
     # must be popped before a PlayerProjection is built.
@@ -121,8 +127,10 @@ def test_k_stats_land_in_the_right_slots():
 def test_k_distance_bands_sum_to_the_total_fg_column():
     """The strong alignment check named in the task: the five distance
     bands' FG-made values should approximately SUM to the page's own TOTAL
-    FG column. Real capture: 0.0+0.5+0.7+0.7+0.3 = 2.2 against a stated
-    total of 2.1 - rounding, not a misalignment."""
+    FG column. Fixture row: 0.0+0.4+0.6+0.8+0.4 = 2.2 against a stated
+    total of 2.2. (On the real capture the same check came to 2.2 against
+    a stated 2.1 - rounding, not a misalignment - which is why the
+    tolerance is 0.15 rather than exact.)"""
     row_line = None
     for line in open(K_FIXTURE):
         if "Jake Bates" in line:
@@ -137,16 +145,16 @@ def test_k_distance_bands_sum_to_the_total_fg_column():
 
 def test_k_fg_under_30_sums_1_19_and_20_29():
     r = by_name(parse(K_FIXTURE, group="K", week=1))["Jake Bates"]
-    # From the real row: 1-19 FG = 0.0, 20-29 FG = 0.5.
-    assert r.stats["fg_u30"] == 0.0 + 0.5
+    # From the fixture row: 1-19 FG = 0.0, 20-29 FG = 0.4.
+    assert r.stats["fg_u30"] == 0.0 + 0.4
 
 
 def test_k_a_nonzero_50_plus_scores_as_fg_50_59_and_fg_60_is_absent():
     """Pins the repo owner's decision: CBS's single 50+ column scores as
     fg_50_59 (an under-statement of a 60+ yard kick), never as fg_60_plus.
-    Jake Bates's real capture row has a non-zero 50+ value (0.3)."""
+    Jake Bates's fixture row has a non-zero 50+ value (0.4)."""
     r = by_name(parse(K_FIXTURE, group="K", week=1))["Jake Bates"]
-    assert r.stats["fg_50_59"] == 0.3
+    assert r.stats["fg_50_59"] == 0.4
     assert r.stats["fg_50_59"] != 0
     assert r.stats.get("fg_60", 0) == 0
     assert r.stats.get("fg_60_plus", 0) == 0
@@ -156,25 +164,25 @@ def test_k_fg_missed_is_sub_50_only_not_total_att_minus_total_fg():
     """fg_missed = SUB-50 ATT minus SUB-50 FG, per poc/validate_k_weekly.py
     (17/17 real weeks exact; 50+ misses proven unpenalized on week 6).
 
-    Jake Bates's real capture row: 1-19 0.0/0.0, 20-29 0.5/0.5, 30-39
-    0.7/0.7, 40-49 0.7/0.8 -> sub-50 missed = 0.1 (all from the 40-49
-    band). This is NOT total ATT (2.6) minus total FG (2.1) = 0.5 - an
-    earlier, wrong version of this derivation used exactly that formula
-    and over-penalized every kicker with a 50+ attempt."""
+    Jake Bates's fixture row: 1-19 0.0/0.0, 20-29 0.4/0.6, 30-39
+    0.6/0.8, 40-49 0.8/0.8 -> sub-50 missed = 0.4 (0.2 + 0.2 + 0.0). This
+    is NOT total ATT (2.8) minus total FG (2.2) = 0.6 - an earlier, wrong
+    version of this derivation used exactly that formula and
+    over-penalized every kicker with a 50+ attempt."""
     r = by_name(parse(K_FIXTURE, group="K", week=1))["Jake Bates"]
-    assert r.stats["fg_missed"] == pytest.approx(0.1)
-    assert r.stats["fg_missed"] != pytest.approx(0.5)
+    assert r.stats["fg_missed"] == pytest.approx(0.4)
+    assert r.stats["fg_missed"] != pytest.approx(0.6)
 
 
 def test_k_50_plus_misses_are_not_penalized():
-    """The specific hazard IMPORTANT-1 names: Jake Bates's real row has a
-    50+ miss (ATT 0.7 - FG 0.3 = 0.4), and none of it may appear in
-    fg_missed. If it did, fg_missed would be 0.5 (0.1 sub-50 + 0.4 from
-    50+) instead of the correct 0.1."""
+    """The specific hazard IMPORTANT-1 names: Jake Bates's fixture row has
+    a 50+ miss (ATT 0.6 - FG 0.4 = 0.2), and none of it may appear in
+    fg_missed. If it did, fg_missed would be 0.6 (0.4 sub-50 + 0.2 from
+    50+) instead of the correct 0.4."""
     r = by_name(parse(K_FIXTURE, group="K", week=1))["Jake Bates"]
-    fifty_plus_att, fifty_plus_fg = 0.7, 0.3
-    assert fifty_plus_att - fifty_plus_fg == pytest.approx(0.4)  # the real miss
-    assert r.stats["fg_missed"] == pytest.approx(0.1)            # excludes it
+    fifty_plus_att, fifty_plus_fg = 0.6, 0.4
+    assert fifty_plus_att - fifty_plus_fg == pytest.approx(0.2)  # the 50+ miss
+    assert r.stats["fg_missed"] == pytest.approx(0.4)            # excludes it
 
 
 def test_k_fg_missed_cannot_go_negative(tmp_path):
@@ -224,12 +232,12 @@ def test_dst_every_line_parses():
 def test_dst_stats_land_in_the_right_slots():
     r = by_name(parse(DST_FIXTURE, group="DST", week=1))["Broncos"]
     assert r.pos == "DST" and r.team == "DEN"
-    assert r.stats["def_sack"] == 4.4
-    assert r.stats["def_fum_rec"] == 0.3
-    assert r.stats["def_int"] == 0.8
+    assert r.stats["def_sack"] == 4.2
+    assert r.stats["def_fum_rec"] == 0.4
+    assert r.stats["def_int"] == 0.9
     assert r.stats["def_td"] == 0.1
-    assert r.stats["def_ya"] == 248.0
-    assert r.stats["def_pa"] == 19.6
+    assert r.stats["def_ya"] == 229.0
+    assert r.stats["def_pa"] == 18.8
     # Sanity per the brief: yards-against in the hundreds, points-against
     # in the tens.
     assert 100 < r.stats["def_ya"] < 999
@@ -237,10 +245,10 @@ def test_dst_stats_land_in_the_right_slots():
     # def_safety on the Broncos row is genuinely 0.0, which is a vacuous
     # witness for "did this column land correctly" (every wrong column
     # could also read 0.0 by coincidence). The Dolphins row in this same
-    # fixture has a non-zero STY (0.1) - a real witness that the safety
+    # fixture has a non-zero STY (0.2) - a real witness that the safety
     # column, not some neighboring column, is what landed in def_safety.
     dolphins = by_name(parse(DST_FIXTURE, group="DST", week=1))["Dolphins"]
-    assert dolphins.stats["def_safety"] == 0.1
+    assert dolphins.stats["def_safety"] == 0.2
 
 
 def test_dst_dwn_column_is_unidentified_and_not_scored():
@@ -250,9 +258,9 @@ def test_dst_dwn_column_is_unidentified_and_not_scored():
     r = by_name(parse(DST_FIXTURE, group="DST", week=1))["Broncos"]
     assert "dwn" not in r.stats
     assert "DWN" not in r.stats
-    # 0.7 is the real DWN value for this row - it must not have landed
-    # under any other key either.
-    assert 0.7 not in r.stats.values()
+    # 0.6 is this row's DWN value, and no scored column on it holds 0.6 -
+    # so it must not have landed under any other key either.
+    assert 0.6 not in r.stats.values()
 
 
 def test_dst_expect_tokens_refuses_a_column_added(tmp_path):
