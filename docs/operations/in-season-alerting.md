@@ -112,6 +112,12 @@ arithmetic - or a run long after the season ends - can't ask CBS for a week that
 exist. Both bounds are simple `min`/`max` calls in the script; there's no fallback logic
 if a week outside `[1, 18]` would otherwise have been computed, it's just clamped.
 
+**The date is 2026's and must be changed every season.** Nothing warns when it's stale: in
+2027 the 2026 date makes every run clamp to week 18. Before week 1, set `start` (line 57
+of `ops/run_alert.sh`) to the Wednesday of the new season's week-1 week, and change
+`--curves` (line 84) if the curves changed. `docs/operations/preseason-runbook.md`, step
+13, has the whole switch-over.
+
 ## "I got no alert"
 
 The digest **always sends**, even when capture or scoring fails outright - `sffl alert`

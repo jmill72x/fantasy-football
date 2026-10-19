@@ -30,6 +30,33 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
+## DATA ARCHIVE AND THE 2027 RUNBOOK (2026-10-19)
+
+**Next season starts from `docs/operations/preseason-runbook.md`.** It has every step and
+command, the season-bound values (league profile, byes, TQB map, `--market`, curves, the
+alert's week-1 date) and the weekly collect-and-archive routine.
+
+**The gitignored data is archived privately, in two copies, checksum-verified on
+2026-10-19** (82 files, manifest `MANIFEST-2026-10-19.sha256`):
+
+- Mac: `~/Archive/fantasy-football-data/2026/` (dir 700, files 600).
+- piNAS: `Documents/fantasy-football-data/2026/` (on the Pi, the Documents
+  folder on the data disk's `/srv/dev-disk-by-uuid-…/` mount).
+
+It holds `data/extracts/` (including `rankings-2026-08-23.csv`, the file `market/2026.yaml`
+was fitted on; sha256 matches the pin), `data/weekly/2025/`, a snapshot of
+`data/captures/`, the 6 real CBS test fixtures, and `.superpowers/`. Not the CBS login.
+
+**Still open:**
+
+- **The private data repo (P1)** isn't created yet; it needs Jeff's OK. It becomes the main
+  copy, organised by season, source and week, with the Pi as the fallback.
+- **The weekly CBS collection (P1)** isn't automated. The alert overwrites
+  `data/captures/` every run and nothing collects actual results, so no history of weeks 1
+  to 6 was kept (only a few stray pages). Whether CBS still serves past weeks'
+  projections is unchecked. Until it's built, follow the runbook's manual routine each
+  Tuesday, and collect the season's results before CBS rolls over.
+
 ## Where things stand
 
 Auction cheatsheet pipeline for the STRIPES Fantasy Football League (CBS). Four plans;
@@ -202,21 +229,24 @@ Verify state in one command:
 cd ~/Projects/fantasy-football && ./.venv/bin/pytest -q && git log --oneline -3
 ```
 
-**What works today — this is the production command.** It reads an extract, scores it
-against league rules, values the pool, fits both the replacement policy and the market
-price curve against 154 real 2025 prices, and writes a priced board:
+**What works today — this is the production command** (rewritten 2026-10-19; it used to
+show a `--policy fit --prices auction-rosters-2025.csv` form on the 08-03 extract, which
+the season guard refuses in 2027). It reads the extract, scores it against league rules,
+and prices the pool with the persisted market model instead of refitting:
 
 ```bash
 PYTHONPATH=src ./.venv/bin/python -m sffl.cli value \
   --source sources/draftsharks.yaml \
-  --file "data/extracts/Draft Sharks/2026/rankings (1).csv" --year 2026 \
-  --policy fit --prices data/league/auction-rosters-2025.csv \
-  --curves calibration/2025.yaml --out board.csv
+  --file "data/extracts/Draft Sharks/2026/rankings-2026-08-23.csv" --year 2026 \
+  --market market/2026.yaml --curves calibration/2025.yaml --out board.csv
 ```
 
-543 players, TQB=32. Every row carries **MY$** (worth against replacement) and **EST$**
-(what the room will pay). Swap `value` for `render` and add `--pdf`/`--xlsx` to write the
-artifacts — that is the command to run on 08-21.
+Run 2026-10-19: board.csv md5 `676a25ba1ce71591a3cb8bbbcaac9893`, the same board the
+`--prices data/league/auction-rosters-2026.csv --tqb-starters identity/tqb-2026-starters.yaml`
+path gives. Every row carries **MY$** (worth against replacement) and **EST$** (what the
+room will pay). Swap `value` for `render` and add `--pdf`/`--xlsx` to write the artifacts.
+**For 2027, use `docs/operations/preseason-runbook.md`**: it has every step, the
+season-bound values and the exact `--year 2027 --market market/2026.yaml` command.
 
 **What works today, in-season (read-only).** `sffl week` ranks waiver targets and flags
 start/sit changes from a saved CBS weekly-projections page — this module does no network
@@ -1155,8 +1185,11 @@ currently reports was fitted on 2025 prices and measured against those same 2025
 It is all in-sample. 2026 prices are a genuine holdout — the first honest answer to
 whether any of this works.
 
-**Capture format** — same as `data/league/auction-rosters-2025.csv`:
-`franchise,pick_order,player_as_written,price`, 156 rows (12 franchises x 13 spots).
+**Capture format** — as `data/league/auction-rosters-2026.csv` has it:
+`franchise,pick_order,player_as_written,price,season`, 156 rows (12 franchises x 13
+spots). The `season` column is required: `fit-market` checks it against `--year`, and
+without it the prices' season can only be taken on trust from the TQB map. (The 2025 file
+predates the column; this line said "same as 2025, four columns" until 2026-10-19.)
 
 **Write `player_as_written` EXACTLY as the roster sheet shows it. Do not clean it up.**
 The 2025 sheet wrote `PHILLY D`, `JAMAAR CHASE` (a typo), and Team QB units under their
@@ -1453,39 +1486,37 @@ player-weeks — **corrected 2026-08-30 to 46/777**, see the dedup note near the
 this file) — on real data instead of a chosen sample.
 
 **The input is 8 fixture rows from one saved CBS week-1 projections page
-(`tests/fixtures/cbs_weekly_rbwrte.txt`), not a real full page.** It is the only real
-weekly projection data captured before the season starts, so this is a measurement on
-what exists today, not on "a whole position group" as the brief's phrasing suggested.
+(`tests/fixtures/cbs_weekly_rbwrte.txt`), not a real full page.** It was the only real
+weekly projection data captured before the season started.
+
+**RE-RUN 2026-10-19 — the result below replaces the 08-28 one, which had gone stale.** The
+curves changed after 08-28 (the isotonic adoption and the `pass_yds` revert, `e82d2e2`,
+08-30) and nobody re-ran this. Today's output:
 
 ```
-n=8   CBS total 20.70   calibrated 28.67   diff +7.97
+n=8   CBS total 20.70   calibrated 27.87   diff +7.17
 players moved by >= 0.5 pts: 7 of 8
 ```
 
-Every one of the 7 movers moved **up**. That direction is expected, not a bias finding:
-this fixture is all low-volume TE/WR/RB lines sitting below several band floors, exactly
-where `E[band(X)] > band(E[X])` — the same selection effect the spec's own +4.88 number
-came from, just not hand-picked this time.
+Every one of the 7 movers moved **up**, as before. That direction is expected, not a bias
+finding: this fixture is all low-volume TE/WR/RB lines sitting below several band floors,
+exactly where `E[band(X)] > band(E[X])`.
 
-**Pairwise order — all 28 pairs of 8 players checked. Zero reorder.** 27 of the 28 pairs
-have a definite CBS order, and the calibrated scorer agrees with CBS on every one of
-them. The 28th pair, Elic Ayomanor vs. Kyle Pitts, is an exact CBS tie (2.50 = 2.50, no
-order to begin with); calibration separates it, Pitts (3.56) over Ayomanor (3.37).
+**Pairwise order, all 28 pairs: one pair reorders.** 27 pairs have a definite CBS order,
+and calibration agrees on 26 of them. It flips **Braelon Allen over Woody Marks (CBS) to
+Marks over Allen (calibrated)**. The 28th pair (Elic Ayomanor and Kyle Pitts) is an exact
+CBS tie, which calibration separates, Pitts first. (Per-player figures are deliberately not
+copied here: they're real CBS projections; run the script to see them.)
 
-**Conclusion — a null result, reported plainly.** On the only real data available,
-calibration does not change a single real ranking decision in this sample; it only
-resolves one exact tie. That is a correction to what this section used to say: an
-earlier measurement (before the C1 monotone-envelope fix, `c1702e3`) reported a
-different pair of totals (28.16, diff +7.46) and named "1 pair reorders outright" — CBS
-ranking Braelon Allen above Woody Marks, calibration flipping them to Marks over Allen —
-as the concrete evidence that calibration moves a real decision. **That flip no longer
-exists.** Allen now scores 2.74 to Marks's 2.72, agreeing with CBS, and it should not
-have been reported as a stable finding in the first place. **Why it changed:** the C1
-fix raised calibrated values in the noisy low-mean region of the curves by replacing raw
-interpolation with a monotone envelope (see `_monotone_envelope` in `src/sffl/pool.py`);
-doing so removed the exact non-monotone inversion that used to put Marks above Allen.
-Nobody re-ran this measurement after that fix until now, which is why the section stayed
-wrong.
+**Read this as unstable, not as evidence.** That same Allen/Marks pair has now flipped
+three times as the curves changed: it reordered before the C1 monotone-envelope fix
+(`c1702e3`), agreed with CBS after it (the 08-28 reading of this section: "zero
+reorder"), and reorders again on today's curves. The two are a tenth of a point apart on
+both scorers. On this sample, calibration doesn't move a real ranking decision by a
+margin that means anything. When the 6 real CBS fixtures leave the repo (the HEAD
+cleanup), the real page is kept privately in the data archive
+(`real-fixtures-2026-10-19/` in `~/Archive/fantasy-football-data/2026/`); point the script
+at it to re-run.
 
 This 8-row sample is itself low-projection and TE/WR/RB-only, so it still cannot speak
 to whether calibration changes orderings among higher-projection players, whose

@@ -27,12 +27,17 @@ completions, touchdowns — and applies the league's actual scoring itself.
 
 ## Status
 
+Everything below has shipped and is on `main`. The full suite was 918 tests on 2026-10-19;
+the current count is in NEXT.md's machine-checked block.
+
 | | |
 |---|---|
-| Scoring engine + ingest | ✅ working, 64 tests |
-| Value engine (VORP → dollars) | planned |
-| Excel + PDF renderers | planned |
-| Silent auction planner | planned |
+| Scoring engine + ingest | ✅ working |
+| Value engine (VORP → dollars), plus a market model of what the room pays | ✅ working |
+| Excel + PDF renderers | ✅ working, used for the 2026 auction |
+| Silent auction planner | ✅ working |
+| In season: waivers and start/sit (`sffl week`), trade valuation (`sffl trade`), scheduled phone digests (`sffl alert`) | ✅ working, running every week of the 2026 season |
+| In season: setting the lineup and filing claims on CBS (`sffl lineup`, `sffl claim`) | ✅ working; dry run unless `--confirm`, and `--confirm` needs a person at a terminal |
 
 ## The scoring engine is validated, not assumed
 
@@ -74,32 +79,40 @@ configuration choice rather than an architectural one.
 
 ## Running it
 
-Python 3.9+, no services required.
+Python 3.9.6, no services required.
 
 ```bash
 python3 -m venv .venv
-./.venv/bin/pip install pytest PyYAML rapidfuzz
+./.venv/bin/pip install -r requirements.txt
 ./.venv/bin/pytest
 
-PYTHONPATH=src ./.venv/bin/python -m sffl.cli ingest \
+PYTHONPATH=src ./.venv/bin/python -m sffl.cli render \
   --source sources/draftsharks.yaml \
-  --file "data/extracts/<vendor>/<year>/<export>.csv" --year 2026
+  --file "data/extracts/<vendor>/<year>/<export>.csv" --year 2026 \
+  --market market/2026.yaml --curves calibration/2025.yaml \
+  --xlsx output/board.xlsx --pdf output/board.pdf
 ```
 
-Prints a scored, league-correct player pool: individual quarterbacks removed, Team QB
-units added, everything valued under the league's own scoring.
+Scores a vendor's projections under the league's own rules, values every player in
+dollars (MY$, what he's worth to you, beside EST$, what this room will pay), and writes
+the printed workbook and the PDF board. `sffl --help` lists the other commands. Each
+season's full procedure is in `docs/operations/preseason-runbook.md`; the in-season jobs
+are in `docs/operations/in-season-alerting.md`.
 
 ## Layout
 
 | Path | |
 |---|---|
-| `src/sffl/` | league profile, scoring, schema, identity, ingest, TQB, pool, CLI |
+| `src/sffl/` | league profile, scoring, ingest, identity, valuation, market model, renderers, in-season tools, CLI |
 | `leagues/` | scoring bands and roster rules, versioned per season |
 | `sources/` | one profile per vendor |
-| `identity/aliases.yaml` | player-name fixes; grows every year |
+| `identity/` | player-name fixes (grows every year) and each season's Team QB map |
+| `calibration/`, `market/` | the fitted calibration curves and the room's price model, by season |
+| `ops/` | the scheduled alert job and its helpers |
 | `poc/` | validation scripts, each carrying the real data it checks against |
 | `docs/superpowers/specs/` | design spec — rules, findings, open questions |
 | `docs/superpowers/plans/` | implementation plans |
+| `docs/operations/` | runbooks: preseason and in-season |
 | `NEXT.md` | current state and what to do next |
 
 ## A note on data
