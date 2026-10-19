@@ -11,11 +11,11 @@ data lives in the private archive below.
 
 The repo is public, so the vendor extracts (`data/extracts/`), the CBS weekly data
 (`data/weekly/`) and the CBS captures (`data/captures/`) are gitignored and live only on
-the Mac mini. They're kept privately in two more places:
+the Mac mini. They're kept privately in three more places:
 
 | Copy | Where | State |
 |---|---|---|
-| **Private data repo (the main copy)** | A private GitHub repo, by season, source and week | **Not created yet** (needs Jeff's OK). Until it exists, the archive below is the record |
+| **Private data repo (the main copy)** | `jmill72x/fantasy-football-data` (private GitHub repo), cloned at `~/Projects/fantasy-football-data`; by season, source and week | Created and loaded from the 2026 archive 2026-10-19, with a `MANIFEST.sha256` and a `git bundle --all` of this repo. Its README says how to add each week |
 | Local archive | `~/Archive/fantasy-football-data/<season>/` on the mini (dir 700, files 600) | 2026 archived 2026-10-19 |
 | **Pi copy (the fallback)** | piNAS, Documents share: `Documents/fantasy-football-data/<season>/` (on the Pi: `<data disk>/Documents/fantasy-football-data/`, where the data disk is the `/srv/dev-disk-by-uuid-…` mount holding Documents) | 2026 copied and checksum-verified 2026-10-19 |
 
@@ -257,13 +257,14 @@ The copy refuses to overwrite a week already on the Pi. Actual results (CBS poin
 the game logs, in the format of `data/weekly/2025/`) need their own collection; the
 design spec's "Method, proven" section describes how the 2025 set was gathered.
 
-When the private data repo exists, these weekly folders go into it as well, organised by
-season, source and week.
+Then add the same week to the private data repo, under `<season>/cbs/weekly/<wk>/`, with
+the commands in that repo's README ("Adding a week"). It never overwrites a week either.
 
 ## End of season
 
 - Collect the full season's results before CBS rolls over.
-- Archive, verify both copies, and add the season to the private repo.
+- Archive, verify both copies, and add the season to the private data repo
+  (`jmill72x/fantasy-football-data`).
 - Decide on the curves (step 6) and the RB/FLEX test (step 12) while the data is fresh.
 - The alert jobs keep running after week 18 (the week is clamped at 18); ask Vision,
   through Jarvis, to unload them for the off-season if wanted.

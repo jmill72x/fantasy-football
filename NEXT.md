@@ -47,10 +47,17 @@ It holds `data/extracts/` (including `rankings-2026-08-23.csv`, the file `market
 was fitted on; sha256 matches the pin), `data/weekly/2025/`, a snapshot of
 `data/captures/`, the 6 real CBS test fixtures, and `.superpowers/`. Not the CBS login.
 
+**The private data repo is the main copy:** `jmill72x/fantasy-football-data` (private),
+cloned at `~/Projects/fantasy-football-data`. Jeff created it 2026-10-19 and it was loaded
+the same day from the archive above (manifest verified first), organised by season,
+source and week, with its own `MANIFEST.sha256` and a verified `git bundle --all` of this
+repo (`bundles/fantasy-football-2026-10-19.bundle`, main at `d378a31`), taken before the
+history rewrite. Its README says how to add each week. The Pi stays the fallback. Its
+first commit was staged, not pushed, on 2026-10-19: check `git -C
+~/Projects/fantasy-football-data log origin/main` before relying on GitHub having it.
+
 **Still open:**
 
-- **The private data repo (P1)** isn't created yet; it needs Jeff's OK. It becomes the main
-  copy, organised by season, source and week, with the Pi as the fallback.
 - **The weekly CBS collection (P1)** isn't automated. The alert overwrites
   `data/captures/` every run and nothing collects actual results, so no history of weeks 1
   to 6 was kept (only a few stray pages). Whether CBS still serves past weeks'
