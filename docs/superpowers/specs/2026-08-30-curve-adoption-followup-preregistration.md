@@ -107,7 +107,7 @@ id in one fold while its identical twin sat in the fit set. Interpolation — **
 Re-measured on de-duplicated data under `predict_weekly` (the production weekly predictor
 condition 3 names), `pass_yds` **flips from a win to a loss**: 0.1572 isotonic vs 0.1520
 baseline, where the leaked run had shown 0.1524 vs 0.1659. It was adopted on the leaked
-numbers and then **reverted** (commit `e82d2e2`). `pass_cmp` (0.1253 vs 0.1333), `rec_ct`
+numbers and then **reverted** (commit `6bdc5c3`). `pass_cmp` (0.1253 vs 0.1333), `rec_ct`
 (0.0864 vs 0.1205), `rec_yds` (0.0588 vs 0.0700) and `rush_yds` (0.0718 vs 0.0926) all hold
 post-dedup. **The adopted set is four stats: `pass_cmp`, `rec_ct`, `rec_yds`, `rush_yds`.**
 

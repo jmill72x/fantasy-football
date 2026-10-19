@@ -120,7 +120,8 @@ are in `docs/operations/in-season-alerting.md`.
 **Projection exports are not in this repository.** They are paid, licensed content and
 `data/extracts/` is gitignored. Weekly stat lines pulled from the league platform are
 likewise excluded. The league's own auction history — bids and prices — is included,
-since it belongs to the league.
+since it belongs to the league. The owner keeps the licensed files in a private store;
+`docs/operations/preseason-runbook.md` says where, and how to restore them into `data/`.
 
 Bring your own exports and write a ~20-line source profile. That is the point of the
 design.

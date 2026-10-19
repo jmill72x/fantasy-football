@@ -13,7 +13,7 @@ for the 2026-08-30 pass_yds revert below):
   - pass_yds: REVERTED 2026-08-30 to `build_curves` on the build set only.
     It was adopted for isotonic on a LEAKED cross-validation (a duplicate
     entity's identical twin sat in the fit set for a held-out fold - see
-    commit a8584da and NEXT.md's DUPLICATE-ENTITY note). Condition 3 of the
+    commit 04e0926 and NEXT.md's DUPLICATE-ENTITY note). Condition 3 of the
     third-measurement gate requires winning the cross-validated held-out MAE
     under `predict_weekly` in the first experiment; re-run on de-duplicated
     data, pass_yds LOSES to the baseline (0.1572 vs 0.1520) - a tie would
@@ -103,7 +103,7 @@ INTERPOLATED_STAT_NOTES = {
                "was never covered by any pre-registered gate"),
     "pass_yds": ("REVERTED 2026-08-30: adopted for isotonic on a leaked "
                  "cross-validation (a duplicate-entity id's identical twin "
-                 "sat in the fit set - commit a8584da). Re-run on "
+                 "sat in the fit set - commit 04e0926). Re-run on "
                  "de-duplicated data under predict_weekly, isotonic loses "
                  "condition 3 of the third-measurement gate (0.1572 vs "
                  "baseline 0.1520) - see "

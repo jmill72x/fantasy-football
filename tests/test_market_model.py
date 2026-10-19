@@ -129,7 +129,7 @@ def test_the_committed_2026_artifact_is_pinned():
     # Deliberately re-refit 2026-08-30 (second time, same day): pass_yds was
     # REVERTED out of the isotonic bundle back to build_curves/build-set-only.
     # It had been adopted on a LEAKED cross-validation (a duplicate-entity id's
-    # identical twin sat in the fit set - commit a8584da); re-run clean under
+    # identical twin sat in the fit set - commit 04e0926); re-run clean under
     # predict_weekly, isotonic loses condition 3 of the gate for pass_yds
     # (0.1572 vs baseline 0.1520). The four-stat bundle (pass_cmp, rec_ct,
     # rec_yds, rush_yds) was re-measured on its own - removing a stat changes

@@ -2,7 +2,7 @@
 
 CORRECTED 2026-08-30 (final-branch review, review round 2): the CONDITION-3 table
 transcribed below (`WINNERS_UNDER_PREDICT_WEEKLY`) was sourced from a cross-validated
-comparison run BEFORE the duplicate-entity data-integrity fix (commit `a8584da`). A
+comparison run BEFORE the duplicate-entity data-integrity fix (commit `04e0926`). A
 held-out player's byte-identical duplicate id sat in the fit set for some folds,
 letting interpolation (the baseline) "predict" it almost exactly - flattering the
 baseline and making isotonic's margin look bigger than it honestly was. Re-run clean
@@ -10,7 +10,7 @@ on de-duplicated data (`predict_weekly`, the production weekly predictor - see
 NEXT.md's dedup note and `.superpowers/sdd/2026-08-30-full-position-coverage/
 dedup-report.md`), `pass_yds` FLIPS from a win (0.1524 vs 0.1659, leaked) to a LOSS
 (0.1572 vs 0.1520, deduped) and does NOT belong in the isotonic winner set. It was
-adopted anyway on the leaked numbers, then reverted (commit `e82d2e2`) once this was
+adopted anyway on the leaked numbers, then reverted (commit `6bdc5c3`) once this was
 caught. The table and `WINNERS_UNDER_PREDICT_WEEKLY` below are updated to the deduped
 numbers so that re-running this script today does not re-recommend `pass_yds`.
 The isotonic winner set is now FOUR stats: `pass_cmp`, `rec_ct`, `rec_yds`, `rush_yds`.
@@ -22,7 +22,7 @@ does not return as a candidate." Do not act on the `pooled` numbers below as cur
 evidence for anything.
 
 Gate: docs/superpowers/specs/2026-08-30-curve-adoption-followup-preregistration.md
-(committed as c6dc0b7, BEFORE this script was run). This script does not
+(committed as 8a0afae, BEFORE this script was run). This script does not
 choose, tune, or reinterpret anything the gate does not already say. It
 measures, prints every table the gate requires, and reports the verdict.
 

@@ -1,7 +1,7 @@
 """Third and final curve-adoption measurement: leave-one-out top10 stability.
 
 Gate: docs/superpowers/specs/2026-08-30-curve-adoption-third-measurement.md
-(committed as 17bcb91, BEFORE this script was run and BEFORE any number in
+(committed as 80ebed6, BEFORE this script was run and BEFORE any number in
 it was seen). This script does not choose, tune, or reinterpret anything the
 gate does not already say.
 

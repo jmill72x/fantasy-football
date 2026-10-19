@@ -15,7 +15,7 @@ the Mac mini. They're kept privately in three more places:
 
 | Copy | Where | State |
 |---|---|---|
-| **Private data repo (the main copy)** | `jmill72x/fantasy-football-data` (private GitHub repo), cloned at `~/Projects/fantasy-football-data`; by season, source and week | Created and loaded from the 2026 archive 2026-10-19, with a `MANIFEST.sha256` and a `git bundle --all` of this repo. Its README says how to add each week |
+| **Private data repo (the main copy)** | `jmill72x/fantasy-football-data` (private GitHub repo), cloned at `~/Projects/fantasy-football-data`; by season, source and week | Created and loaded from the 2026 archive 2026-10-19, with a `MANIFEST.sha256` and the pre-rewrite `git bundle --all` of this repo (the only copy of its history before 2026-10-19). Its README says how to add each week and how to restore `data/` |
 | Local archive | `~/Archive/fantasy-football-data/<season>/` on the mini (dir 700, files 600) | 2026 archived 2026-10-19 |
 | **Pi copy (the fallback)** | piNAS, Documents share: `Documents/fantasy-football-data/<season>/` (on the Pi: `<data disk>/Documents/fantasy-football-data/`, where the data disk is the `/srv/dev-disk-by-uuid-…` mount holding Documents) | 2026 copied and checksum-verified 2026-10-19 |
 
@@ -36,9 +36,32 @@ What the 2026 archive holds, and why 2027 needs it:
   in-season CBS pages as of that day, the real CBS pages the tests use today, and the
   working records NEXT.md cites.
 
-To restore onto a fresh checkout, copy `extracts/` to `data/extracts/` and `weekly/` to
-`data/weekly/`. The CBS login (`data/browser-profile/`) is never archived: it's a live
-credential, so recreate it with `./.venv/bin/python ops/cbs_login.py`.
+### Restoring `data/` onto a fresh checkout
+
+The code reads `data/extracts/<Vendor>/<season>/` and `data/weekly/<season>/`. The data
+repo is laid out by season and source instead, so copy across like this (checked
+2026-10-19: every gitignored file in the live `data/` has a byte-identical copy in the data
+repo):
+
+```bash
+cd ~/Projects/fantasy-football
+D=~/Projects/fantasy-football-data          # git clone it first if it's missing
+mkdir -p "data/extracts/Draft Sharks/2026" data/extracts/Footballguys/2026 \
+  "data/extracts/Fantasy Pros/2026" data/extracts/_templates data/weekly
+cp -p "$D"/2026/draftsharks/preseason/*  "data/extracts/Draft Sharks/2026/"
+cp -p "$D"/2026/footballguys/preseason/* data/extracts/Footballguys/2026/
+cp -p "$D"/2026/fantasypros/preseason/*  "data/extracts/Fantasy Pros/2026/"
+cp -p "$D"/templates/*                   data/extracts/_templates/
+test ! -e data/weekly/2025 && cp -pR "$D"/2025/cbs/game-logs data/weekly/2025
+git status --short                          # must print nothing: all of this is gitignored
+```
+
+Add each later season the same way (its `<season>/<source>/preseason/` and
+`<season>/cbs/game-logs/`). From the local archive or the Pi copy instead, copy
+`<season>/extracts/` to `data/extracts/` and `<season>/weekly/` to `data/weekly/`.
+`data/league/` (prices, bids, the roster sheets) is tracked, so a clone already has it.
+The CBS login (`data/browser-profile/`) is never archived: it's a live credential, so
+recreate it with `./.venv/bin/python ops/cbs_login.py`.
 
 ## Calendar
 
@@ -77,7 +100,15 @@ cd ~/Projects/fantasy-football
 ```
 
 The suite count is in NEXT.md's machine-checked block. Three tests skip when
-`data/weekly/` is missing; restore it from the archive first.
+`data/weekly/` is missing; restore it first (above).
+
+**On a new machine or a fresh clone** (never re-clone the live checkout: its `data/`,
+`.venv`, logs and CBS login aren't in git): clone the public repo and the private data
+repo side by side under `~/Projects/`, create the venv with `/usr/bin/python3 -m venv
+.venv` (macOS's Python is 3.9.6, the pinned version), install as above, restore `data/`
+(above), then install the browser for the in-season capture with `./.venv/bin/python -m
+playwright install chromium` and log in to CBS with `./.venv/bin/python ops/cbs_login.py`
+(`docs/operations/in-season-alerting.md`, setup).
 
 ### 2. League rules
 
@@ -160,8 +191,9 @@ PYTHONPATH=src ./.venv/bin/python -m sffl.cli render \
   --xlsx output/sffl-2027.xlsx --pdf output/sffl-2027.pdf
 ```
 
-It prints a `CROSS-SEASON apply` note; that's expected. Swap `render` for `value` and the
-two output flags for `--out board.csv` to get the CSV only. Checked 2026-10-19 with the
+It prints a `CROSS-SEASON apply` note; that's expected. For the CSV only, swap `render`
+for `value`, drop `--byes` (`value` doesn't take it) and swap the two output flags for
+`--out board.csv`. Rechecked 2026-10-19: `render`, `value` and `plan` all run this way. Checked 2026-10-19 with the
 2026 extract standing in for a 2027 file: it runs and prints that note.
 
 How to read it (NEXT.md, the 2026 holdout result): **MY$ for round-one targets, EST$ for
@@ -200,7 +232,11 @@ Submit by the league's deadline. NEXT.md's 2026 sealed-bid entries hold the reas
 ### 12. After the auction: test, then refit
 
 1. **First, score the 2027 prices against `market/2026.yaml`** before any refit. It's the
-   one clean out-of-sample test of last year's model.
+   one clean out-of-sample test of last year's model. **No command does this yet:** the
+   2026 result (NEXT.md, "2026 PRICES — THE HOLDOUT RESULT") was measured ad hoc, and
+   `value` refuses `--market` with `--prices`. A board item covers adding one; until
+   then, reproduce NEXT.md's tables (EST$ and MY$ mae, rmse and bias, overall and by
+   price band) against the joined prices before running step 3.
 2. Run the pre-registered RB/FLEX replacement test (NEXT.md, "The RB positional gap"). It
    needs 2026 season results (step 6 and "Collect and archive").
 3. Then fit the 2027 model:
@@ -225,7 +261,9 @@ curves change (`tests/test_docs_match_artifacts.py` checks it).
 - Change `--curves` on line 84 if step 6 changed the curves.
 - Refresh the CBS login if it has expired: `./.venv/bin/python ops/cbs_login.py`.
 - Rehearse with `ops/run_alert.sh tuesday --dry-run`. If CBS changed its pages, the
-  `expect_tokens` guards refuse them loudly.
+  `expect_tokens` guards refuse them loudly. A dry run still captures, so it overwrites
+  `data/captures/` and re-runs the injury fetch (a `claude -p` call): in season, archive
+  the week first (below).
 - The launchd jobs and their schedules are Vision's; ask through Jarvis if they need to be
   reloaded.
 
@@ -235,18 +273,24 @@ Next season's model changes compare projections with what actually happened, so 
 week's CBS projections and every week's actual results must be kept, before CBS rolls the
 season over and drops them.
 
-**State on 2026-10-19:** this isn't automated yet (board item, P1). The alert jobs save
-the current week's CBS pages to `data/captures/`, but each run overwrites the last, and
-nothing collects actual results. Weeks before the 2026-10-19 snapshot are not archived.
+**State on 2026-10-19 (audited):** this isn't automated yet (board item, P1), and nothing
+has been collected. The alert jobs save the current week's CBS pages to `data/captures/`,
+but each run, dry runs included, overwrites the last, and nothing collects actual
+results. The archive, the Pi and the data repo hold no weekly folder yet. The only 2026
+in-season pages kept are the 2026-10-19 snapshot (week 6). Whether CBS still serves
+weeks 1 to 5 is unchecked.
 
-Until it's automated, after the Tuesday run each week:
+Until it's automated, after the Tuesday run each week (the pages are the eight groups in
+NEXT.md's `weekly_groups`, plus the roster and the injury files):
 
 ```bash
 cd ~/Projects/fantasy-football
 WK=wk07                                     # the NFL week the pages are for
 D=~/Archive/fantasy-football-data/2026/cbs-weekly/$WK
-(umask 077 && mkdir -p "$D" && cp -p data/captures/*.txt "$D"/ \
-  && cd "$D" && shasum -a 256 *.txt > MANIFEST.sha256)
+test ! -e "$D" && (umask 077 && mkdir -p "$D" && cd data/captures \
+  && cp -p RB-WR-TE.txt tqb.txt k.txt dst.txt RB-WR-TE-ROS.txt TQB-ROS.txt K-ROS.txt \
+       DST-ROS.txt roster.txt injuries-*.json "$D"/ \
+  && cd "$D" && shasum -a 256 * > MANIFEST.sha256)
 PI=$(ssh jeff@pinas 'ls -d /srv/dev-disk-by-uuid-*/Documents' | head -1)/fantasy-football-data/2026
 ssh jeff@pinas "mkdir -p -m 700 '$PI/cbs-weekly' && test ! -e '$PI/cbs-weekly/$WK'" \
   && scp -p -r "$D" "jeff@pinas:$PI/cbs-weekly/" \

@@ -4,9 +4,9 @@
 **Status:** approved in brainstorming; data sources VERIFIED 2026-08-28, not yet planned
 
 > **Updated 2026-08-30 (docs audit) — this was planned and largely built; the module names
-> below were not what shipped.** The read path merged to `main` on 2026-08-29 (`09e1b0d`,
+> below were not what shipped.** The read path merged to `main` on 2026-08-29 (`77ac839`,
 > plan `docs/superpowers/plans/2026-08-28-in-season-core.md`), and scheduled alerting merged
-> the same day (`93314a1`, plan `2026-08-29-in-season-automation.md`). The proposed module
+> the same day (`0e67d04`, plan `2026-08-29-in-season-automation.md`). The proposed module
 > table below is a design sketch, not a map of the tree — nothing named `weekly_proj.py`,
 > `roster.py` or `waiver.py` exists. What shipped instead:
 >

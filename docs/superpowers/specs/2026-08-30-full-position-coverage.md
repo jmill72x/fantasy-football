@@ -43,7 +43,7 @@ quarterbacks.
 31 and `pass_cmp` from 4 to 29. The scoring is ready and waiting.
 
 > **Corrected 2026-08-30 (later the same day):** `pass_yds` is back to **4 anchors**. Its
-> isotonic adoption was reverted (commit `e82d2e2`) after re-measurement on de-duplicated
+> isotonic adoption was reverted (commit `6bdc5c3`) after re-measurement on de-duplicated
 > data showed it losing to the baseline under `predict_weekly` — see
 > `calibration/2025.provenance.yaml`, which is the authority. `pass_cmp`'s 4 → 29 stands.
 > This does not change anything in this spec: TQB scoring never depended on which builder

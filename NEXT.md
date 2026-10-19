@@ -50,10 +50,10 @@ was fitted on; sha256 matches the pin), `data/weekly/2025/`, a snapshot of
 **The private data repo is the main copy:** `jmill72x/fantasy-football-data` (private),
 cloned at `~/Projects/fantasy-football-data`. Jeff created it 2026-10-19 and it was loaded
 the same day from the archive above (manifest verified first), organised by season,
-source and week, with its own `MANIFEST.sha256` and a verified `git bundle --all` of this
-repo (`bundles/fantasy-football-2026-10-19.bundle`, main at `d378a31`), taken before the
-history rewrite. Its README says how to add each week. The Pi stays the fallback. Its
-first commit (`8ab9bfb`) is on GitHub (checked with `ls-remote` 2026-10-19).
+source and week, with its own `MANIFEST.sha256` and two verified `git bundle --all`s of
+this repo's old history (below). Its README says how to add each week and how to restore
+this checkout's `data/` from it. The Pi stays the fallback. Its main is `0dca832` on
+GitHub (checked with `ls-remote` 2026-10-19; the manifest verifies).
 
 **Today's files hold no licensed or real CBS content (HEAD cleanup, 2026-10-19).** Ordinary
 commits, no history change:
@@ -70,31 +70,91 @@ commits, no history change:
   in `sources/cbs-weekly.yaml`'s comments and inline in the tests are gone too.
 - Verified by a rescan of every tracked file against the private originals (the vendor
   extracts, the real fixtures, all CBS captures, the old licensed fixture blobs): 0
-  findings. The same scan finds 445 at `a4dacd3`. The script, which reads the private
-  data and so stays out of this repo, is
-  `~/.local/state/jarvis/reports/fantasy-rewrite-tools/rescan.py` (run it with the repo
-  path; `--tree` scans HEAD). The generator and repair scripts that built the fixtures sit
-  beside it.
+  findings. The same scan found 445 at the pre-rewrite `a4dacd3` (that id exists only in
+  the pre-rewrite bundle now). The script, which reads the private data and so stays out
+  of this repo, is `~/.local/state/jarvis/reports/fantasy-rewrite-tools/rescan.py` (run it
+  with the repo path; `--tree` scans HEAD). Since the rewrite it reads the old fixture
+  blobs from the pre-rewrite bundle in the data repo. `history_scan.py` beside it scans
+  every blob and commit message. The generator and repair scripts that built the fixtures
+  sit beside it too.
+- **Reading a finding:** the reference set includes the live `data/captures/`, which
+  every alert run (and every dry run) refreshes. On 2026-10-19 the scan read 0 against the
+  morning snapshot and 2 after that afternoon's capture: in both, a constructed fixture
+  row's numbers happened to match a *different* player's new CBS row. That's a
+  coincidence, not a leak. Before acting on a finding, check which player it matched.
 - **Not cleaned, by decision:** the 2025 CBS game logs behind the scoring validation
   (`tests/fixtures/weekly_sample.csv`, `tests/test_scoring.py`'s golden lines, the
   `poc/validate_*.py` and `seed_weekly.py` logs). They're Jeff's call (the history-risk
   report, section 3c). Single real CBS ids in `src/` docstrings and NEXT.md prose stay,
   as public identifiers.
 
-**The history rewrite is the last step.** The plan, with Jeff's 2026-10-19 decisions
-(remap the personal author email to the noreply address, force-push in a quiet window
-between alert runs, ask GitHub Support to purge), is
-`~/.local/state/jarvis/reports/fantasy-history-rewrite-plan-2026-10-19.md`. It runs in a
-fresh clone, never here: this checkout holds the gitignored data, the venv and the CBS
-login.
+**The history rewrite is DONE (2026-10-19).** `git-filter-repo --sensitive-data-removal`
+ran in a fresh clone (never here) and was force-pushed the same day: GitHub main went from
+`1a7cfee` to `2a84de7`, and the tree is unchanged (`2085f1a`). What changed: the licensed
+and real CBS content in 140 old blob versions (old CBS fixture versions were swapped
+for the constructed ones), the personal author email (now the GitHub noreply address), and
+**every commit id**, from the root commit on. Commit count (291), merges (18), dates,
+names and parents are all identical. 2025 game logs are kept, by decision. The three
+local branches (`wire-consensus`, `in-season-automation`, `jarvis/discord-feed`) were
+bundled, then deleted; main is the only branch, and this checkout has been gc'd, so the
+old commits are gone from it.
 
-**Still open:**
+- **The old history lives only in the pre-rewrite bundle:**
+  `bundles/fantasy-football-pre-rewrite-2026-10-19.bundle` in the private data repo
+  (sha256 `08e9c8a4…f97e`, main `1a7cfee` plus the three branches; the only copy of
+  `wire-consensus`), with the same file on the Pi under
+  `Documents/fantasy-football-data/bundles/` (checksum re-checked 2026-10-19). The data
+  repo's earlier `fantasy-football-2026-10-19.bundle` (main at the pre-rewrite `d378a31`)
+  is an older subset of it. Restore with `git clone <bundle>`.
+- **Old ids:** a commit id quoted before 2026-10-19 (in a chat, a report, an old note) is
+  dead on GitHub. Map it with
+  `~/.local/state/jarvis/reports/fantasy-rewrite-tools/rewrite-2026-10-19/filter-repo-commit-map`
+  (old full id, new full id; match on the prefix). Every id quoted in this repo's tracked
+  files was updated on 2026-10-19, except where a line describes the bundle's own
+  contents (`d378a31`, `a4dacd3` above).
+- **GitHub's cached views:** the request to purge cached views of the old commits (and to
+  run GC) has been filed with GitHub Support and is pending. Until it's done, old commit
+  URLs may still render on github.com.
+- The plan, with the run's record and the section-E checks, is
+  `~/.local/state/jarvis/reports/fantasy-history-rewrite-plan-2026-10-19.md`.
+  `history_scan.py` over this checkout on 2026-10-19: 779 blobs, 0 commit messages
+  flagged, and the 2 blob hits were the coincidence described above.
 
-- **The weekly CBS collection (P1)** isn't automated. The alert overwrites
-  `data/captures/` every run and nothing collects actual results, so no history of weeks 1
-  to 6 was kept (only a few stray pages). Whether CBS still serves past weeks'
-  projections is unchecked. Until it's built, follow the runbook's manual routine each
-  Tuesday, and collect the season's results before CBS rolls over.
+**Still open: the weekly CBS collection (P1) doesn't exist yet.** The 2026-10-19 audit
+found nothing collecting 2026 data anywhere:
+
+- `data/captures/` is overwritten by every run, dry runs included. `data/weekly/` holds
+  only 2025. The archive, the Pi and the data repo have no `cbs-weekly/` or
+  `2026/cbs/weekly/` at all. The one 2026 in-season record is the 2026-10-19 snapshot
+  (week 6 pages, plus a few stray August and September pages).
+- Nothing collects actual results (CBS points and game logs) for 2026. The step-6 curves
+  rebuild and the step-12 RB/FLEX test both need them, and CBS drops them when it rolls
+  the season over.
+- Whether CBS still serves weeks 1 to 5 (projections or results) is unchecked.
+- Until it's automated, follow the runbook's manual routine each Tuesday.
+
+**2027 readiness audit (2026-10-19).** The runbook was walked as if in August 2027, with
+the 2026 files standing in for 2027:
+
+| Step | Result |
+|---|---|
+| Data restore | OK: every gitignored file in `data/extracts/` and `data/weekly/` has a byte-identical copy in the data repo (sha256 matched), and `data/league/` is tracked. The runbook now gives the copy commands from the data repo's layout (it gave only the archive's). A full restore into a fresh clone was not run: the auto-mode classifier blocked running code in a scratch clone |
+| 1. Environment | Fixed: the runbook now covers a fresh machine (venv, Chromium for capture, the data restore). 918 passed in this checkout |
+| 2, 3. League profile, byes | OK: `DEFAULT_LEAGUE` and `DEFAULT_BYES` at the lines named |
+| 4, 5. Draft Sharks export, ingest | OK: the 08-23 file is 47 columns and 552 rows; ingest runs |
+| 6. Curves | OK as documented: `poc/build_calibration.py` reads `data/weekly/2025` and reproduces `calibration/2025.yaml` byte for byte |
+| 7, 8. Price the board, plan | OK: `render` and `plan` run as written and print the CROSS-SEASON note. Fixed: `value` takes no `--byes` |
+| 9, 10, 11. Print, sealed bid, league data | Unchanged: needs Jeff (the two-sheet print has still never been verified) |
+| 12. Out-of-sample test, refit | Gap: the out-of-sample price scoring has no command (the 2026 result was measured ad hoc), so it isn't reproducible. `fit-market` runs and reproduces `market/2026.yaml` (only `fitted_on` differs) |
+| 13. In-season switch-over | OK: week-1 date and `--curves` at `ops/run_alert.sh` lines 57 and 84. `ops/run_alert.sh tuesday --dry-run` ran (injury fetch stubbed, see below) |
+| Collect and archive | Gap: not built (above) |
+| Removed files | OK: nothing in the runbook, the in-season runbook, README or CLAUDE.md names a file the cleanup or rewrite removed |
+
+The dry run calls `ops/fetch_injuries.sh`, which starts a `claude -p` session. An agent
+that may not start sessions can rehearse with `CLAUDE_BIN=<a stub that exits 1>`: the
+fetch fails as designed, the digest is marked DEGRADED and exits 1, and the rest of the
+run is real. The fetch deletes `data/captures/injuries-<kind>.json` first, so back that
+file up and put it back afterwards.
 
 ## Where things stand
 
@@ -107,15 +167,15 @@ artifacts render. **TODO B is done and answered NO** (see below). What remains i
 (`sffl week` — weekly waivers and start/sit). It had three pre-merge fix waves, all on
 2026-08-28: a review wave (C1/I1-I5/I8), a verification-pass wave (F1/F3/F4/F5/F8), and a
 second C1 wave (the monotone-envelope fix). **MERGED to `main` 2026-08-29 as commit
-`09e1b0d` ("Merge in-season core: sffl week --waivers and --start-sit"); the
+`77ac839` ("Merge in-season core: sffl week --waivers and --start-sit"); the
 `in-season-core` branch is gone.** (This paragraph and the status table below both said
 "lives on branch `in-season-core` and is still UNMERGED" until 2026-08-30 — that was
-already false when written; verify with `git merge-base --is-ancestor 09e1b0d main`.)
+already false when written; verify with `git merge-base --is-ancestor 77ac839 main`.)
 See the status table below and "What works today."
 
 **A sixth: in-season automation** — capture, StatsDeck injury extraction, and the
 scheduled ntfy alerts (Friday and Sunday at merge; a Tuesday run was added 2026-09-16).
-**Also MERGED to `main` 2026-08-29, as commit `93314a1`.** Its runbook is
+**Also MERGED to `main` 2026-08-29, as commit `0e67d04`.** Its runbook is
 `docs/operations/in-season-alerting.md`.
 
 **What the alerts gained in September and October, all on `main`:**
@@ -138,10 +198,10 @@ scheduled ntfy alerts (Friday and Sunday at merge; a Tuesday run was added 2026-
   undated intel are always kept.
 
 **A seventh, still later addition: full position coverage (TQB/K/DST) — MERGED to
-`main` 2026-08-30 as `26031e8`; the `position-coverage` branch is gone.** (This
+`main` 2026-08-30 as `1838df0`; the `position-coverage` branch is gone.** (This
 paragraph read "lives on branch `position-coverage`, UNMERGED, as of 2026-08-30"
 until 2026-08-31, when it was already false — the same drift the in-season-core
-paragraph above records. Verify with `git merge-base --is-ancestor 26031e8 main`.) `sffl alert`/`sffl week` now capture
+paragraph above records. Verify with `git merge-base --is-ancestor 1838df0 main`.) `sffl alert`/`sffl week` now capture
 and score all eight lineup slots, not five - see `docs/superpowers/specs/
 2026-08-30-full-position-coverage.md` and the plan alongside it.
 
@@ -181,7 +241,7 @@ was verified byte-identical with and without the duplicates.
 briefly stale (reading "132 distinct players... 48 distinct players..."), and this note
 used to say so and to instruct a future reader to leave it alone — but the file was
 legitimately regenerated for an unrelated reason a few hours later, by the `pass_yds`
-revert (commit `e82d2e2`), and its header now correctly reads **127 distinct players /
+revert (commit `6bdc5c3`), and its header now correctly reads **127 distinct players /
 2339 player-weeks** (isotonic) and **46 distinct players / 777 player-weeks**
 (interpolated). Verified by re-running `poc/build_calibration.py`, which reproduces both
 generated files byte-for-byte (`git status` clean afterwards).
@@ -193,7 +253,7 @@ default and what `score_week` actually calls): isotonic still beats the baseline
 LOSES to the baseline (0.1572 vs 0.1520)** - under the leaked data it had appeared to win
 (0.1524 vs 0.1659). Under `predict_raw` (the auction-board predictor), all five still
 hold post-dedup, `pass_yds` included (0.1420 vs 0.1713). **ACTED ON 2026-08-30 (commit
-`e82d2e2`):** `pass_yds`'s isotonic adoption was no longer justified by an honest
+`6bdc5c3`):** `pass_yds`'s isotonic adoption was no longer justified by an honest
 cross-validation under the predictor that actually matters for `sffl week`'s weekly path
 (`predict_weekly`), so it was **reverted** to `build_curves`/interpolation — the shipped
 curve is NOT unaffected by this: `calibration/2025.yaml`, `market/2026.yaml`, and the
@@ -257,10 +317,10 @@ the PDF/iPad path is no longer the primary artifact and no annotation app needs 
 | **Plan 2 — value engine (VORP → dollars)** | ✅ merged, plus valuation corrections, lineup floors and market calibration — 165 tests |
 | **Plan 3 — Excel + PDF renderers** | ✅ merged — 203 tests. `sffl render` writes both |
 | **Plan 4 — silent auction planner** | ✅ merged — 279 tests. `sffl plan`; the table is on PDF p17 |
-| **In-season core — weekly waivers & start/sit (read-only)** | ✅ **merged 2026-08-29 (`09e1b0d`)** — 409 tests at merge, three pre-merge fix waves. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop. **ALL OF THIS IS NOW DONE — see the row below** |
+| **In-season core — weekly waivers & start/sit (read-only)** | ✅ **merged 2026-08-29 (`77ac839`)** — 409 tests at merge, three pre-merge fix waves. `sffl week --waivers` / `--start-sit`. **Deferred:** the write path (waiver submit, lineup set), `--trade`, the state file, and — not previously recorded — `(add, drop)` pairing: `--waivers` ranks additions only and does not yet choose which rostered player to drop. **ALL OF THIS IS NOW DONE — see the row below** |
 | **Write path + trades** | ✅ **DONE 2026-09-01/02.** `sffl trade` (rest-of-season valuation, targets by owner, give/get evaluation, drafted proposals — never contacts a manager); `sffl lineup` (live-verified round trip on the real team, atomic commit); `sffl claim` (waiver add+drop, dry-run verified). All three: DRY RUN by default, `--confirm` to act, and `--confirm` REFUSED when stdin is not a TTY so a scheduled job can never submit. The Tuesday digest carries the top 3 trade targets (moved from Friday 2026-09-16). **`(add, drop)` pairing done 2026-08-31.** THE ONE UNPROVEN PATH: `sffl claim` has never pressed Submit — every layer beneath it is verified, but the final POST is unexercised because it ends in a real drop and Jeff declined to spend one. Add/drop IS open (CBS: "5 waiver offers remaining", "processed on 9/16") |
-| **In-season automation — capture, injury fetch, scheduled alerts** | ✅ **merged 2026-08-29 (`93314a1`)** — `sffl alert`, `ops/run_alert.sh`, three launchd LaunchAgents (the Tuesday one added 2026-09-16). Runbook: `docs/operations/in-season-alerting.md`. (ntfy/launchd delivery was listed as "deferred" on the row above until 2026-08-30; it is not — it shipped here) |
-| **Full position coverage — TQB/K/DST** | ✅ MERGED (`26031e8`) — 909 tests. All eight lineup slots captured and scored |
+| **In-season automation — capture, injury fetch, scheduled alerts** | ✅ **merged 2026-08-29 (`0e67d04`)** — `sffl alert`, `ops/run_alert.sh`, three launchd LaunchAgents (the Tuesday one added 2026-09-16). Runbook: `docs/operations/in-season-alerting.md`. (ntfy/launchd delivery was listed as "deferred" on the row above until 2026-08-30; it is not — it shipped here) |
+| **Full position coverage — TQB/K/DST** | ✅ MERGED (`1838df0`) — 909 tests. All eight lineup slots captured and scored |
 
 Verify state in one command:
 
@@ -474,13 +534,13 @@ Update this block at the end of every session so the next one can resume blind.
       fitted/regularised-curve follow-up TODO B called for actually ran. It cleared its
       gate for FIVE stats on 2026-08-30 — and later the same day one of the five,
       `pass_yds`, was withdrawn, leaving FOUR. Read the sequence, not either number
-      alone: **five adopted, then four from commit `e82d2e2` onward; four is what
+      alone: **five adopted, then four from commit `6bdc5c3` onward; four is what
       ships.** Measured on the full dataset (build set + held-back, 132/2424 -
       **corrected 2026-08-30 to 127/2339**, four files carried duplicate entities;
       see the dedup note near the top of this file). `pass_yds`'s cross-validated win
       over the baseline did NOT survive de-duplication under the weekly predictor
       (`predict_weekly`: 0.1572 vs baseline 0.1520, a loss) and was **reverted**
-      (commit `e82d2e2`) - the shipped curve is back to interpolated, byte-identical to
+      (commit `6bdc5c3`) - the shipped curve is back to interpolated, byte-identical to
       the pre-adoption version. **The adopted set is four stats: `pass_cmp`, `rec_ct`,
       `rec_yds`, `rush_yds`.** Re-measured with `pass_yds` removed: `top10_cost` 15.1681 →
       13.2633, `mae` 4.3392 → 4.4154, `top10_bias` stays positive at +4.1025.
@@ -488,7 +548,7 @@ Update this block at the end of every session so the next one can resume blind.
       inert on the board). `market/2026.yaml` refit accordingly: `a=2.028495994199789,
       b=0.6511171620237226, mae=4.4154, top10_bias=4.1025`.
       **Resolved:** whether `def_pa`/`def_ya` should move to isotonic for the weekly
-      (`sffl week`) path WAS measured (commit `9b2fcdc`, pre-registered gate,
+      (`sffl week`) path WAS measured (commit `a27a452`, pre-registered gate,
       `docs/superpowers/specs/2026-08-30-def-curve-weekly-gate.md`) - **underpowered at
       n=21, keep the baseline.** No combination of `build_curves_isotonic`/
       `build_curves_pooled` cleared the pre-registered +0.15 Spearman margin on both
@@ -771,7 +831,8 @@ Not adopted three weeks out on in-sample single-year evidence. Revisit with 2026
 
 **DONE 2026-08-18.** `tests/fixtures/draftsharks_sample.csv` and
 `draftsharks_value_sample.csv` carried verbatim Draft Sharks projections, committed since
-`55d5d49` in a PUBLIC repo. Both now hold invented round numbers matching the
+`99936ed` (`55d5d49` before the 2026-10-19 rewrite, which replaced those versions
+too) in a PUBLIC repo. Both now hold invented round numbers matching the
 already-cleaned `draftsharks_market_fit_sample.csv`, as does the copy of the fixture
 quoted in `docs/superpowers/plans/2026-08-03-scoring-and-ingest.md`.
 
@@ -974,7 +1035,7 @@ follow-up, and a good one, but not an auction-week change.**
 
 ## THE FOLLOW-UP RAN — isotonic curves ADOPTED for 5 stats, later revised to 4 (2026-08-30)
 
-**REVISED 2026-08-30 (commit `e82d2e2`): `pass_yds` was REMOVED from the isotonic bundle
+**REVISED 2026-08-30 (commit `6bdc5c3`): `pass_yds` was REMOVED from the isotonic bundle
 after re-measurement on de-duplicated data showed it losing to the baseline under
 `predict_weekly` (0.1572 vs 0.1520). The section below is left as the historical record of
 the ORIGINAL five-stat adoption; wherever it describes what is currently shipped (the stat
@@ -991,7 +1052,7 @@ task reports). Do not re-run this experiment; read the record instead.
 **What changed.** `calibrate.build_curves_isotonic` (monotone/PAVA fit, already in
 `src/sffl/calibrate.py` and untouched by this adoption) replaces `build_curves`
 (interpolation) for exactly five stats **— as adopted on 2026-08-30; `pass_yds` was
-withdrawn later that same day (commit `e82d2e2`), so the shipped count is FOUR. The list
+withdrawn later that same day (commit `6bdc5c3`), so the shipped count is FOUR. The list
 immediately below is the ORIGINAL five, kept as the record of what was adopted; it is not
 what ships** — built on the FULL dataset — the original 48-player
 build set plus this held-back data folded in (132 distinct players, 2,424 player-weeks -
@@ -1007,7 +1068,7 @@ consistency" without a new gate:
 1. DST sits in `flat_priced_pools`, so its curve never reaches `_dollars` — structurally
    inert on the auction board.
 2. The weekly (in-season, `sffl week`) path where a DST curve DOES matter was never covered
-   by any pre-registered gate in this experiment. **RESOLVED 2026-08-30 (commit `9b2fcdc`):**
+   by any pre-registered gate in this experiment. **RESOLVED 2026-08-30 (commit `a27a452`):**
    a pre-registered gate (`docs/superpowers/specs/2026-08-30-def-curve-weekly-gate.md`) was
    run — **underpowered at n=21, keep the baseline.** No candidate cleared the pre-registered
    +0.15 Spearman margin on both k=5 and leave-one-out; this is underpowered evidence, not a
@@ -1038,11 +1099,11 @@ effect of +2.62** — the gain does not concentrate in one or two players.
 - `poc/build_calibration.py` — now the single source of truth, per-stat: `build_curves_isotonic`
   on build-set + held-back for the five stats above, `build_curves` on the build set only for
   `def_pa`/`def_ya`. Re-running it reproduces the committed files byte-for-byte (re-verified
-  2026-08-30). **Superseded 2026-08-30 by commit `e82d2e2`: it is now isotonic for FOUR
+  2026-08-30). **Superseded 2026-08-30 by commit `6bdc5c3`: it is now isotonic for FOUR
   stats and `build_curves` for THREE — `pass_yds` moved to the interpolated side.**
 - `calibration/2025.yaml` — regenerated. `def_pa`/`def_ya` are byte-identical to the prior
   shipped file (verified); the other five changed as measured above. **Superseded
-  2026-08-30 (`e82d2e2`): `pass_yds` was regenerated back to its pre-adoption interpolated
+  2026-08-30 (`6bdc5c3`): `pass_yds` was regenerated back to its pre-adoption interpolated
   curve, so three stats — `def_pa`, `def_ya`, `pass_yds` — are byte-identical to the
   pre-adoption file and four changed.**
 - `calibration/2025.provenance.yaml` — NEW, sibling file. `calibrate.load_curves` crashes on
@@ -1058,7 +1119,7 @@ effect of +2.62** — the gain does not concentrate in one or two players.
   `a=2.0482551357513357, b=0.6459690793595126` (was `a=2.0115481304265863,
   b=0.6620227660597623`). New `diagnostics`: `mae=4.4758, top10_mae=8.8124,
   top10_bias=3.7312` (was `mae=4.3392, top10_mae=10.0638, top10_bias=5.1042`).
-  **SUPERSEDED 2026-08-30 (commit `e82d2e2`, `pass_yds` reverted): the COMMITTED
+  **SUPERSEDED 2026-08-30 (commit `6bdc5c3`, `pass_yds` reverted): the COMMITTED
   `market/2026.yaml` today is the four-stat refit, `a=2.028495994199789,
   b=0.6511171620237226`, `mae=4.4154, top10_bias=4.1025` — the numbers just above are
   historical, not what is currently shipped.**
@@ -1076,7 +1137,7 @@ effect of +2.62** — the gain does not concentrate in one or two players.
 - `data/weekly/2025/_held_back/README.md` — amended (not rewritten): the original finding is
   marked TRUE FOR INTERPOLATION and superseded for these five stats by the isotonic result
   above, with a pointer back to the full experiment record. **Superseded 2026-08-30
-  (`e82d2e2`): four stats, not five — that README carries its own dated
+  (`6bdc5c3`): four stats, not five — that README carries its own dated
   `REVISION 2026-08-30` block recording the `pass_yds` withdrawal.**
 
 **Full test suite: 654 passed** (was 653 — one added, `test_every_curve_stat_has_
@@ -1534,7 +1595,7 @@ when the data repo is missing. Re-run on the real page 2026-10-19 after the swap
 output as below.
 
 **RE-RUN 2026-10-19 — the result below replaces the 08-28 one, which had gone stale.** The
-curves changed after 08-28 (the isotonic adoption and the `pass_yds` revert, `e82d2e2`,
+curves changed after 08-28 (the isotonic adoption and the `pass_yds` revert, `6bdc5c3`,
 08-30) and nobody re-ran this. Today's output:
 
 ```
@@ -1554,7 +1615,7 @@ copied here: they're real CBS projections; run the script to see them.)
 
 **Read this as unstable, not as evidence.** That same Allen/Marks pair has now flipped
 three times as the curves changed: it reordered before the C1 monotone-envelope fix
-(`c1702e3`), agreed with CBS after it (the 08-28 reading of this section: "zero
+(`7ad665e`), agreed with CBS after it (the 08-28 reading of this section: "zero
 reorder"), and reorders again on today's curves. The two are a tenth of a point apart on
 both scorers. On this sample, calibration doesn't move a real ranking decision by a
 margin that means anything.

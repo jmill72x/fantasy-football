@@ -129,7 +129,7 @@ through the twin and "predicted" the held-out id almost exactly. **The leak flat
 BASELINE**, which makes it the conservative direction for four of the five stats and the
 decisive direction for the fifth.
 
-Re-measured on de-duplicated data under `predict_weekly` (commit `a8584da` fixed the leak at
+Re-measured on de-duplicated data under `predict_weekly` (commit `04e0926` fixed the leak at
 load; `poc/compare_calibration_methods.py` re-run):
 
 | stat | isotonic | baseline | condition 3 |
@@ -140,7 +140,7 @@ load; `poc/compare_calibration_methods.py` re-run):
 | `rush_yds` | 0.0718 | 0.0926 | holds |
 | `pass_yds` | 0.1572 | 0.1520 | **FAILS** (had appeared to win 0.1524 vs 0.1659 under the leak) |
 
-`pass_yds` was **reverted** to `build_curves` (commit `e82d2e2`). A tie would already fail
+`pass_yds` was **reverted** to `build_curves` (commit `6bdc5c3`). A tie would already fail
 condition 3 as written; this is not a tie. **The adopted, currently-shipped set is FOUR
 stats: `pass_cmp`, `rec_ct`, `rec_yds`, `rush_yds`.**
 
