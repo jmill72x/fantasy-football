@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `929` passed
+- full_suite: `935` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -82,6 +82,20 @@ commits, no history change:
   morning snapshot and 2 after that afternoon's capture: in both, a constructed fixture
   row's numbers happened to match a *different* player's new CBS row. That's a
   coincidence, not a leak. Before acting on a finding, check which player it matched.
+- **The fixture guard runs in the suite (2026-10-19):** `tests/test_fixture_guard.py`
+  checks every file in `tests/fixtures/` against the data repo, read at runtime, for real
+  CBS ids, number runs from a vendor or CBS row, and a player's name with his real values.
+  A failure names file, line and kind only, never the content. Without the data repo
+  (fresh clone, CI) it skips with the reason; `SFFL_DATA_REPO` points it at another clone.
+  The weekly pages `sffl collect` adds grow all season and already hold 16 short
+  coincidences with *other* players' rows (weeks 1 to 6, at most 5 numbers long), so
+  against weekly pages a run counts only for the same player or at 8+ numbers; against
+  the vendor exports, the 10-19 snapshot and the 2025 game logs any 4-number run counts.
+  The rescan's two 10-19 coincidences fall under that rule, so `ALLOWLIST` is empty; add
+  an entry (file, kind, sha256 of the line) only after checking the match is another
+  player's row. `weekly_sample.csv` is exempt (below). Three self-tests plant a real CBS
+  row, the same row with its id and name changed, and a Draft Sharks row, in memory, and
+  must see them flagged. The rescan above doesn't read `cbs/weekly/` yet; the guard does.
 - **Not cleaned, by decision:** the 2025 CBS game logs behind the scoring validation
   (`tests/fixtures/weekly_sample.csv`, `tests/test_scoring.py`'s golden lines, the
   `poc/validate_*.py` and `seed_weekly.py` logs). They're Jeff's call (the history-risk

@@ -30,3 +30,8 @@ scoring engine's validation, and swapping in invented lines would make that chec
 
 Never add a real capture or vendor export here. Put it in the private data repo and, if a
 test needs its shape, construct rows the way these were.
+
+`tests/test_fixture_guard.py` enforces this whenever the data repo is checked out: it fails
+on a real CBS id or a row matching vendor or CBS data in any file here (except
+`weekly_sample.csv`), naming only the file, line and kind of match. Its docstring has the
+rules and the allowlist for checked coincidences.
