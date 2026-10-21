@@ -31,3 +31,8 @@ data/captures/
 
 # launchd job output
 logs/
+
+# The direct injury fetcher's caches and state (sffl injuries-fetch): the
+# id crosswalk, Sleeper's player feed, the ESPN-off marker and the last
+# snapshot it derives status changes from. Third-party data, never committed.
+data/cache/

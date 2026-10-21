@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `935` passed
+- full_suite: `1012` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -48,7 +48,8 @@ Sunday alert runs at 11:45 since 10-20, so the 1 pm inactives (out at 11:30) can
   `Injury Report: <body part>: Questionable for Week 7 at <opponent>`, with an icon class
   (`icon-red_cross`, `icon-player-status-ir`, `icon-player-status-pup`, `icon-suspended`).
   The captured text loses them, so **`cbs_weekly.OUT_STATUSES` has never fired on a live
-  capture**. Build step 1 reads them in the capture's existing `page.evaluate` call.
+  capture**. Step 1 (built, below) reads them in the capture's existing `page.evaluate`
+  call.
 - A label applies only to the week it names. Bye players' labels name their next game's
   week, and on 10-20 seven stale labels still named week 5 or 6.
 - The icon carries only a news headline. The news body is RotoWire's, on the player page.
@@ -62,8 +63,70 @@ commissioner enters the playoff matchups by hand (`/standings/playoff-race`). NF
 starts Wed 2026-12-16, and week 17 ends Tue 2027-01-05. The plan's freeze means no
 injury-source switch from week 13 (Wed 12-02) on.
 
-**Next:** build steps 1 to 3, the replay test, Ultron's vet, then the switch on Jeff's OK
-(by Tue 12-01).
+**Built 2026-10-20: steps 1 to 3, staged, NOT live.** The jobs run from this working tree,
+so every new behaviour is off by default and the scheduled runs do exactly what they did:
+
+- **CBS designations: `sffl alert --cbs-designations`**, off until the switch.
+  - `capture(..., icons=True)` asks the same `page.evaluate` call for each row's icon
+    links and writes a sidecar `<page>.icons.json` keyed by CBS id. A stale sidecar is
+    deleted before each fetch.
+  - `sffl.cbs_icons` maps the labels to the parser's tags: Questionable Q, Doubtful D,
+    Out, Retired and Did Not Report O, Injured Reserve and NFI-R IR, PUP, SUSP. An unknown
+    phrase gets no tag, so it can't bench anyone.
+  - A label applies only to the week it names. It sets `PlayerProjection.status`, so
+    `is_out` finally excludes CBS's Out/IR/PUP/SUSP players. The roster's labels join the
+    injury block as "cbs" intel. A sidecar that can't be read is a banner and a non-zero
+    exit.
+  - Checked offline against the probe's saved pages: all 197 designation labels on the
+    week-7 RB/WR/TE page parse (Q 84, IR 90, O 15, PUP 6, D 1, SUSP 1, none unknown).
+    Called without icons, the script returns exactly today's rows.
+- **The direct feed: `sffl injuries-fetch --out <file>`** (`sffl.direct_injuries`).
+  - The sources are nflverse (the record), the ffverse crosswalk (cached a week), Sleeper
+    (cached 24 hours) and ESPN.
+  - ESPN gets one call per run with an honest User-Agent. A 403 or 429 writes
+    `data/cache/espn-off.json`, and ESPN stays off until someone deletes it. ESPN's
+    "Active" rows (mostly game recaps) are kept only as a change, i.e. a return.
+  - Requests go over HTTPS to six allowed hosts only, redirects included, with a 60-second
+    timeout and a byte cap on every response. Only CSV and JSON are parsed, with the
+    standard library.
+  - If nflverse fails, no file is written at all. It refuses the live `injuries-<kind>.json`
+    without `--allow-live-path`. Its caches and change state live in `data/cache/`
+    (gitignored).
+- **Matching: `injuries.for_roster(..., roster_rows=)`.** CBS id first, then name and team.
+  A TQB unit gets its quarterbacks' lines. It is used only for files whose rows carry CBS
+  ids, so StatsDeck's file keeps its name match. Change fields come from the fetcher's own
+  last snapshot. The stale docstrings in `injuries.py` and `alert.py` are fixed.
+
+**The replay (plan section 7) ran on 10-20.** All 376 official week-6 rows match StatsDeck's
+Sunday and Tuesday files on status, practice, team, position and body part. The display name
+differs on 9 rows: 8 are punctuation or a suffix, and 1 is a defensive end's nickname. For
+Jeff's roster, the official block is the same rows labelled "as of 08:41 EDT, via nflverse",
+and intel gains four real items. The full result is in the plan, and the files are in
+`.superpowers/sdd/2026-10-20-replace-statsdeck/replay-2026-10-20/` (gitignored).
+
+**Found while building (live today, NOT fixed in this change):**
+
+- **The roster parser drops every bye-week row.** `cbs_roster._ROW` requires the line to
+  end after the opponent, but a bye row is a single line with its stats on it. The 10-16
+  digest left out Chase and Jameson Williams. Friday 10-23 will leave out McConkey (a CBS
+  starter on bye in week 7), the Chargers TQB and Vidal, so the bye-starter warning can't
+  fire for them.
+- **The roster's CBS ids are missing on rows with a game.** The game time sits on its own
+  line, so `capture`'s id prefix lands on the stats line and `parse_lineup_rows` reads no
+  id. On 10-20 only bye rows carried one. The roster-projection join quietly uses the
+  composite key, and injury matching falls back to name and team for those rows.
+- **On Tuesdays the alert scores the week just played.** `run_alert.sh`'s formula gives
+  week 6 on Tue 10-20. The projections, best lineup and waiver ranking therefore come from
+  week 6's page, games already played, while the bye look-ahead uses week 7.
+
+**Next:**
+
+- Ultron vets steps 1 to 3 (plan section 8).
+- Then the switch, on Jeff's OK, by Tue 12-01:
+  - `run_alert.sh` runs `sffl injuries-fetch --allow-live-path` in place of
+    `fetch_injuries.sh` and passes `--cbs-designations`.
+  - `sffl collect` archives the sidecars.
+  - The runbook's StatsDeck sections are rewritten.
 
 ## DATA ARCHIVE AND THE 2027 RUNBOOK (2026-10-19)
 

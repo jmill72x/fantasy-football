@@ -104,8 +104,16 @@ _NAV_RETRIES = 1
 # an ad) is simply absent from the returned list - `_prefix_ids` below
 # treats "no entry for this row" identically to "this row's own text could
 # not be found," i.e. it is emitted unchanged.
+#
+# WITH ICONS (`withIcons` true, 2026-10-20): each row also lists its icon
+# links - CBS's injury designation, a news headline, a trend - read from the
+# same render pass. CBS draws a designation as an icon whose label lives in the
+# link's `aria-label` (and its holder's `title`), never in the row's text, so
+# `innerText` alone has never seen one (see `sffl.cbs_icons`). Called with no
+# argument, as the live alert does until the switch, `withIcons` is undefined
+# and every row is exactly {id, text}, as before.
 _ID_EXTRACT_JS = """
-() => {
+(withIcons) => {
   const rows = [];
   document.querySelectorAll('tr').forEach(tr => {
     const a = tr.querySelector("a[href*='playerpage/']");
@@ -115,7 +123,21 @@ _ID_EXTRACT_JS = """
     if (!m) return;
     const text = tr.innerText;
     if (!text) return;
-    rows.push({id: m[1], text: text});
+    const row = {id: m[1], text: text};
+    if (withIcons) {
+      row.icons = [];
+      tr.querySelectorAll('.playerIconsWrapper a.playerLink').forEach(link => {
+        const icon = link.querySelector("[class^='icon-'], [class*=' icon-']");
+        const holder = link.parentElement;
+        row.icons.push({
+          icon: icon ? icon.className : '',
+          label: link.getAttribute('aria-label')
+                 || (holder && holder.getAttribute('title')) || '',
+          subtab: link.getAttribute('subtab') || ''
+        });
+      });
+    }
+    rows.push(row);
   });
   return {full: document.body.innerText, rows: rows};
 }
@@ -248,6 +270,33 @@ def _capture_page_text(page):
     return _prefix_ids(data["full"], data["rows"])
 
 
+def _capture_page_with_icons(page):
+    """(text, rows): the page's prefixed text, as `_capture_page_text` gives
+    it, plus the raw rows WITH their icon links - one `page.evaluate` round
+    trip, so the icons come from the same render pass as the text."""
+    data = page.evaluate(_ID_EXTRACT_JS, True)
+    return _prefix_ids(data["full"], data["rows"]), data["rows"]
+
+
+def _write_icons_sidecar(path, rows, url):
+    """Write the icon sidecar for one page (see `sffl.cbs_icons`).
+
+    Written to a temporary name and renamed into place, so a reader never
+    sees half a file.
+    """
+    import datetime
+    import json
+
+    from sffl.cbs_icons import build_sidecar
+
+    data = build_sidecar(rows, url, datetime.datetime.now().isoformat(
+        timespec="seconds"))
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh)
+    os.replace(tmp, path)
+
+
 class CaptureError(Exception):
     """A page was fetched but must not be used."""
 
@@ -328,8 +377,17 @@ def _goto_with_retry(page, url, timeout_ms):
     raise last
 
 
-def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS):
+def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS,
+            icons=False):
     """Fetch each url with the stored login and save its text. Returns {url: path}.
+
+    With `icons=True` each page also gets a sidecar `<name>.icons.json` beside
+    its text: every row's icon links (CBS's injury designation, a news
+    headline), keyed by CBS id - see `sffl.cbs_icons`. The old sidecar is
+    removed before the page is fetched, so a failed fetch can never leave last
+    run's designations to be read as this run's. Same pages, same single
+    `evaluate` call, no clicks. Off by default: the live alert asks for icons
+    only once the switch turns them on (`sffl alert --cbs-designations`).
 
     Each PLAYER ROW's saved text is prefixed with its own CBS
     `id=<id>\\t`, when the row could be paired with a `playerpage/<id>`
@@ -364,6 +422,9 @@ def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS):
         try:
             page = ctx.new_page()
             for name, url in urls.items():
+                sidecar = os.path.join(out_dir, "%s.icons.json" % name)
+                if icons and os.path.exists(sidecar):
+                    os.remove(sidecar)
                 # domcontentloaded, not networkidle: see _SETTLE_WAIT_MS above
                 # for why networkidle hangs forever on the authenticated site.
                 try:
@@ -377,7 +438,10 @@ def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS):
                 # Blind settle wait: the DOM is ready but CBS renders the
                 # roster client-side afterward. See _SETTLE_WAIT_MS comment.
                 page.wait_for_timeout(_SETTLE_WAIT_MS)
-                text = _capture_page_text(page)
+                if icons:
+                    text, rows = _capture_page_with_icons(page)
+                else:
+                    text, rows = _capture_page_text(page), None
                 # Pass the final URL (after redirects) and page title, not the
                 # requested URL. A redirect to /login is invisible in requested URL
                 # but visible in page.url. Title never appears in body text.
@@ -385,6 +449,8 @@ def capture(urls, out_dir, profile_dir, timeout_ms=_NAV_TIMEOUT_MS):
                 path = os.path.join(out_dir, "%s.txt" % name)
                 with open(path, "w") as fh:
                     fh.write(text)
+                if icons:
+                    _write_icons_sidecar(sidecar, rows, page.url)
                 written[url] = path
         finally:
             ctx.close()

@@ -1216,3 +1216,35 @@ def test_tuesday_keeps_its_single_deadline_and_no_per_row_tag():
         ("Some Back", "RB", 3.1, "Rico Dowdle", "1", "W (10/3)")])
     assert "claims process ~2am Wednesday" in msg
     assert "clears 10/3" not in msg
+
+
+# --------------------------------------------- the direct feed (2026-10-20)
+
+def test_an_official_row_with_an_as_of_says_when_the_report_was_published():
+    # nflverse publishes once a day, so on a Friday afternoon its report is
+    # Thursday's. The as-of time says so; "official undated" never did.
+    row = Report(name="Pat Example", team="SEA", status="Questionable",
+                 practice="Limited Participation in Practice",
+                 reported_date="2026-10-23", detail="Knee", source="official",
+                 outlet="nflverse", as_of="2026-10-23 08:41 EDT")
+    msg = compose("friday", 0, [row], LINEUP, [], injuries_age_minutes=1)
+    assert "[official as of 2026-10-23 08:41 EDT, via nflverse]" in msg
+
+
+def test_a_row_without_an_as_of_renders_exactly_as_before():
+    msg = compose("friday", 0, [CHASE_OFFICIAL], LINEUP, [],
+                  injuries_age_minutes=1)
+    assert "[official 2026-09-05]" in msg
+
+
+def test_the_direct_feeds_own_warnings_are_printed_under_the_age_line():
+    msg = compose("tuesday", 0, [], LINEUP, [], injuries_age_minutes=2,
+                  injury_source_notes=["espn unavailable this run: HTTP 403"])
+    lines = msg.splitlines()
+    age = next(i for i, l in enumerate(lines) if l.startswith("Injury data fetched"))
+    assert lines[age + 1] == "!! espn unavailable this run: HTTP 403"
+
+
+def test_no_source_notes_means_no_extra_line():
+    msg = compose("tuesday", 0, [], LINEUP, [], injuries_age_minutes=2)
+    assert "unavailable this run" not in msg

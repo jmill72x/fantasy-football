@@ -20,10 +20,11 @@ DIFFERENTLY. The original version of this module led both kinds with the
 same official-then-intel block and only changed two header words - a
 cosmetic difference the spec explicitly rules out ("a Sunday alert that
 simply repeats Friday's news trains its reader to ignore it"). The fix was
-going to be "Friday leads with practice participation," but the real
-StatsDeck feed has no practice field at all - practice information, if it
-exists, is buried as prose inside `detail`. So Friday's lead block is status
-(with practice inlined per row when the feed happens to carry it), and when
+going to be "Friday leads with practice participation," but before the
+season the feed carried no practice field. So Friday's lead block is status
+with practice inlined per row (the official report rows have carried
+`practice` since the season began - but it is the report nflverse published
+that morning, so on a Friday it is Thursday's), and when
 the feed carries NO practice data for anyone on the roster, Friday says that
 explicitly rather than letting an empty `practice` field read as "nobody
 practiced" - an absent measurement must never print as a fact.
@@ -44,8 +45,8 @@ what is under it, so the official/intel split is built from every row.
 
 WHAT A ROW IS NOT ALLOWED TO RENDER AS. Two blank-field failures used to
 print as good news. An official row whose `status` arrived empty - the exact
-shape a renamed feed field produces, and `sffl.injuries` says that mapping
-is still provisional - collapsed to "no detail" in the status block and to
+shape a renamed feed field produces - collapsed to "no detail" in the status
+block and to
 "Questionable -> , since ..." in the change block; both read as "nothing
 wrong with this player". `_status_text` prints an official row's missing
 status as an explicit unknown instead. And a row with no status, practice,
@@ -199,10 +200,9 @@ def _status_text(r):
     """The row's status, or an explicit unknown for an official row.
 
     An official row with a blank status is a DATA PROBLEM, never a clean
-    bill of health. The official-row field mapping in `sffl.injuries` is
-    provisional (it has never been exercised against a real `report` row),
-    and if the feed spells the field differently every official row arrives
-    blank - which, interpolated raw, produced "Questionable -> , since ..."
+    bill of health. If a feed ever spells the status field differently from
+    what `sffl.injuries` maps, every official row arrives blank - which,
+    interpolated raw, produced "Questionable -> , since ..."
     in the change block and collapsed to "no detail" in the status block.
     Both read as "nothing wrong with this player". Printed as an explicit
     unknown instead, a broken mapping is unmissable in the message itself.
@@ -225,7 +225,10 @@ def _provenance(r):
     ("sleeper_feed", "web_digest", a beat writer) and is the whole reason
     intel rows are worth reading separately from each other - without it
     every intel line reads `[intel <date>]`, which merely repeats the block
-    heading. Official rows never carry one (see `sffl.injuries`).
+    heading. StatsDeck's official rows carry none; the direct fetcher's carry
+    "nflverse", and their `as_of` (when nflverse published the report)
+    replaces the undated label - on a Friday that time says the report is
+    Thursday's, which "official undated" never did.
 
     `tier` IS CORROBORATION STRENGTH, NEVER INJURY SEVERITY - "corroborated"
     vs "unconfirmed" says how sure StatsDeck's pipeline is that the report
@@ -234,7 +237,10 @@ def _provenance(r):
     "unconfirmed" sitting next to "Questionable" would look like a second
     opinion on the player rather than a note about the sourcing.
     """
-    bits = ["%s %s" % (r.source, r.reported_date or "undated")]
+    if getattr(r, "as_of", ""):
+        bits = ["%s as of %s" % (r.source, r.as_of)]
+    else:
+        bits = ["%s %s" % (r.source, r.reported_date or "undated")]
     if getattr(r, "outlet", ""):
         bits.append("via %s" % r.outlet)
     if getattr(r, "tier", ""):
@@ -511,7 +517,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             projections_age_hours=None, trade_targets=None, trade_error=None,
             starters_on_bye=None, next_week=None, next_bye=None,
             next_week_holes=None, waiver_targets=None, waiver_error=None,
-            stale_intel_dropped=0):
+            stale_intel_dropped=0, injury_source_notes=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -539,7 +545,9 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     read and had nothing on this roster - and the whole point of carrying it
     is that the two used to render identically. `injuries_age_minutes` is
     how old the injuries file was when it was read, or `None` if there was
-    no file to age.
+    no file to age. `injury_source_notes` are the direct fetcher's own
+    warnings (a source that failed, ESPN switched off after a block), each
+    printed under the age line; `None` for StatsDeck's file, which has none.
 
     `capture_error` and `projections_capture_error` are BOTH "nothing here
     can be trusted, short-circuit the whole digest" states, and are
@@ -740,6 +748,10 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         lines.append("")
     elif injuries_age_minutes is not None:
         lines.append(_injuries_age_line(injuries_age_minutes))
+        # A source the direct fetcher could not read (or switched off, like
+        # ESPN after a block) is said here, not left to read as a quiet week.
+        for note in injury_source_notes or []:
+            lines.append("!! %s" % note)
         lines.append("")
 
     no_news = ("  NOT FETCHED - see the injury-data warning above. This is "
@@ -775,8 +787,8 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
 
     if kind == "friday":
         lines.append("PRACTICE / STATUS on your roster:")
-        # The real feed currently has no `practice` field at all - it is
-        # never inferred from prose. A blank field printed as "no practice
+        # `practice` comes only from rows that carry it (the official report)
+        # and is never inferred from prose. A blank field printed as "no practice
         # data" is a stated absence; printed silently it would read as "this
         # player practiced fully," a fact nobody measured.
         if not injury_error and not any(r.practice for r in reports):

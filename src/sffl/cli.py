@@ -1545,12 +1545,27 @@ def _cmd_alert(args):
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import IdentityIndex, normalize_team
     from sffl.injuries import for_roster, fresh_intel, load as load_injuries
+    from sffl.injuries import rows_to_reports, source_notes
     from sffl.league import load_league
     from sffl.lineup import Candidate, best_lineup
     from sffl.notify import send, send_discord, topic_from_keychain
     from sffl.pool import score_week
+    from sffl import cbs_icons
 
     lg = load_league(args.league)
+
+    # CBS'S OWN DESIGNATIONS (`--cbs-designations`, built 2026-10-20, OFF
+    # until the StatsDeck switch). With it on, every page is captured with its
+    # icon sidecar (see sffl.cbs_icons): the labels set each projection's
+    # `status`, so `is_out` finally has CBS's Out/IR/PUP/SUSP to act on, and
+    # the roster's labels join the injury block as "cbs" intel. With it off
+    # the capture calls below are exactly what they were.
+    cbs_designations = getattr(args, "cbs_designations", False)
+    icons_kw = {"icons": True} if cbs_designations else {}
+    designation_failures = []
+    cbs_injury_rows = []
+    injury_roster_rows = None
+    injury_source_notes = None
 
     capture_error = None
     # Distinct from `capture_error` - see `_AllProjectionsFailed`'s
@@ -1636,7 +1651,7 @@ def _cmd_alert(args):
         # unverified roster parses to an empty one, and nothing downstream
         # can be trusted once that has happened.
         roster_written = capture({"roster": args.team_url}, args.out_dir,
-                                 args.profile_dir)
+                                 args.profile_dir, **icons_kw)
         roster_path = roster_written[args.team_url]
         # parse_lineup_rows, not parse_lineup/parse_roster: the page also
         # carries Jeff's CURRENT starting lineup, which is the actual
@@ -1666,6 +1681,15 @@ def _cmd_alert(args):
         current_starters = [(r.name, r.slot, normalize_team(r.team))
                             for r in starter_rows]
         roster_names = [r.name for r in roster_rows]
+        injury_roster_rows = roster_rows
+        if cbs_designations:
+            try:
+                cbs_injury_rows = cbs_icons.roster_rows(
+                    roster_rows,
+                    cbs_icons.load_sidecar(cbs_icons.sidecar_path(roster_path)),
+                    args.week, datetime.date.today().isoformat())
+            except (OSError, ValueError) as exc:
+                designation_failures.append(("roster", str(exc)))
         age_days = int(
             (datetime.datetime.now()
              - datetime.datetime.fromtimestamp(os.path.getmtime(roster_path)))
@@ -1697,12 +1721,21 @@ def _cmd_alert(args):
                    else _projections_url(group, args.week))
             try:
                 written = capture({group: url}, args.out_dir,
-                                  args.profile_dir)
+                                  args.profile_dir, **icons_kw)
                 rows = parse_weekly(written[url], group=group,
                                     week=args.week, season=lg.season)
             except (CaptureError, ValueError) as exc:
                 group_failures.append((group, str(exc)))
                 continue
+            if cbs_designations:
+                # CBS's label sets `status` where the page text carried none;
+                # a label naming another week never does (cbs_icons).
+                try:
+                    cbs_icons.apply_designations(
+                        rows, cbs_icons.load_sidecar(
+                            cbs_icons.sidecar_path(written[url])), args.week)
+                except (OSError, ValueError) as exc:
+                    designation_failures.append((group, str(exc)))
             group_rows.append((group, rows))
             # The page stamps its own freshness. Read here, while the file
             # path is still in hand, because nothing downstream keeps it.
@@ -2160,7 +2193,16 @@ def _cmd_alert(args):
         injury_fetch_failed = True
     else:
         try:
-            reports = for_roster(load_injuries(args.injuries), roster_names)
+            loaded = load_injuries(args.injuries)
+            # The direct feed's rows carry CBS ids, so they are matched by id
+            # first (and a TQB unit gets its quarterbacks' lines). StatsDeck's
+            # carry none and keep the name match - see injuries.for_roster.
+            if any(r.cbs_id for r in loaded) and injury_roster_rows is not None:
+                reports = for_roster(loaded, roster_names,
+                                     roster_rows=injury_roster_rows)
+            else:
+                reports = for_roster(loaded, roster_names)
+            injury_source_notes = source_notes(args.injuries) or None
             # Drop intel about games already played - see
             # injuries.INTEL_MAX_AGE_DAYS for the Week-2-note-in-Week-4 bug.
             reports, stale_intel_dropped = fresh_intel(
@@ -2203,6 +2245,15 @@ def _cmd_alert(args):
                 % (args.injuries, type(exc).__name__, exc))
             injury_fetch_failed = True
 
+    # CBS's own labels for the roster, read from this run's capture. Left out
+    # when the feed itself failed: the digest then says the status blocks are
+    # empty because nothing was fetched, and a CBS row under that line would
+    # contradict it. (The lineup gate above used CBS's labels either way.)
+    if cbs_injury_rows and injury_roster_rows is not None and not injury_error:
+        reports = reports + for_roster(
+            rows_to_reports(cbs_injury_rows, "intel"), roster_names,
+            roster_rows=injury_roster_rows)
+
     # Data that is real but not from this run is its own kind of wrong: it
     # renders last week's designations as today's. The alert says so, and
     # the run counts as degraded.
@@ -2231,7 +2282,8 @@ def _cmd_alert(args):
                    starters_on_bye=starters_on_bye,
                    stale_intel_dropped=stale_intel_dropped,
                    next_week=args.week + 1, next_bye=next_bye,
-                   next_week_holes=next_week_holes)
+                   next_week_holes=next_week_holes,
+                   injury_source_notes=injury_source_notes)
 
     # A PARTIAL capture failure - one to three of the four position-group
     # pages, with the roster and at least one other page still good - must
@@ -2259,6 +2311,17 @@ def _cmd_alert(args):
             "same as a position this pipeline never covers (see NOT "
             "EVALUATED above, if present).")
         body = body + "\n\n" + "\n".join(banner)
+
+    # --cbs-designations asked for CBS's labels and a page's sidecar could not
+    # be read: the will-not-play check on that page fell back to the page text,
+    # which has never carried a designation. Said in the pushed body.
+    if designation_failures and not capture_error:
+        des_banner = ["!! CBS DESIGNATIONS UNAVAILABLE on %d page(s) - the "
+                      "will-not-play check there used only the page text, "
+                      "which carries none:" % len(designation_failures)]
+        for page_name, reason in designation_failures:
+            des_banner.append("  - %s: %s" % (page_name, reason))
+        body = body + "\n\n" + "\n".join(des_banner)
 
     # A TRUE cross-group projection duplicate (the same name, position, AND
     # team claimed by two different pages - see `_merge_projection_groups`)
@@ -2434,10 +2497,31 @@ def _cmd_alert(args):
     # invocation, not a failed step, and it is still stated in the body.
     return 1 if (capture_error or projections_capture_error
                 or injury_fetch_failed or delivery_error or discord_error
-                or group_failures
+                or group_failures or designation_failures
                 or cross_group_duplicates or id_coverage_losses
                 or residual_projection_duplicates
                 or week_mismatch or stale_projections) else 0
+
+
+def _cmd_injuries_fetch(args):
+    """`sffl injuries-fetch`: run the direct injury feed once (see
+    sffl.direct_injuries). Refuses the live alert's own file unless told the
+    switch has happened, so a test run can never change what the alert reads."""
+    import os
+    import re
+
+    from sffl import direct_injuries
+
+    if (re.match(r"^injuries-(tuesday|friday|sunday)\.json$",
+                 os.path.basename(args.out))
+            and not args.allow_live_path):
+        print("error: %s is the live alert's injury file; write the direct "
+              "feed beside it (e.g. injuries-<kind>.direct.json) until the "
+              "switch, or pass --allow-live-path" % args.out, file=sys.stderr)
+        return 2
+    return direct_injuries.fetch(
+        args.out, args.cache_dir, season=args.season or None, kind=args.kind,
+        use_espn=not args.no_espn, use_sleeper=not args.no_sleeper)
 
 
 def _split_pool_by_owner(rows, classifier, roster_names, normalize_name):
@@ -3053,7 +3137,33 @@ def main(argv=None):
     alr.add_argument("--no-trade", action="store_true",
                      help="skip the Friday digest's trade block, and the "
                           "four rest-of-season page captures it needs")
+    alr.add_argument("--cbs-designations", action="store_true",
+                     help="also read CBS's own injury designations from the "
+                          "pages' icons (same pages, no clicks): they gate "
+                          "the will-not-play check and join the injury "
+                          "block. Off until the StatsDeck switch")
     alr.set_defaults(func=_cmd_alert)
+
+    inj = sub.add_parser("injuries-fetch",
+                         help="fetch the direct injury feed (nflverse, "
+                              "Sleeper, ESPN) into one file; public sources "
+                              "only, never CBS")
+    inj.add_argument("--out", required=True,
+                     help="where to write it - not the live alert's "
+                          "injuries-<kind>.json until the switch")
+    inj.add_argument("--kind", default="manual",
+                     choices=["tuesday", "friday", "sunday", "manual"])
+    inj.add_argument("--cache-dir", default="data/cache",
+                     help="the crosswalk and Sleeper caches, the ESPN-off "
+                          "marker and the change-tracking state")
+    inj.add_argument("--season", type=int, default=0,
+                     help="NFL season (default: from today's date)")
+    inj.add_argument("--no-espn", action="store_true")
+    inj.add_argument("--no-sleeper", action="store_true")
+    inj.add_argument("--allow-live-path", action="store_true",
+                     help="permit writing the live alert's own injuries "
+                          "file (the switch)")
+    inj.set_defaults(func=_cmd_injuries_fetch)
 
     co = sub.add_parser("collect", help="copy this week's CBS pages to the "
                                         "archive, the Pi and the private "

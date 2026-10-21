@@ -206,7 +206,11 @@ wasn't chosen), and no source has the 1 pm inactives at 11:30 (finding 3, decisi
 
 ## 6. Build order
 
-Each step is its own staged change, committed only on Jeff's "C&P".
+Each step is its own staged change, committed only on Jeff's "C&P". **Steps 1 to 3 were
+built on 2026-10-20 and are staged, but none of it is live:** the jobs run from the
+working tree, so every new behaviour is off by default (`sffl alert --cbs-designations`,
+and the new `sffl injuries-fetch`, which nothing calls yet). NEXT.md's "STATSDECK
+REPLACEMENT" section has what each step does.
 
 | Step | What | Effort |
 |---|---|---|
@@ -214,7 +218,7 @@ Each step is its own staged change, committed only on Jeff's "C&P".
 | 1 | **CBS designations.** The probe is done (finding 5). The code: `_ID_EXTRACT_JS` also returns each row's icon labels, in the same `page.evaluate` call. They go to a sidecar file per page (`<page>.icons.json`, keyed by CBS id), so the captured text and its parsers don't change. Labels map to the parser's tags: Questionable Q, Doubtful D, Out O, Injured Reserve and NFI-R IR, Physically Unable to Perform PUP, Suspension SUSP; Retired and Did Not Report count as out. A label applies only to the week it names, and it feeds `OUT_STATUSES`. No new pages, no clicks | Half a day |
 | 2 | **Injury fetcher**, a `sffl` subcommand: nflverse, the crosswalk (cached for a week), Sleeper and ESPN, written to the contract above. ESPN is called once per run with an honest User-Agent and no retry loop. A block (403 or 429) turns ESPN off until someone looks, and the digest says so. Standard library only (`urllib`, `csv`, `json`), with no new packages. Tests use constructed fixtures and no network | 1 day |
 | 3 | **Matching by CBS id first** in `for_roster` (then name and team), quarterback lines for TQB units, our own change fields, and the stale docstrings (`injuries.py` still calls the official mapping "provisional", and says the feed has no position field) | Half a day |
-| 4 | **The replay test** (section 7; Jeff confirmed it 10-20), then **Ultron's vet** of steps 1 to 3 (section 8) | Half a day |
+| 4 | **The replay test** (section 7; Jeff confirmed it 10-20; run 10-20), then **Ultron's vet** of steps 1 to 3 (section 8) | Half a day |
 | 5 | **Switch, on Jeff's OK only:** `run_alert.sh` runs the new fetcher instead of `fetch_injuries.sh`, which stays in the tree for a week as a one-line rollback. Never after week 12 (section 9) | 1 hour |
 | 6 | **Yahoo**, once Jeff has created the app and consented: a read-only client (GET only, enforced in code), the refresh token in the Keychain, and `sffl yahoo` roster, matchup, free-agent, standings and scoring commands. Projections only if Jeff misses them | 1.5 days |
 | 7 | **Stats helper** (nflverse cache), whenever it's first needed | Half a day |
@@ -240,8 +244,32 @@ proposed this check, and Jeff confirmed it that evening: "yes to the no-trial pl
 - **Then** Ultron vets, Jeff OKs the switch, and `fetch_injuries.sh` stays for a week as a
   one-line rollback.
 - **What it can't show:** how fresh Sleeper, ESPN and CBS are at Friday 16:45 and Sunday
-  11:30, because the saved files are past snapshots. The first live Friday and Sunday after
+  11:45, because the saved files are past snapshots. The first live Friday and Sunday after
   the switch show that, with the rollback one line away.
+
+**Result, 2026-10-20** (the fetcher ran at 20:33 and again at 20:38, after adding the ESPN
+recap rule below; Sleeper and the crosswalk came from that afternoon's samples, so Sleeper
+was called once that day). Output and comparison: `.superpowers/sdd/2026-10-20-replace-statsdeck/replay-2026-10-20/`
+(gitignored).
+
+- **Official rows:** against the Sunday and Tuesday files, all 376 week-6 rows match on
+  status, practice, team, position and body part. The display name differs on 9: StatsDeck
+  writes "L.T. Overton" where nflverse writes "LT Overton". Eight of the nine are
+  punctuation or a suffix, which `normalize_name` already treats as equal; one is a
+  defensive end's nickname. Against the Friday file, only the known Thursday-to-Friday
+  changes differ.
+- **The injury block for Jeff's 13-man roster:** the official block is the same three rows,
+  with "as of 2026-10-20 08:41 EDT, via nflverse" in place of "undated". Intel has four items
+  StatsDeck's same-day file lacked: Sleeper's and ESPN's concussion news for a rostered
+  receiver, CBS's own "Questionable for week 8", and a Chargers quarterback's IR line
+  through the Chargers TQB unit. Nothing changed between the two runs, so the change block
+  was empty, as it should be.
+- **One rule added:** ESPN keeps an "Active" row, usually a game recap, for most players
+  (610 of 800 left out on the second run). Kept as-is, it put 10 recaps into the roster's
+  injury block. An Active row now appears only as a change: a return from a designation.
+- **Found on the way** (live today, outside this plan; NEXT.md has the detail): the roster
+  parser drops every bye-week row, the roster capture carries no CBS id on rows with a
+  game, and the Tuesday run scores the week just played.
 
 ## 8. What Ultron vets first
 

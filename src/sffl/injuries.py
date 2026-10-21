@@ -1,7 +1,10 @@
-"""Normalize StatsDeck's injury feed into records this project can render.
+"""Normalize an injury feed into records this project can render.
 
-PURE. `ops/fetch_injuries.sh` performs the one MCP call and writes raw JSON;
-this module reads that file. No test touches StatsDeck.
+PURE. Two writers produce the file this module reads, both in the same
+`{"report": [...], "intel": [...]}` shape: `ops/fetch_injuries.sh` (StatsDeck's
+`get_injuries`, through one `claude -p` call - the live path until the switch)
+and `sffl injuries-fetch` (`sffl.direct_injuries`: nflverse, Sleeper and ESPN,
+built 2026-10-20 to replace it). No test touches either source.
 
 WHAT THIS MODULE MUST NOT DO. StatsDeck is connected to a DIFFERENT league
 (Yahoo, half-PPR), so only its league-agnostic NFL data is safe to use here -
@@ -19,19 +22,17 @@ per-row string saying "official". `source` ON A ROW IS AN OUTLET NAME
 (`"official"` / `"intel"`) from WHICH ARRAY a row came from and stores the
 row's own label separately as `outlet`.
 
-PROVISIONAL: at capture time `report` was EMPTY - StatsDeck's own docs say
-that's expected in the preseason - so the official-row mapping below has
-never been exercised against a real official row. It is written defensively
-(same field names as an intel row, since nflverse injury-report rows are
-expected to share `player`/`team`/`status`/`notes`/`reported_date`) but is
-UNVERIFIED until the season starts on 2026-09-09. Re-confirm it against a
-real `report` row then. Because it is provisional, `status` falls back to
-`report_status` and `game_status` - nflverse's own column names - the same
-way `detail` falls back from `notes`; a renamed field would otherwise blank
-out every official row, and a blank status prints as a player with no
-designation. An official row that still has no status is NEVER rendered as
-blank: `alert._status_text` prints it as an explicit unknown, so a broken
-mapping shows up as an obviously wrong message rather than as good news.
+THE OFFICIAL-ROW MAPPING IS VERIFIED (it was provisional until the season
+started). StatsDeck's real `report` rows, every week since 2026-09, are
+nflverse's injury report renamed: `game_status` ("Not listed" for a player
+with no game designation), `practice`, `injury`, `secondary`, `position`, and
+no per-row date. `status` therefore falls back to `report_status` and
+`game_status`, the same way `detail` falls back from `notes`. The direct
+fetcher writes `status`, `practice` and `detail` itself, plus `as_of` (the
+time nflverse published its file) and `cbs_id`. An official row that still has
+no status is NEVER rendered as blank: `alert._status_text` prints it as an
+explicit unknown, so a broken mapping shows up as an obviously wrong message
+rather than as good news.
 
 `source` IS LOAD-BEARING. The official injury report is the record; intel
 supplements it and never overrides it. The two are kept as separate rows so
@@ -48,12 +49,19 @@ appears only as prose inside `notes` ("did not practice Wednesday..."), but
 a regex over free text would invent a fact StatsDeck never structured. This
 field is populated only when the row itself carries a `practice` key.
 
-`previous_status` + `status_since` ARE THE ONLY CHANGE SIGNAL AVAILABLE. The
-feed has no practice field, and this module keeps no history of its own -
-without these two, Friday's and Sunday's alerts would say the same thing
-about the same player, which trains the reader to ignore both. They are
-carried verbatim from the feed and never derived by comparing rows or
-parsing prose. Do not delete these as "unused" without checking alert.py.
+`previous_status` + `status_since` ARE THE ONLY CHANGE SIGNAL AVAILABLE, and
+this module keeps no history of its own - without these two, Friday's and
+Sunday's alerts would say the same thing about the same player, which trains
+the reader to ignore both. They are carried verbatim from the file and never
+derived here by comparing rows or parsing prose. StatsDeck's intel rows carry
+its own tracking; the direct fetcher derives them from its own previous
+snapshot ("first seen by this pipeline at <time>"). Do not delete these as
+"unused" without checking alert.py.
+
+`cbs_id` IS THE JOIN KEY WHEN THE ROW HAS ONE. The direct fetcher maps every
+source's id to CBS's through ffverse's `db_playerids.csv`, so `for_roster`
+can match a rostered player exactly instead of by name - see its docstring.
+StatsDeck rows carry no CBS id and keep the name match they always had.
 """
 
 import json
@@ -64,13 +72,14 @@ from sffl.identity import normalize_name
 Report = namedtuple(
     "Report",
     "name team status practice reported_date detail source outlet tier "
-    "status_since previous_status",
+    "status_since previous_status cbs_id position as_of",
 )
-# `outlet`, `tier`, `status_since`, and `previous_status` default to "" so
-# existing 7-field positional construction (name, team, status, practice,
-# reported_date, detail, source) - as used elsewhere in this codebase before
-# these fields were added - keeps working unchanged.
-Report.__new__.__defaults__ = ("", "", "", "")
+# Every field after `source` defaults to "" so existing 7-field positional
+# construction (name, team, status, practice, reported_date, detail, source) -
+# as used elsewhere in this codebase before these fields were added - keeps
+# working unchanged. `cbs_id`, `position` and `as_of` (2026-10-20) are empty
+# on every StatsDeck row.
+Report.__new__.__defaults__ = ("", "", "", "", "", "", "")
 
 
 def _row_to_report(row, bucket):
@@ -93,22 +102,20 @@ def _row_to_report(row, bucket):
     if detail is None:
         detail = row.get("detail") or row.get("note")
 
-    # STATUS, with the same defensive fallbacks `detail` gets, and for the
-    # same reason. The official-row mapping here is PROVISIONAL - it has
-    # never been exercised against a real `report` row (see the module
-    # docstring) - and if nflverse's injury report spells the field
-    # `report_status` or `game_status` instead of `status`, EVERY official
-    # row silently comes back blank, which the renderer would then print as
-    # a player with no designation. That is exactly the failure `notes` vs
-    # `detail` already produced once. These two names are the real column
-    # names in nflverse's injury report, not guesses at plausible ones.
+    # STATUS, with the same fallbacks `detail` gets, and for the same reason:
+    # StatsDeck's real official rows spell it `game_status`, nflverse's own
+    # column is `report_status`, and a field this missed would blank EVERY
+    # official row, which the renderer would then print as a player with no
+    # designation. That is exactly the failure `notes` vs `detail` already
+    # produced once.
     status = row.get("status")
     if status is None or not str(status).strip():
         status = row.get("report_status") or row.get("game_status")
 
-    # Official rows never carry their own outlet label; StatsDeck's outlet
-    # names ("sleeper_feed", "web_digest") only appear on intel rows.
-    outlet = "" if bucket == "official" else (row.get("source") or "")
+    # StatsDeck's official rows carry no outlet label; its outlet names
+    # ("sleeper_feed", "web_digest") only appear on intel rows. The direct
+    # fetcher labels its official rows "nflverse", which is kept.
+    outlet = row.get("source") or ""
 
     return Report(
         name=str(name).strip(),
@@ -126,7 +133,16 @@ def _row_to_report(row, bucket):
         # module docstring. Carried verbatim; never derived here.
         status_since=(row.get("status_since") or "").strip(),
         previous_status=(row.get("previous_status") or "").strip(),
+        cbs_id=str(row.get("cbs_id") or "").strip(),
+        position=(row.get("position") or "").strip(),
+        as_of=(row.get("as_of") or "").strip(),
     )
+
+
+def rows_to_reports(rows, bucket):
+    """Feed-shaped dicts -> Reports, for rows built in-process (CBS's own
+    designations, read from the capture) rather than loaded from a file."""
+    return [_row_to_report(row, bucket) for row in rows]
 
 
 def load(path):
@@ -148,36 +164,46 @@ def load(path):
     return out
 
 
-def for_roster(reports, roster_names):
-    """The rows naming a player on `roster_names`, in roster order.
+def source_notes(path):
+    """The direct fetcher's own warnings, to print in the digest.
 
-    Matched on `normalize_name` because the two pages disagree about
+    `sffl injuries-fetch` records each source's outcome under `meta.sources`;
+    a source that failed or is switched off (ESPN after a 403/429) must say
+    so in the message rather than read as a quiet week. StatsDeck's files have
+    no `meta`, so this returns [] for them.
+    """
+    with open(path) as fh:
+        raw = json.load(fh)
+    meta = raw.get("meta") if isinstance(raw, dict) else None
+    if not isinstance(meta, dict):
+        return []
+    notes = []
+    for name, info in sorted((meta.get("sources") or {}).items()):
+        if isinstance(info, dict) and not info.get("ok", True):
+            notes.append("%s unavailable this run: %s"
+                         % (name, info.get("error") or "unknown error"))
+    return notes
+
+
+def for_roster(reports, roster_names, roster_rows=None):
+    """The rows naming a player on the roster, in roster order.
+
+    TWO MODES, chosen by the caller.
+
+    `roster_rows=None` (StatsDeck's file, whose rows carry no CBS id): matched
+    on `normalize_name` alone, because the two pages disagree about
     punctuation - "Ja'Marr Chase" on one, "JaMarr Chase" on the other - and a
     literal comparison would silently report a clean bill of health for an
-    injured starter.
+    injured starter. This is the live path until the switch, unchanged.
 
-    EXAMINED, NOT UPGRADED, for the (name, pos, team) composite key the rest
-    of the merged path (`sffl.cli._merge_projection_groups`, `_cmd_alert`'s
-    own by_key, `sffl.alert._start_sit_diff`) now uses instead of name
-    alone. Explicitly decided against here, for a concrete reason rather
-    than an oversight: `Report` (this module) carries `name` and `team` but
-    has NO POSITION FIELD AT ALL - StatsDeck's injury feed describes an
-    individual NFL player's health, never a position slot, so a three-part
-    key is not even constructible from this data. A two-part (name, team)
-    key WOULD be constructible (both sides have `team`), but the actual
-    hazard this composite-key work exists to close - CBS's TQB/DST pages
-    using an NFL TEAM NICKNAME as a "player name" - cannot occur here: a
-    team defense is never issued an injury designation, only individual
-    players are, and `roster_names`/`Report.name` are both always real
-    person names on this path. The remaining residual - two DIFFERENT real
-    people sharing an exact normalized name AND BOTH being rostered on the
-    SAME 13-man fantasy team - is a pre-existing, extremely narrow
-    coincidence unrelated to anything CBS-specific, and upgrading this
-    function's signature (`roster_names` is a plain string list at every
-    call site, including ~10 in tests/test_injuries.py) to carry team for
-    a gap this narrow was judged not worth the churn. Left as name-only
-    matching, decided rather than left unexamined.
+    `roster_rows` given (`cbs_roster.RosterRow`s - name, slot, team,
+    player_id): see `_for_roster_by_id`. The CBS id comes first, then name
+    and team, so two real players who share a name can no longer swap news,
+    and a Team QB unit gets its quarterbacks' lines - name matching never
+    could, since "49ers TQB" names nobody.
     """
+    if roster_rows is not None:
+        return _for_roster_by_id(reports, roster_rows)
     by_key = {}
     for r in reports:
         by_key.setdefault(normalize_name(r.name), []).append(r)
@@ -203,9 +229,72 @@ def for_roster(reports, roster_names):
     return out
 
 
+def _for_roster_by_id(reports, roster_rows):
+    """Match by CBS id first, then name and team. See `for_roster`.
+
+    - A rostered player with a CBS id gets every row carrying that id, plus
+      rows WITHOUT a CBS id (the crosswalk had no entry: a new signing, a
+      practice-squad call-up) that match his normalized name AND team, or his
+      name alone when the row has no team. A row WITH a CBS id is never matched
+      to him by name: its id already says which player it is.
+    - A rostered player whose own id was not captured gets every row matching
+      his name and team, id or not. This is the common case today: the roster
+      page puts a playing week's game time on its own line, so `capture`'s id
+      prefix lands on the row's last line and `cbs_roster.parse_lineup_rows`
+      reads no id (measured 2026-10-20: only bye-week rows carried one).
+    - A Team QB unit (slot TQB) gets its NFL team's quarterbacks' rows, by the
+      row's position and team.
+    - A defense (slot DST) gets none: a team defense is never designated.
+
+    Each row is emitted once, in roster order.
+    """
+    from sffl.identity import normalize_team
+
+    by_id, by_name_team, by_name, qbs = {}, {}, {}, {}
+    any_by_name_team = {}
+    for r in reports:
+        key = (normalize_name(r.name), normalize_team(r.team))
+        if r.team:
+            any_by_name_team.setdefault(key, []).append(r)
+        if r.cbs_id:
+            by_id.setdefault(r.cbs_id, []).append(r)
+        elif r.team:
+            by_name_team.setdefault(key, []).append(r)
+        else:
+            by_name.setdefault(normalize_name(r.name), []).append(r)
+        if r.position.upper() == "QB" and r.team:
+            qbs.setdefault(normalize_team(r.team), []).append(r)
+
+    out, seen = [], set()
+
+    def take(rows):
+        for r in rows:
+            if id(r) not in seen:
+                seen.add(id(r))
+                out.append(r)
+
+    for row in roster_rows:
+        slot = (row.slot or "").upper()
+        team = normalize_team(row.team)
+        if slot == "TQB":
+            take(qbs.get(team, []))
+            continue
+        if slot == "DST":
+            continue
+        name = normalize_name(row.name)
+        if row.player_id:
+            take(by_id.get(str(row.player_id), []))
+            take(by_name_team.get((name, team), []))
+        else:
+            take(any_by_name_team.get((name, team), []))
+        take(by_name.get(name, []))
+    return out
+
+
 # Intel is news about the NEXT game. StatsDeck's intel feed is a rolling
-# window roughly four weeks deep (measured 2026-10-02: items dated 09-08
-# through 10-02), and for a player nobody has written about lately the
+# window (measured 2026-10-02: items dated 09-08 through 10-02; by 2026-10-20
+# it was capped at 100 rows, about ten days), ESPN's feed keeps a player's
+# last comment for weeks, and for a player nobody has written about lately the
 # newest item IS the old one. Without an age limit the digest kept showing
 # it: a Week 4 Friday alert told Jeff McConkey was "trending toward suiting
 # up in Week 2" and Bowers "could return in Week 3" - while Bowers sat in

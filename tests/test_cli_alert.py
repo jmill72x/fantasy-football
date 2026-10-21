@@ -879,3 +879,101 @@ def test_friday_produces_waiver_targets_end_to_end(alert_env, capsys):
 def test_sunday_still_has_no_waiver_block(alert_env, capsys):
     rc, out = alert_env.run(capsys, "--kind", "sunday")
     assert "WAIVER TARGETS" not in out
+
+
+# --- CBS's own designations (--cbs-designations, 2026-10-20) ---------------
+#
+# CBS draws a designation as an icon whose label never reaches the page text,
+# so `is_out` had nothing to act on. With the flag, each page's icon sidecar
+# (sffl.cbs_icons) sets the designation. The fixtures' ids are invented.
+
+BOWERS_ID = "92503346"   # Brock Bowers, a starter on the constructed roster
+
+
+def _write_sidecars(tmp, labels):
+    """An icon sidecar beside every stubbed page. `labels` maps a page's file
+    stem to {cbs_id: label}; pages not named get a sidecar with no icons."""
+    for stem in ("roster", "rbwrte", "tqb", "k", "dst"):
+        icons = dict((cid, [{"icon": "icon-red_cross", "label": label,
+                             "subtab": "Injury Report"}])
+                     for cid, label in labels.get(stem, {}).items())
+        (tmp / (stem + ".icons.json")).write_text(json.dumps(
+            {"url": "u", "captured_at": "t", "rows_scanned": 10,
+             "icons": icons}))
+
+
+def _record_capture_kwargs(monkeypatch):
+    import sffl.capture
+
+    seen = []
+    inner = sffl.capture.capture
+
+    def recording(urls, out_dir, profile_dir, **kwargs):
+        seen.append(kwargs)
+        return inner(urls, out_dir, profile_dir, **kwargs)
+
+    monkeypatch.setattr("sffl.capture.capture", recording)
+    return seen
+
+
+def test_without_the_flag_no_capture_is_asked_for_icons(
+        alert_env, capsys, monkeypatch):
+    seen = _record_capture_kwargs(monkeypatch)
+    alert_env.run(capsys, "--injuries", str(_injuries_file(alert_env.tmp)))
+    assert seen and all("icons" not in kw for kw in seen)
+
+
+def test_a_cbs_out_label_takes_a_starter_out_of_the_lineup(
+        alert_env, capsys, monkeypatch):
+    seen = _record_capture_kwargs(monkeypatch)
+    label = "Injury Report: Knee: Out for Week 1 at Miami"
+    _write_sidecars(alert_env.tmp, {"rbwrte": {BOWERS_ID: label},
+                                    "roster": {BOWERS_ID: label}})
+    code, out = alert_env.run(capsys, "--injuries",
+                              str(_injuries_file(alert_env.tmp)),
+                              "--cbs-designations")
+    assert all(kw.get("icons") is True for kw in seen)
+    assert "EXCLUDED from the lineup - will not play:" in out
+    assert "  - Brock Bowers (O)" in out
+    assert "Brock Bowers" not in out.split("BEST LINEUP")[1].split("\n\n")[0]
+    # The roster's label joins the injury block as CBS intel.
+    assert "Brock Bowers (LV) Out / Knee; for week 1 at Miami" in out
+    assert "via cbs]" in out
+    assert "CBS DESIGNATIONS UNAVAILABLE" not in out
+
+
+def test_a_label_for_another_week_benches_nobody(alert_env, capsys):
+    label = "Injury Report: Knee: Questionable for Week 2 at Miami"
+    _write_sidecars(alert_env.tmp, {"rbwrte": {BOWERS_ID: label}})
+    code, out = alert_env.run(capsys, "--injuries",
+                              str(_injuries_file(alert_env.tmp)),
+                              "--cbs-designations")
+    assert "EXCLUDED from the lineup" not in out
+
+
+def test_a_missing_sidecar_is_said_in_the_message_and_degrades_the_run(
+        alert_env, capsys):
+    code, out = alert_env.run(capsys, "--injuries",
+                              str(_injuries_file(alert_env.tmp)),
+                              "--cbs-designations")
+    assert "!! CBS DESIGNATIONS UNAVAILABLE on 5 page(s)" in out
+    assert code == 1
+
+
+def test_a_direct_feed_file_is_matched_by_cbs_id(alert_env, capsys):
+    # A row whose name is spelled differently still lands on the rostered
+    # player, because its CBS id matches (the direct fetcher's crosswalk).
+    path = alert_env.tmp / "injuries-friday.direct.json"
+    path.write_text(json.dumps({"report": [{
+        "player": "Brock R. Bowers", "team": "LV", "position": "TE",
+        "status": "Questionable", "practice": "Limited Participation in Practice",
+        "detail": "Knee", "reported_date": "2026-10-23", "source": "nflverse",
+        "as_of": "2026-10-23 08:41 EDT", "cbs_id": BOWERS_ID}],
+        "intel": [], "meta": {"sources": {"nflverse": {"ok": True},
+                                          "espn": {"ok": False,
+                                                   "error": "HTTP 403"}}}}))
+    code, out = alert_env.run(capsys, "--injuries", str(path))
+    assert ("Brock R. Bowers (LV) Questionable / practice: Limited "
+            "Participation in Practice / Knee "
+            "[official as of 2026-10-23 08:41 EDT, via nflverse]") in out
+    assert "!! espn unavailable this run: HTTP 403" in out

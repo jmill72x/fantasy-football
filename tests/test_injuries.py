@@ -234,3 +234,108 @@ def test_undated_or_garbled_intel_is_kept_not_silently_hidden():
     kept, dropped = fresh_intel([_r("intel", ""), _r("intel", "soon")],
                                 _dt.date(2026, 10, 2))
     assert len(kept) == 2 and dropped == 0
+
+
+# --------------------------------------- CBS ids, TQB units (2026-10-20)
+#
+# The direct feed's rows carry CBS ids (sffl.direct_injuries). Constructed
+# players and ids throughout.
+
+from sffl.cbs_roster import RosterRow
+from sffl.injuries import rows_to_reports, source_notes
+
+
+def _row(name, team, cbs_id="", position="WR", status="Questionable",
+         outlet="espn"):
+    return Report(name=name, team=team, status=status, practice="",
+                  reported_date="2026-10-23", detail="", source="intel",
+                  outlet=outlet, cbs_id=cbs_id, position=position)
+
+
+def test_the_new_fields_default_to_empty_for_old_style_rows():
+    r = Report("Pat Example", "SEA", "Out", "", "2026-10-23", "", "official")
+    assert (r.cbs_id, r.position, r.as_of) == ("", "", "")
+
+
+def test_a_direct_row_carries_its_cbs_id_position_as_of_and_outlet():
+    (r,) = rows_to_reports([{
+        "player": "Pat Example", "team": "SEA", "position": "WR",
+        "status": "Out", "source": "nflverse", "cbs_id": 9000001,
+        "as_of": "2026-10-23 08:41 EDT"}], "official")
+    assert (r.cbs_id, r.position, r.as_of, r.outlet) == (
+        "9000001", "WR", "2026-10-23 08:41 EDT", "nflverse")
+
+
+def test_the_cbs_id_wins_over_a_differently_spelled_name():
+    roster = [RosterRow("Pat Example Jr.", "WR", "SEA", "9000001")]
+    rows = [_row("Patrick Example", "SEA", cbs_id="9000001")]
+    assert for_roster(rows, ["Pat Example Jr."], roster_rows=roster) == rows
+
+
+def test_a_row_whose_id_names_someone_else_is_never_matched_by_name():
+    # Two real players can share a name; the id already says this is not him.
+    roster = [RosterRow("Pat Example", "WR", "SEA", "9000001")]
+    other = _row("Pat Example", "SEA", cbs_id="9000099")
+    assert for_roster([other], ["Pat Example"], roster_rows=roster) == []
+
+
+def test_a_row_with_no_cbs_id_falls_back_to_name_and_team():
+    roster = [RosterRow("Pat Example", "WR", "JAC", "9000001")]
+    same_team = _row("Pat Example", "JAX")      # normalized: JAX is JAC
+    other_team = _row("Pat Example", "MIA")
+    no_team = _row("Pat Example", "")
+    got = for_roster([same_team, other_team, no_team], ["Pat Example"],
+                     roster_rows=roster)
+    assert got == [same_team, no_team]
+
+
+def test_a_team_qb_unit_gets_its_quarterbacks_and_a_defense_gets_nothing():
+    roster = [RosterRow("Hawks", "TQB", "SEA", "8001"),
+              RosterRow("Hawks", "DST", "SEA", "8002")]
+    qb = _row("Dee Thrower", "SEA", cbs_id="9000050", position="QB")
+    wr = _row("Pat Example", "SEA", cbs_id="9000001", position="WR")
+    other_qb = _row("Al Passer", "MIA", cbs_id="9000060", position="QB")
+    assert for_roster([qb, wr, other_qb], ["Hawks", "Hawks"],
+                      roster_rows=roster) == [qb]
+
+
+def test_each_row_is_emitted_once_in_roster_order():
+    roster = [RosterRow("Lee Sample", "RB", "MIA", "9000002"),
+              RosterRow("Pat Example", "WR", "SEA", "9000001")]
+    pat = _row("Pat Example", "SEA", cbs_id="9000001")
+    lee = _row("Lee Sample", "MIA", cbs_id="9000002")
+    got = for_roster([pat, lee, pat], ["Lee Sample", "Pat Example"],
+                     roster_rows=roster)
+    assert got == [lee, pat]
+
+
+def test_without_roster_rows_matching_is_by_name_exactly_as_before():
+    roster_names = ["Pat Example"]
+    other = _row("Pat Example", "MIA", cbs_id="9000099")
+    assert for_roster([other], roster_names) == [other]
+
+
+def test_source_notes_name_each_failed_source(tmp_path):
+    path = tmp_path / "x.direct.json"
+    path.write_text(json.dumps({"report": [], "intel": [], "meta": {"sources": {
+        "nflverse": {"ok": True},
+        "espn": {"ok": False, "error": "HTTP 403"},
+        "sleeper": {"ok": False}}}}))
+    assert source_notes(str(path)) == [
+        "espn unavailable this run: HTTP 403",
+        "sleeper unavailable this run: unknown error"]
+
+
+def test_a_statsdeck_file_has_no_source_notes():
+    assert source_notes(FIXTURE) == []
+
+
+def test_a_roster_row_whose_id_was_not_captured_matches_by_name_and_team():
+    # The roster page puts a playing week's game time on its own line, so the
+    # capture's id prefix lands on the row's last line and the name line has
+    # none. Such a row still finds the direct feed's id-carrying rows.
+    roster = [RosterRow("Pat Example", "WR", "SEA", "")]
+    with_id = _row("Pat Example", "SEA", cbs_id="9000001")
+    other_team = _row("Pat Example", "MIA", cbs_id="9000099")
+    assert for_roster([with_id, other_team], ["Pat Example"],
+                      roster_rows=roster) == [with_id]

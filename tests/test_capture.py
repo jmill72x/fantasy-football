@@ -334,3 +334,66 @@ def test_a_slow_first_attempt_that_then_succeeds_is_not_an_error():
     page = _SlowOnce()
     _goto_with_retry(page, "http://x", 1000)
     assert page.calls == 2
+
+
+# ------------------------------------------------------- icon sidecar (2026-10-20)
+#
+# CBS draws a player's injury designation as an icon whose label lives in the
+# link's aria-label, never in the row's text (see sffl.cbs_icons). With icons
+# asked for, the same single evaluate call also returns each row's icon links.
+
+def test_the_live_text_path_still_calls_evaluate_with_the_script_alone():
+    # The alert runs without icons until the switch: one argument, exactly as
+    # before, so the page gets the same call it always did.
+    calls = []
+
+    class _FakePage(object):
+        def evaluate(self, *args):
+            calls.append(args)
+            return {"full": "nav\nfooter", "rows": []}
+
+    capture._capture_page_text(_FakePage())
+    assert calls == [(capture._ID_EXTRACT_JS,)]
+
+
+def test_capture_with_icons_is_still_one_evaluate_and_returns_the_rows():
+    row_text = "\tWR\tPat Example WR . SEA \tMIA\t"
+    full = "nav\n" + row_text + "\nfooter"
+    icons = [{"icon": "icon-red_cross",
+              "label": "Injury Report: Knee: Out for Week 7 at Miami",
+              "subtab": "Injury Report"}]
+    calls = []
+
+    class _FakePage(object):
+        def evaluate(self, *args):
+            calls.append(args)
+            return {"full": full,
+                    "rows": [{"id": "9000001", "text": row_text, "icons": icons}]}
+
+    text, rows = capture._capture_page_with_icons(_FakePage())
+    assert calls == [(capture._ID_EXTRACT_JS, True)]
+    assert text == "nav\nid=9000001\t" + row_text + "\nfooter"
+    assert rows[0]["icons"] == icons
+
+
+def test_the_script_reads_icons_only_when_asked():
+    js = capture._ID_EXTRACT_JS
+    assert "(withIcons) =>" in js
+    assert "if (withIcons)" in js
+    assert ".playerIconsWrapper a.playerLink" in js
+    assert "aria-label" in js
+
+
+def test_the_sidecar_is_written_whole(tmp_path):
+    import json
+
+    path = str(tmp_path / "roster.icons.json")
+    rows = [{"id": "9000001", "text": "x", "icons": [
+        {"icon": "icon-red_cross", "label": "Injury Report: Knee: Out",
+         "subtab": "Injury Report"}]}]
+    capture._write_icons_sidecar(path, rows, "https://x/teams")
+    data = json.load(open(path))
+    assert data["url"] == "https://x/teams"
+    assert data["rows_scanned"] == 1
+    assert list(data["icons"]) == ["9000001"]
+    assert not (tmp_path / "roster.icons.json.tmp").exists()
