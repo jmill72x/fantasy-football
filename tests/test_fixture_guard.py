@@ -392,6 +392,56 @@ def test_guard_flags_a_planted_vendor_row(reference):
     _expect(reference, real, "planted.csv", {"numeric-run", "name+values"})
 
 
+# ---------------------------------------------- third-party news text (10-20)
+#
+# The direct injury feed and CBS's icon sidecars carry third-party text: ESPN's
+# injury rows and comments, and CBS's news headlines (RotoWire's). Neither
+# belongs in a fixture, constructed or not: a fixture is a CBS page. These
+# shape checks need no private reference, so they run on a fresh clone too.
+
+ESPN_ROW = re.compile(
+    r'"(?:shortComment|longComment|fantasyStatus|returnDate)"\s*:'
+    r'|"source"\s*:\s*"espn"|"espn_id"\s*:')
+CBS_HEADLINE = re.compile(
+    r'\bUpdate: [^:<>\n"]{2,80}: [^<>\n]{4,}|"subtab"\s*:\s*"Update"')
+NEWS_CHECKS = (("espn-row", ESPN_ROW), ("cbs-headline", CBS_HEADLINE))
+
+
+def scan_news(name, lines):
+    """[(name, line number, kind)] for ESPN-shaped rows and CBS headlines."""
+    return [(name, lineno, kind)
+            for lineno, line in enumerate(lines, 1)
+            for kind, pattern in NEWS_CHECKS if pattern.search(line)]
+
+
+def test_no_espn_rows_or_cbs_headlines_in_fixtures():
+    hits = []
+    for p in fixture_files():
+        try:
+            hits.extend(scan_news(p.name, p.read_text(encoding="utf-8").split("\n")))
+        except UnicodeDecodeError:
+            continue
+    _fail_on(hits, {"espn-row", "cbs-headline"},
+             "third-party news text (ESPN rows or CBS headlines)")
+
+
+@pytest.mark.parametrize("line,kind", [
+    ('{"shortComment": "Example (knee) sat out.", "status": "Out"}', "espn-row"),
+    ('  "source": "espn", "notes": "x"', "espn-row"),
+    ("Update: Hawks' Pat Example: Gets 12 touches", "cbs-headline"),
+    ('{"icon": "icon-news-note-recent", "subtab": "Update"}', "cbs-headline"),
+])
+def test_the_news_checks_flag_each_shape(line, kind):
+    assert [k for _, _, k in scan_news("planted.txt", [line])] == [kind]
+
+
+def test_the_news_checks_leave_ordinary_lines_alone():
+    for line in ("Injury Report: <body part>: Questionable for Week 7",
+                 "id=9000001\t\tWR\tPat Example WR \u2022 SEA\tMIA\t",
+                 "`shortComment`, `longComment`"):
+        assert scan_news("ok.txt", [line]) == [], line
+
+
 def test_allowlist_entries_name_a_current_fixture_line():
     """An entry whose line changed or went away is dead weight: drop it."""
     current = set()

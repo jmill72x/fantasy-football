@@ -545,9 +545,10 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     read and had nothing on this roster - and the whole point of carrying it
     is that the two used to render identically. `injuries_age_minutes` is
     how old the injuries file was when it was read, or `None` if there was
-    no file to age. `injury_source_notes` are the direct fetcher's own
-    warnings (a source that failed, ESPN switched off after a block), each
-    printed under the age line; `None` for StatsDeck's file, which has none.
+    no file to age. `injury_source_notes` are whole lines from the direct
+    fetcher's `meta` (a source that failed or was switched off, the Sleeper
+    statuses' age), each printed under the age line; `None` for StatsDeck's
+    file, which has none.
 
     `capture_error` and `projections_capture_error` are BOTH "nothing here
     can be trusted, short-circuit the whole digest" states, and are
@@ -749,9 +750,10 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     elif injuries_age_minutes is not None:
         lines.append(_injuries_age_line(injuries_age_minutes))
         # A source the direct fetcher could not read (or switched off, like
-        # ESPN after a block) is said here, not left to read as a quiet week.
+        # ESPN after a block) is said here, not left to read as a quiet week,
+        # and so is the Sleeper statuses' age. Each note is a whole line.
         for note in injury_source_notes or []:
-            lines.append("!! %s" % note)
+            lines.append(note)
         lines.append("")
 
     no_news = ("  NOT FETCHED - see the injury-data warning above. This is "

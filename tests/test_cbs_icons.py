@@ -207,3 +207,41 @@ def test_roster_rows_carry_this_and_later_weeks_but_not_games_already_played():
     assert rows[0]["notes"] == "Concussion; for week 8 at Miami"
     assert rows[1]["notes"] == "Hamstring; expected back week 9"
     assert all(r["source"] == "cbs" and r["cbs_id"] for r in rows)
+
+
+# --------------------------------------- Ultron's 10-20 findings, Jeff's call
+
+def test_the_most_severe_label_that_applies_wins():
+    q = _icon("Injury Report: Knee: Questionable for Week 7 at Miami")
+    d = _icon("Injury Report: Knee: Doubtful for Week 7 at Miami")
+    out = _icon("Injury Report: Knee: Out for Week 7 at Miami")
+    ir = _icon("Injury Report: Knee: Injured Reserve", "icon-player-status-ir")
+    susp = _icon("Suspension: Suspended for 2 games", "icon-suspended")
+    assert cbs_icons.designation([q, d], 7) is d
+    assert cbs_icons.designation([q, out, d], 7) is out
+    assert cbs_icons.designation([out, ir], 7) is ir
+    assert cbs_icons.designation([ir, susp, q], 7) is susp
+
+
+def test_a_no_week_label_keeps_benching_past_the_expected_return():
+    # Jeff, 2026-10-20: "keep benching". IR with an expected return of week 7
+    # still benches in week 9, until CBS takes the label down, and the
+    # expected return is still shown.
+    ir = _icon("Injury Report: Hamstring: Injured Reserve. Expected Return - Week 7",
+               "icon-player-status-ir")
+    p = _proj("Pat Example", "9000001")
+    done = cbs_icons.apply_designations([p], {"9000001": [ir]}, 9)
+    assert p.status == "IR" and done.applied == [("Pat Example", "IR")]
+    rows = cbs_icons.roster_rows([RosterRow("Pat Example", "WR", "SEA", "9000001")],
+                                 {"9000001": [ir]}, 9, "2026-11-04")
+    assert rows[0]["notes"] == "Hamstring; expected back week 7"
+
+
+def test_a_row_the_script_skipped_is_counted_and_never_attributed(tmp_path):
+    rows = _rows() + [{"id": "9000009", "text": "nested", "icons": None}]
+    side = cbs_icons.build_sidecar(rows, "u", "t")
+    assert side["rows_skipped"] == 1 and "9000009" not in side["icons"]
+    path = tmp_path / "x.icons.json"
+    path.write_text(json.dumps(side))
+    summary = cbs_icons.read_sidecar(str(path))
+    assert (summary.rows_scanned, summary.rows_skipped, summary.designations) == (4, 1, 1)

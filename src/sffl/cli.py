@@ -1756,9 +1756,14 @@ def _cmd_alert(args):
                 # CBS's label sets `status` where the page text carried none;
                 # a label naming another week never does (cbs_icons).
                 try:
-                    cbs_icons.apply_designations(
-                        rows, cbs_icons.load_sidecar(
-                            cbs_icons.sidecar_path(written[url])), week)
+                    side = cbs_icons.read_sidecar(
+                        cbs_icons.sidecar_path(written[url]))
+                    cbs_icons.apply_designations(rows, side.icons, week)
+                    if (side.rows_scanned >= cbs_icons.NO_DESIGNATION_WARN_ROWS
+                            and not side.designations):
+                        designation_failures.append((group, (
+                            "%d rows but no designation icon at all - CBS "
+                            "may have changed the page" % side.rows_scanned)))
                 except (OSError, ValueError) as exc:
                     designation_failures.append((group, str(exc)))
             group_rows.append((group, rows))
@@ -2530,25 +2535,75 @@ def _cmd_alert(args):
                 or week_mismatch or stale_projections) else 0
 
 
+# The repo root, from this file's own place (src/sffl/cli.py), so paths the
+# injury fetcher writes never depend on the caller's working directory.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))
+_LIVE_INJURY_FILE = re.compile(r"^injuries-(tuesday|friday|sunday)\.json$",
+                               re.IGNORECASE)
+
+
+def _injuries_out_problem(out, captures, allow_live_path):
+    """Why `out` may not be written, or None. `out` and `captures` are real
+    absolute paths. The fetcher writes third-party text, so it may only write
+    inside the gitignored `data/captures/`, only a .json file, and never the
+    live alert's own `injuries-<kind>.json` (by name, in any case, or by being
+    the same file under another name) until the switch."""
+    if not out.lower().endswith(".json"):
+        return "%s is not a .json file" % out
+    if os.path.commonpath([out, captures]) != captures:
+        return ("%s is outside %s; the feed carries third-party text and is "
+                "written only there" % (out, captures))
+    if not allow_live_path:
+        if _LIVE_INJURY_FILE.match(os.path.basename(out)):
+            return ("%s is the live alert's injury file; write the direct feed "
+                    "beside it (e.g. %s) until the switch, or pass "
+                    "--allow-live-path"
+                    % (out, os.path.join(captures, "injuries-<kind>.direct.json")))
+        for kind in ("tuesday", "friday", "sunday"):
+            live = os.path.join(captures, "injuries-%s.json" % kind)
+            if (os.path.exists(out) and os.path.exists(live)
+                    and os.path.samefile(out, live)):
+                return ("%s is the same file as the live %s; pass "
+                        "--allow-live-path only at the switch" % (out, live))
+    return None
+
+
 def _cmd_injuries_fetch(args):
     """`sffl injuries-fetch`: run the direct injury feed once (see
-    sffl.direct_injuries). Refuses the live alert's own file unless told the
-    switch has happened, so a test run can never change what the alert reads."""
-    import os
-    import re
+    sffl.direct_injuries).
 
+    `--out` must be a .json file inside `data/captures/` (resolved against the
+    repo root), and never the live alert's own injury file unless told the
+    switch has happened, so a test run can never change what the alert reads.
+    Scheduled kinds cache in `data/cache/`; a manual run caches in
+    `data/cache/manual/` and leaves ESPN out unless asked (`--espn`). The ESPN
+    markers (switched off, last call) always live in `data/cache/`, so every
+    kind of run respects them.
+    """
     from sffl import direct_injuries
 
-    if (re.match(r"^injuries-(tuesday|friday|sunday)\.json$",
-                 os.path.basename(args.out))
-            and not args.allow_live_path):
-        print("error: %s is the live alert's injury file; write the direct "
-              "feed beside it (e.g. injuries-<kind>.direct.json) until the "
-              "switch, or pass --allow-live-path" % args.out, file=sys.stderr)
+    captures = os.path.realpath(os.path.join(_REPO_ROOT, "data", "captures"))
+    out = args.out if os.path.isabs(args.out) else os.path.join(_REPO_ROOT,
+                                                                 args.out)
+    out = os.path.realpath(out)
+    problem = _injuries_out_problem(out, captures, args.allow_live_path)
+    if problem:
+        print("error: %s" % problem, file=sys.stderr)
         return 2
+    shared_cache = os.path.join(_REPO_ROOT, "data", "cache")
+    if args.cache_dir:
+        cache_dir = (args.cache_dir if os.path.isabs(args.cache_dir)
+                     else os.path.join(_REPO_ROOT, args.cache_dir))
+    elif args.kind == "manual":
+        cache_dir = os.path.join(shared_cache, "manual")
+    else:
+        cache_dir = shared_cache
+    use_espn = not args.no_espn and (args.kind != "manual" or args.espn)
     return direct_injuries.fetch(
-        args.out, args.cache_dir, season=args.season or None, kind=args.kind,
-        use_espn=not args.no_espn, use_sleeper=not args.no_sleeper)
+        out, cache_dir, season=args.season or None, kind=args.kind,
+        use_espn=use_espn, use_sleeper=not args.no_sleeper,
+        espn_dir=shared_cache, force_espn=args.force_espn)
 
 
 def _split_pool_by_owner(rows, classifier, roster_names, normalize_name):
@@ -3179,16 +3234,24 @@ def main(argv=None):
                               "Sleeper, ESPN) into one file; public sources "
                               "only, never CBS")
     inj.add_argument("--out", required=True,
-                     help="where to write it - not the live alert's "
+                     help="a .json file inside data/captures/ (relative paths "
+                          "are from the repo root) - not the live alert's "
                           "injuries-<kind>.json until the switch")
     inj.add_argument("--kind", default="manual",
-                     choices=["tuesday", "friday", "sunday", "manual"])
-    inj.add_argument("--cache-dir", default="data/cache",
-                     help="the crosswalk and Sleeper caches, the ESPN-off "
-                          "marker and the change-tracking state")
+                     choices=["tuesday", "friday", "sunday", "manual"],
+                     help="a scheduled kind reads and writes the change "
+                          "state; manual (the default) touches neither")
+    inj.add_argument("--cache-dir", default=None,
+                     help="the downloads cache and change state (default: "
+                          "data/cache/, or data/cache/manual/ for a manual "
+                          "run, from the repo root)")
     inj.add_argument("--season", type=int, default=0,
                      help="NFL season (default: from today's date)")
     inj.add_argument("--no-espn", action="store_true")
+    inj.add_argument("--espn", action="store_true",
+                     help="call ESPN on a manual run (off by default)")
+    inj.add_argument("--force-espn", action="store_true",
+                     help="call ESPN even if it was called under 12 hours ago")
     inj.add_argument("--no-sleeper", action="store_true")
     inj.add_argument("--allow-live-path", action="store_true",
                      help="permit writing the live alert's own injuries "

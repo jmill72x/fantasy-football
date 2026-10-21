@@ -31,8 +31,15 @@ THE LABELS (all seen on the week-7 RB/WR/TE page, 197 of 1,714 rows):
 A LABEL COUNTS ONLY FOR THE WEEK IT NAMES. A bye player's label names his next
 game ("Questionable for Week 8" on the week-7 page, 9 rows), and CBS leaves old
 labels up (7 rows still named week 5 or 6 on 2026-10-20). A label naming
-another week is never applied to this week's lineup. A label naming no week
-(IR, PUP, a suspension, retired) always applies.
+another week is never applied to this week's lineup.
+
+A LABEL NAMING NO WEEK ALWAYS APPLIES - Jeff, 2026-10-20: "keep benching". An
+IR, PUP or suspension label keeps the player out of the recommended lineup
+until CBS takes the label down, even after his expected-return week has
+passed; the expected return is still shown, never acted on.
+
+THE MOST SEVERE LABEL WINS when a player carries several that apply: SUSP, IR,
+PUP and O first (all four mean he will not play), then D, then Q.
 
 AN UNREADABLE LABEL IS NEVER A CLEAN BILL OF HEALTH, and never a guess. A
 designation phrase this module does not know maps to no tag, so it cannot
@@ -141,16 +148,22 @@ def applies(icon, week):
     return icon.kind == "designation" and (icon.week is None or icon.week == week)
 
 
+# Higher is more severe. SUSP, IR, PUP and O all mean "will not play"; the
+# order among them only decides which label the digest names.
+_SEVERITY = {"SUSP": 6, "IR": 5, "PUP": 4, "O": 3, "D": 2, "Q": 1}
+
+
 def designation(icons, week):
     """The designation that counts for `week`, or None.
 
-    A tagged designation wins over an unreadable one, so a row carrying both
-    is gated on what CBS said plainly.
+    The most severe tagged designation wins (see `_SEVERITY`); an unreadable
+    one is returned only when nothing tagged applies, so it is shown but can
+    never bench anyone.
     """
     live = [i for i in icons if applies(i, week)]
-    for i in live:
-        if i.tag:
-            return i
+    tagged = [i for i in live if i.tag]
+    if tagged:
+        return max(tagged, key=lambda i: _SEVERITY.get(i.tag, 0))
     return live[0] if live else None
 
 
@@ -161,18 +174,23 @@ def build_sidecar(rows, url, captured_at):
     "id", "text" and "icons" (a list of {"icon", "label", "subtab"}). Only rows
     that carry at least one icon are kept; `rows_scanned` says how many rows
     were looked at, so an empty `icons` reads as "nobody had one" rather than
-    as "nothing was read".
+    as "nothing was read". A row whose `icons` is None was skipped by the
+    script (it held another row, or linked two players) and is counted in
+    `rows_skipped`, never attributed to anyone.
     """
-    icons = {}
+    icons, skipped = {}, 0
     for row in rows:
-        found = [{"icon": str(i.get("icon") or ""),
-                  "label": str(i.get("label") or ""),
-                  "subtab": str(i.get("subtab") or "")}
-                 for i in (row.get("icons") or [])]
+        if "icons" in row and row["icons"] is None:
+            skipped += 1
+            continue
+        found = [{"icon": str(i.get("icon") or "")[:80],
+                  "label": str(i.get("label") or "")[:300],
+                  "subtab": str(i.get("subtab") or "")[:40]}
+                 for i in (row.get("icons") or []) if isinstance(i, dict)]
         if found and row.get("id"):
             icons.setdefault(str(row["id"]), []).extend(found)
     return {"url": url, "captured_at": captured_at, "rows_scanned": len(rows),
-            "icons": icons}
+            "rows_skipped": skipped, "icons": icons}
 
 
 def sidecar_path(text_path):
@@ -180,8 +198,18 @@ def sidecar_path(text_path):
     return os.path.splitext(text_path)[0] + SIDECAR_SUFFIX
 
 
+Sidecar = namedtuple("Sidecar", "icons rows_scanned rows_skipped designations")
+
+
 def load_sidecar(path):
     """{cbs_id: [Icon, ...]} from a sidecar file. Raises ValueError on a bad shape."""
+    return read_sidecar(path).icons
+
+
+def read_sidecar(path):
+    """A `Sidecar`: the icons by CBS id, how many rows the page had, how many
+    the script skipped, and how many designation icons it found in all.
+    Raises ValueError on a bad shape."""
     with open(path) as fh:
         raw = json.load(fh)
     if (not isinstance(raw, dict) or not isinstance(raw.get("icons"), dict)
@@ -198,7 +226,15 @@ def load_sidecar(path):
                                  % (path, cbs_id))
             parsed.append(parse_icon(e.get("icon"), e.get("label")))
         out[str(cbs_id)] = parsed
-    return out
+    skipped = raw.get("rows_skipped") if isinstance(raw.get("rows_skipped"), int) else 0
+    return Sidecar(out, raw["rows_scanned"], skipped,
+                   sum(1 for icons in out.values() for i in icons
+                       if i.kind == "designation"))
+
+
+# A page this long with no designation icon at all means the markup moved:
+# every week some player on the 1,700-row RB/WR/TE page is on IR.
+NO_DESIGNATION_WARN_ROWS = 200
 
 
 Applied = namedtuple("Applied", "applied other_week unreadable")
@@ -262,7 +298,8 @@ def roster_rows(roster, icons_by_id, week, reported_date):
             if icon.week is not None and icon.week < week:
                 continue
             out.append({
-                "player": r.name, "team": r.team, "status": icon.status,
-                "notes": detail_text(icon), "reported_date": reported_date,
+                "player": r.name, "team": r.team, "status": icon.status[:60],
+                "notes": detail_text(icon)[:300],
+                "reported_date": reported_date,
                 "source": "cbs", "cbs_id": r.player_id})
     return out

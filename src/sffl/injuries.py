@@ -165,23 +165,36 @@ def load(path):
 
 
 def source_notes(path):
-    """The direct fetcher's own warnings, to print in the digest.
+    """Digest lines from the direct fetcher's `meta`, each ready to print.
 
-    `sffl injuries-fetch` records each source's outcome under `meta.sources`;
-    a source that failed or is switched off (ESPN after a 403/429) must say
-    so in the message rather than read as a quiet week. StatsDeck's files have
-    no `meta`, so this returns [] for them.
+    `sffl injuries-fetch` records each source's outcome under `meta.sources`.
+    A source that failed, was skipped or is switched off (ESPN after a block)
+    gets a "!! ... unavailable this run" line rather than reading as a quiet
+    week, and the Sleeper statuses' age is always said (with "!!" past a day),
+    since a cached copy can be the previous good one. StatsDeck's files have no
+    `meta`, so this returns [] for them.
     """
     with open(path) as fh:
         raw = json.load(fh)
     meta = raw.get("meta") if isinstance(raw, dict) else None
-    if not isinstance(meta, dict):
+    sources = meta.get("sources") if isinstance(meta, dict) else None
+    if not isinstance(sources, dict):
         return []
     notes = []
-    for name, info in sorted((meta.get("sources") or {}).items()):
+    for name, info in sorted(sources.items()):
         if isinstance(info, dict) and not info.get("ok", True):
-            notes.append("%s unavailable this run: %s"
-                         % (name, info.get("error") or "unknown error"))
+            error = info.get("error")
+            error = " ".join(error.split())[:300] if isinstance(error, str) else ""
+            notes.append("!! %s unavailable this run: %s"
+                         % (name, error or "unknown error"))
+    sleeper = sources.get("sleeper")
+    if isinstance(sleeper, dict) and sleeper.get("ok"):
+        age = sleeper.get("age_hours")
+        when = sleeper.get("fetched_at")
+        if isinstance(age, (int, float)) and isinstance(when, str):
+            notes.append("%sSleeper statuses as of %s (%.0f h old)"
+                         % ("!! " if age > 24 else "",
+                            when[:16].replace("T", " "), age))
     return notes
 
 

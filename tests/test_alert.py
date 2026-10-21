@@ -1237,12 +1237,14 @@ def test_a_row_without_an_as_of_renders_exactly_as_before():
     assert "[official 2026-09-05]" in msg
 
 
-def test_the_direct_feeds_own_warnings_are_printed_under_the_age_line():
+def test_the_direct_feeds_own_notes_are_printed_under_the_age_line():
+    notes = ["!! espn unavailable this run: HTTP 403",
+             "Sleeper statuses as of 2026-10-23 16:45 (0 h old)"]
     msg = compose("tuesday", 0, [], LINEUP, [], injuries_age_minutes=2,
-                  injury_source_notes=["espn unavailable this run: HTTP 403"])
+                  injury_source_notes=notes)
     lines = msg.splitlines()
     age = next(i for i, l in enumerate(lines) if l.startswith("Injury data fetched"))
-    assert lines[age + 1] == "!! espn unavailable this run: HTTP 403"
+    assert lines[age + 1:age + 3] == notes
 
 
 def test_no_source_notes_means_no_extra_line():

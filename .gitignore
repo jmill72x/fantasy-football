@@ -36,3 +36,8 @@ logs/
 # id crosswalk, Sleeper's player feed, the ESPN-off marker and the last
 # snapshot it derives status changes from. Third-party data, never committed.
 data/cache/
+# Third-party text the direct injury feed and CBS's icon sidecars carry
+# (ESPN, Sleeper and nflverse rows; CBS labels and news headlines), wherever
+# such a file lands. Never committed.
+*.direct.json
+*.icons.json

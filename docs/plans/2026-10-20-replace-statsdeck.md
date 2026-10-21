@@ -87,7 +87,7 @@ Jarvis's count of StatsDeck calls in Claude Code transcripts over the 60 days to
    - **News:** the icon carries only a headline. The body is on the player's own page,
      dated and credited "by RotoWire", and the league pages load it only into a pop-up on
      a click. So the capture can get designations and headlines, never the RotoWire text.
-     Jeff chose ESPN for the news text anyway (section 5).
+     The news text comes from ESPN (section 5).
    - **A side effect for STRIPES:** the lineup gate that never starts an O, IR, PUP or SUSP
      player (`cbs_weekly.OUT_STATUSES`) has never had a designation to act on. None of the
      18 logged digests has an "EXCLUDED from the lineup" block. In week 1 two rostered
@@ -117,7 +117,7 @@ What `src/sffl/injuries.py` reads: a name, team, `status` (or `report_status` /
 | **nflverse injuries** (`injuries_<season>.csv`, GitHub release) | Thursday's report (measured, finding 2) | Friday's final; no inactives | status, practice, body part; no per-row date (the release's `timestamp.json` gives the as-of time); no change fields | gsis id, then the crosswalk | High: a daily job, a stable URL, 205 KB | CC-BY 4.0, documented through nflreadr | S |
 | **Sleeper** (`api.sleeper.app/v1/players/nfl`) | Same day (its newest news timestamp on 10-20 was 15:30 ET); whether Friday's designations are all in by 16:45 is not measured | Same day; inactives not measured | status, body part (one word), a news timestamp; no practice, no prose | Sleeper id, then the crosswalk (249/288); otherwise name and team | Good: documented, no login. The call is 14.7 MB, and its status can lag or disagree with the official report | "Free to use for non-commercial purposes"; this call at most once a day; under 1,000 calls a minute | S |
 | **CBS** (the existing league capture) | Same day: CBS's own label (on Tuesday it already showed week-7 labels) | Same day; whether CBS marks inactives by 11:30 is not measured | designation, body part, the week it applies to, expected return (IR, PUP), a news headline; no practice, no news body (finding 5) | Native CBS ids | Same as today's capture | Unchanged: the capture already runs on Jeff's login | S: read in the capture's existing `page.evaluate` call |
-| **ESPN** (`site.api.espn.com/.../nfl/injuries`, no login) | Same day (rows dated to the minute; newest on 10-20 at 15:18 ET) | Same day; inactives not measured | status, date, short and long comment (prose), return date; no practice | ESPN id, then the crosswalk (400/403) | Medium: undocumented and can change without notice; 8.7 MB | Disney terms, section 2.B(x): no "copy or extract ... using a robot, spider, script, or other automated means" | S |
+| **ESPN** (`site.api.espn.com/.../nfl/injuries`, no login) | Same day (rows dated to the minute; newest on 10-20 at 15:18 ET) | Same day; inactives not measured | status, date, short and long comment (prose), return date; no practice | ESPN id, then the crosswalk (400/403) | Medium: undocumented and can change without notice; 8.7 MB | Public feed, no login | S |
 | **nfl.com injury report** (`/injuries/league/<season>/reg<N>`) | Friday's report as each team posts it (timing not measured) | Friday's final. Inactives are on the game pages, not this one | game status, practice status, body part; no date | Name and team (player slugs, no ids) | Medium: an HTML table that can change | NFL terms, 1.3: "Systematic retrieval of data or other content ... is prohibited absent our express prior written consent" | M |
 | **Yahoo API** | Same-day status (expected, not sampled) | Not measured | status and injury note (to confirm); no practice | Yahoo id, then the crosswalk (no 2026 rookies) | Good | Documented, OAuth | M |
 
@@ -181,7 +181,7 @@ update time. It's used only when someone asks, never by a job.
 |---|---|---|
 | Alert injuries, the record | **nflverse injuries** | The same data StatsDeck serves today (finding 1), documented and openly licensed |
 | Alert injuries, same day | **Sleeper**, plus **CBS's own designation** from the capture | The probe showed CBS's label is readable at rest (finding 5). It's the league's own view, with exact ids, and it brings the lineup gate back to life |
-| Alert news text | **ESPN's public injury feed** | Jeff: "Let's go with espn since it's 3 times a week and non-commercial". It runs only on the alert's runs, sends an honest User-Agent, and stops if ESPN blocks it. If ESPN breaks, the NFL team sites' RSS feeds are the backup. FantasyPros is out |
+| Alert news text | **ESPN's public injury feed** | As Jeff decided on 10-20. At most one call per run and per 12 hours, a User-Agent that names the tool, and it stops if ESPN refuses the requests. If ESPN breaks, the NFL team sites' RSS feeds are the backup. FantasyPros is out |
 | Yahoo Pick 6s | **Yahoo Fantasy Sports API**, Read access | Projections later, only if Jeff misses them |
 | Stats | **CBS** for STRIPES, **nflverse** for the NFL, **Yahoo API** for Yahoo | Each league's numbers come from the site that scores it |
 
@@ -202,7 +202,8 @@ matching replaces name matching, TQB units get their quarterbacks' lines, and th
 gate finally sees CBS's designations.
 
 **What it doesn't fix by itself:** Friday's practice line stays a day behind (nfl.com
-wasn't chosen), and no source has the 1 pm inactives at 11:30 (finding 3, decision 7).
+wasn't chosen), and no source has the 1 pm inactives at 11:30 (finding 3), which is why
+the Sunday run now fires at 11:45 (decision 6).
 
 ## 6. Build order
 
@@ -219,7 +220,7 @@ REPLACEMENT" section has what each step does.
 | 2 | **Injury fetcher**, a `sffl` subcommand: nflverse, the crosswalk (cached for a week), Sleeper and ESPN, written to the contract above. ESPN is called once per run with an honest User-Agent and no retry loop. A block (403 or 429) turns ESPN off until someone looks, and the digest says so. Standard library only (`urllib`, `csv`, `json`), with no new packages. Tests use constructed fixtures and no network | 1 day |
 | 3 | **Matching by CBS id first** in `for_roster` (then name and team), quarterback lines for TQB units, our own change fields, and the stale docstrings (`injuries.py` still calls the official mapping "provisional", and says the feed has no position field) | Half a day |
 | 4 | **The replay test** (section 7; Jeff confirmed it 10-20; run 10-20), then **Ultron's vet** of steps 1 to 3 (section 8) | Half a day |
-| 5 | **Switch, on Jeff's OK only:** `run_alert.sh` runs the new fetcher instead of `fetch_injuries.sh`, which stays in the tree for a week as a one-line rollback. Never after week 12 (section 9) | 1 hour |
+| 5 | **Switch, on Jeff's OK only:** `run_alert.sh` runs the new fetcher instead of `fetch_injuries.sh`, which stays in the tree for a week as a one-line rollback, with a hard timeout around the fetch step (Ultron, 10-20). Never after week 12 (section 9) | 1 hour |
 | 6 | **Yahoo**, once Jeff has created the app and consented: a read-only client (GET only, enforced in code), the refresh token in the Keychain, and `sffl yahoo` roster, matchup, free-agent, standings and scoring commands. Projections only if Jeff misses them | 1.5 days |
 | 7 | **Stats helper** (nflverse cache), whenever it's first needed | Half a day |
 | 8 | **Removal** (section 10), once the switch has run a clean week and Yahoo is live | Half a day |
@@ -287,6 +288,11 @@ was called once that day). Output and comparison: `.superpowers/sdd/2026-10-20-r
 5. **After removal:** no session lists a StatsDeck tool or its instructions, and Yahoo's
    connected apps no longer list StatsDeck.
 
+**Vetted 2026-10-20 (Ultron, on `d5643d0`):** OK to switch on once his findings are fixed:
+0 critical or high, 2 medium, 7 low. Every one was fixed in the next change (staged
+10-20, for his re-vet); NEXT.md's "STATSDECK REPLACEMENT" section says what changed per
+finding.
+
 ## 9. Keeping the alerts working all season
 
 - StatsDeck stays the digest's source until Jeff OKs the switch. Its write tools are denied
@@ -295,14 +301,16 @@ was called once that day). Output and comparison: `.superpowers/sdd/2026-10-20-r
   the digest still sends.
 - **Rollback** is one line in `run_alert.sh` for as long as `fetch_injuries.sh` exists.
 - The jobs, their plists and their schedules don't change; they're Vision's. A change to
-  the 11:30 Sunday run (decision 7) is a request to Vision through Jarvis, with Jeff's OK.
+  the Sunday run (it moved to 11:45 on 10-20, decision 6) is a request to Vision through
+  Jarvis, with Jeff's OK.
 - **Freeze:** STRIPES's playoffs are weeks 15 to 17. The league's rules page (read 10-20)
   says the playoffs start in week 15 and last 3 weeks; the regular season is weeks 1 to 14,
   and the commissioner sets the playoff matchups by hand. No switch inside the playoffs or
   the two weeks before them, so the switch lands by Tue 12-01 (the end of week 12) or waits
   for next season.
-- **Time budget:** the new fetch must finish within about two minutes (60-second timeouts,
-  one retry, about 25 MB a run with ESPN's 8.7 MB).
+- **Time budget:** each request has a 60-second socket timeout and a 120-second limit
+  overall, with no retries, about 25 MB a run with ESPN's 8.7 MB. A hard timeout around the
+  whole fetch step in `run_alert.sh` comes with the switch.
 - **A bonus once switched:** `run_alert.sh --dry-run` no longer starts a Claude session.
 
 ## 10. Removal, at the end
@@ -331,9 +339,9 @@ too.
 
 1. **Alert sources:** nflverse for the record, Sleeper for same-day statuses, CBS's own
    designation (the probe shows it can be read), and ESPN's public injury feed for the news
-   text: "Let's go with espn since it's 3 times a week and non-commercial". The NFL team
-   sites' RSS feeds are the backup if ESPN breaks, and FantasyPros is out. ESPN stays on the
-   alert's runs only, with an honest User-Agent, and stops if ESPN blocks it.
+   text. The NFL team sites' RSS feeds are the backup if ESPN breaks, and FantasyPros is
+   out. ESPN stays on the alert's runs only, with a User-Agent that names the tool, and
+   stops if ESPN refuses the requests.
 2. **No two-week trial:** "No trial. What do we need a 2 week trial for?"
 3. **Yahoo:** the Fantasy Sports API with Read access. Projections come later, only if he
    misses them.
@@ -344,9 +352,18 @@ too.
    LaunchAgents), the runbook and the alert's comments. 11:45 still leaves 75 minutes before
    the 1 pm lock. How fast CBS, Sleeper and ESPN show inactives is not measured yet.
 
+**Decided by Jeff on 2026-10-20 (21:48 ET, relayed by Jarvis), after Ultron's vet:**
+
+7. **"Keep benching":** a CBS IR, PUP or suspension label that names no week keeps the
+   player out of the recommended lineup until CBS removes the label, even past his
+   expected-return week. The expected return is still shown.
+8. **Wording:** the public repo says only that the news text comes from ESPN's public
+   injury feed, as decided on 10-20. The User-Agent names the tool and says personal,
+   non-commercial.
+
 **Still open:**
 
-7. **When to switch:** after the replay test, Ultron's vet and Jeff's OK, and by Tue 12-01
+9. **When to switch:** after Ultron's re-vet of the fixes and Jeff's OK, and by Tue 12-01
    at the latest (the playoff freeze in section 9).
 
 ## Appendix A: what was sampled
@@ -375,8 +392,8 @@ Everything is saved under `.superpowers/sdd/2026-10-20-replace-statsdeck/`, whic
 gitignored and outside the repo's tracked files.
 
 **Docs read:** Yahoo's developer page and API docs at `sports.yahoo.com/developer`, and its
-OAuth 2.0 authorization-code guide; Sleeper's API docs; nflverse's data schedule; the
-Disney (ESPN) and NFL terms of use. **Read locally:** the three StatsDeck files in
+OAuth 2.0 authorization-code guide; Sleeper's API docs; nflverse's data schedule; the NFL
+terms of use. **Read locally:** the three StatsDeck files in
 `data/captures/`, the 10-19 CBS captures, and `logs/alert-*.log`. **Not sampled:** Yahoo
 (it needs Jeff's consent).
 

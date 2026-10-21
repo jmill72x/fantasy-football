@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1024` passed
+- full_suite: `1067` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -63,8 +63,9 @@ commissioner enters the playoff matchups by hand (`/standings/playoff-race`). NF
 starts Wed 2026-12-16, and week 17 ends Tue 2027-01-05. The plan's freeze means no
 injury-source switch from week 13 (Wed 12-02) on.
 
-**Built 2026-10-20: steps 1 to 3, staged, NOT live.** The jobs run from this working tree,
-so every new behaviour is off by default and the scheduled runs do exactly what they did:
+**Built 2026-10-20: steps 1 to 3, pushed (`d5643d0`), NOT live.** The jobs run from this
+working tree, so every new behaviour is off by default and the scheduled runs do exactly
+what they did. Ultron's fixes and Jeff's two calls (below) are staged on top:
 
 - **CBS designations: `sffl alert --cbs-designations`**, off until the switch.
   - `capture(..., icons=True)` asks the same `page.evaluate` call for each row's icon
@@ -73,29 +74,67 @@ so every new behaviour is off by default and the scheduled runs do exactly what 
   - `sffl.cbs_icons` maps the labels to the parser's tags: Questionable Q, Doubtful D,
     Out, Retired and Did Not Report O, Injured Reserve and NFI-R IR, PUP, SUSP. An unknown
     phrase gets no tag, so it can't bench anyone.
-  - A label applies only to the week it names. It sets `PlayerProjection.status`, so
-    `is_out` finally excludes CBS's Out/IR/PUP/SUSP players. The roster's labels join the
-    injury block as "cbs" intel. A sidecar that can't be read is a banner and a non-zero
-    exit.
+  - A label applies only to the week it names; a label naming no week (IR, PUP, a
+    suspension) always applies, past its expected return too ("keep benching", below).
+    The most severe label that applies wins: SUSP, IR, PUP or O, then D, then Q. It sets
+    `PlayerProjection.status`, so `is_out` finally excludes CBS's Out/IR/PUP/SUSP players.
+    The roster's labels join the injury block as "cbs" intel. A sidecar that can't be
+    read, or a 200-plus-row page with no designation icon at all, is a banner and a
+    non-zero exit. A row holding another row or linking two players gets no icons.
   - Checked offline against the probe's saved pages: all 197 designation labels on the
     week-7 RB/WR/TE page parse (Q 84, IR 90, O 15, PUP 6, D 1, SUSP 1, none unknown).
     Called without icons, the script returns exactly today's rows.
 - **The direct feed: `sffl injuries-fetch --out <file>`** (`sffl.direct_injuries`).
   - The sources are nflverse (the record), the ffverse crosswalk (cached a week), Sleeper
     (cached 24 hours) and ESPN.
-  - ESPN gets one call per run with an honest User-Agent. A 403 or 429 writes
-    `data/cache/espn-off.json`, and ESPN stays off until someone deletes it. ESPN's
-    "Active" rows (mostly game recaps) are kept only as a change, i.e. a return.
+  - ESPN gets at most one call per run and per 12 hours (`--force-espn` overrides), with
+    a User-Agent that names the tool and says personal, non-commercial. A 401, 403, 429
+    or 451, a redirect off the allowlist, or a 200 that isn't JSON writes
+    `data/cache/espn-off.json`, and ESPN stays off until someone deletes it. Manual runs
+    leave ESPN out unless given `--espn`. ESPN's "Active" rows (mostly game recaps) are
+    kept only as a change, i.e. a return.
   - Requests go over HTTPS to six allowed hosts only, redirects included, with a 60-second
-    timeout and a byte cap on every response. Only CSV and JSON are parsed, with the
-    standard library.
-  - If nflverse fails, no file is written at all. It refuses the live `injuries-<kind>.json`
-    without `--allow-live-path`. Its caches and change state live in `data/cache/`
-    (gitignored).
+    socket timeout, a 120-second limit per request, a byte cap, and a refusal of any body
+    shorter than its Content-Length. Only CSV and JSON are parsed, with the standard
+    library. Third-party text is capped (notes at about 300 characters); error notes name
+    hosts, never URLs.
+  - Only nflverse can fail the run, and then no file is written at all; that includes a
+    week that shrank below half of the previous scheduled run's rows. Each optional source
+    (crosswalk, Sleeper, ESPN) runs in its own guard and is left out, with its error type,
+    on any failure; a bad row is skipped and counted. A cached copy is replaced only by a
+    body that parses, else the previous good copy is used. The digest prints the Sleeper
+    statuses' age.
+  - `--out` must be a `.json` file inside `data/captures/` (resolved against the repo
+    root), never the live `injuries-<kind>.json` (by name in any case, or as the same file)
+    without `--allow-live-path`, and an existing file is replaced only if it is an earlier
+    fetcher output. Scheduled kinds cache and keep the change state in `data/cache/`;
+    manual runs cache in `data/cache/manual/` and never touch the state. All gitignored,
+    and so is every `*.direct.json` and `*.icons.json`.
 - **Matching: `injuries.for_roster(..., roster_rows=)`.** CBS id first, then name and team.
   A TQB unit gets its quarterbacks' lines. It is used only for files whose rows carry CBS
   ids, so StatsDeck's file keeps its name match. Change fields come from the fetcher's own
   last snapshot. The stale docstrings in `injuries.py` and `alert.py` are fixed.
+
+**Ultron vetted `d5643d0` on 10-20: OK to switch on after fixes; 0 critical or high, 2
+medium, 7 low.** What changed per finding, all staged 10-20 for his re-vet:
+
+| # | Finding | What changed | Tests |
+|---|---|---|---|
+| 1 | medium: one bad optional response aborts the feed | each optional source in `except Exception` with its error type; `http.client.HTTPException` becomes `FetchError`; typed fields and per-row skips in `sleeper_rows`/`espn_rows`; parse before cache, previous good copy on failure; only nflverse fatal | `test_direct_injuries.py`: one bad source, bad rows, parse-before-cache, IncompleteRead |
+| 2 | medium: third-party text could reach the repo | `*.direct.json`/`*.icons.json` ignored everywhere; `--out` only inside `data/captures/`; the fixture guard and the private rescan fail on ESPN-shaped rows and "Update:" headlines (the rescan also on 40 characters of real ESPN/CBS text) | `test_fixture_guard.py`; rescan self-test by planting |
+| 3 | low: CBS label rules | most severe label wins; no-week labels per "keep benching"; a nested or two-player row gets no icons; banner for a long page with no designation | `test_cbs_icons.py`, `test_capture.py`, `test_cli_alert.py` |
+| 4 | low: time limits and short bodies | 120-second wall limit per request; short body refused; a shrunken week refused; plan section 9 says no retries; the `run_alert.sh` hard timeout comes with the switch | `test_direct_injuries.py` |
+| 5 | low: the output file and the cache | case-insensitive and `samefile` live-path guard; `.json` only; never deletes a file without `meta.generated_at`; cache default from the repo root | `test_direct_injuries.py` (command and output tests) |
+| 6 | low: when ESPN counts as blocked | also 401, 451, an off-allowlist redirect, a non-JSON 200; at most once per 12 hours unless forced; manual runs default to no ESPN | `test_direct_injuries.py` |
+| 7 | low: manual runs and the scheduled state | only scheduled kinds read or write the state; manual runs cache on their own; the digest prints the Sleeper age | `test_direct_injuries.py`, `test_injuries.py` |
+| 8 | low: caps on third-party text | as-of zone only as a short code or an offset; notes capped near 300 characters; hosts, not URLs, in error notes | `test_direct_injuries.py` |
+| 9 | low: no test may reach the network | `tests/conftest.py` refuses every internet connection in every test; the command tests stub the fetch | the whole suite |
+
+**Jeff's two calls (10-20, 21:48 ET):** "keep benching" (a no-week IR, PUP or suspension
+label benches until CBS removes it, past the expected return, which is still shown), and
+the public repo describes the news text only as ESPN's public injury feed, as decided on
+10-20; the User-Agent names the tool and says personal, non-commercial. The decision
+record is in the private data repo (`records/decisions/2026-10-20-espn-injury-feed.md`).
 
 **The replay (plan section 7) ran on 10-20.** All 376 official week-6 rows match StatsDeck's
 Sunday and Tuesday files on status, practice, team, position and body part. The display name

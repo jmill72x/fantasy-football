@@ -397,3 +397,11 @@ def test_the_sidecar_is_written_whole(tmp_path):
     assert data["rows_scanned"] == 1
     assert list(data["icons"]) == ["9000001"]
     assert not (tmp_path / "roster.icons.json.tmp").exists()
+
+
+def test_the_script_skips_icons_for_a_row_it_cannot_attribute():
+    # A row holding another row, or linking two players, gets icons: null, so
+    # none of its icons can be credited to the wrong player.
+    js = capture._ID_EXTRACT_JS
+    assert "tr.querySelector('tr')" in js and "ids.size > 1" in js
+    assert "row.icons = null" in js

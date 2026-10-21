@@ -322,8 +322,21 @@ def test_source_notes_name_each_failed_source(tmp_path):
         "espn": {"ok": False, "error": "HTTP 403"},
         "sleeper": {"ok": False}}}}))
     assert source_notes(str(path)) == [
-        "espn unavailable this run: HTTP 403",
-        "sleeper unavailable this run: unknown error"]
+        "!! espn unavailable this run: HTTP 403",
+        "!! sleeper unavailable this run: unknown error"]
+
+
+def test_source_notes_say_how_old_the_sleeper_statuses_are(tmp_path):
+    path = tmp_path / "x.direct.json"
+
+    def notes(age):
+        path.write_text(json.dumps({"report": [], "intel": [], "meta": {"sources": {
+            "sleeper": {"ok": True, "fetched_at": "2026-10-23T13:45:00",
+                        "age_hours": age}}}}))
+        return source_notes(str(path))
+
+    assert notes(3.0) == ["Sleeper statuses as of 2026-10-23 13:45 (3 h old)"]
+    assert notes(30.0) == ["!! Sleeper statuses as of 2026-10-23 13:45 (30 h old)"]
 
 
 def test_a_statsdeck_file_has_no_source_notes():

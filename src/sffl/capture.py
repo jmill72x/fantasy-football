@@ -109,7 +109,9 @@ _NAV_RETRIES = 1
 # links - CBS's injury designation, a news headline, a trend - read from the
 # same render pass. CBS draws a designation as an icon whose label lives in the
 # link's `aria-label` (and its holder's `title`), never in the row's text, so
-# `innerText` alone has never seen one (see `sffl.cbs_icons`). Called with no
+# `innerText` alone has never seen one (see `sffl.cbs_icons`). A row that holds
+# another row, or links two different players, gets `icons: null`: its icons
+# cannot be told apart, so none is attributed to anyone. Called with no
 # argument, as the live alert does until the switch, `withIcons` is undefined
 # and every row is exactly {id, text}, as before.
 _ID_EXTRACT_JS = """
@@ -125,6 +127,16 @@ _ID_EXTRACT_JS = """
     if (!text) return;
     const row = {id: m[1], text: text};
     if (withIcons) {
+      const ids = new Set();
+      tr.querySelectorAll("a[href*='playerpage/']").forEach(l => {
+        const mm = (l.getAttribute('href') || '').match(/playerpage\\/(\\d+)/);
+        if (mm) ids.add(mm[1]);
+      });
+      if (tr.querySelector('tr') || ids.size > 1) {
+        row.icons = null;
+        rows.push(row);
+        return;
+      }
       row.icons = [];
       tr.querySelectorAll('.playerIconsWrapper a.playerLink').forEach(link => {
         const icon = link.querySelector("[class^='icon-'], [class*=' icon-']");

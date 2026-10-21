@@ -1125,3 +1125,19 @@ def test_the_projected_week_around_the_tuesday_to_wednesday_boundary():
         if kind:
             assert cli._projection_week(kind, week) == projected, (day, kind)
     assert 'tuesday) RESULTS_WEEK="$WEEK"' in text
+
+
+def test_a_long_page_with_no_designation_icon_is_said_in_the_message(alert_env, capsys):
+    # 1,700 RB/WR/TE rows and not one designation means the markup moved, not
+    # that the league is healthy.
+    _write_sidecars(alert_env.tmp, {})
+    side = alert_env.tmp / "rbwrte.icons.json"
+    data = json.loads(side.read_text())
+    data["rows_scanned"] = 1714
+    side.write_text(json.dumps(data))
+    code, out = alert_env.run(capsys, "--injuries",
+                              str(_injuries_file(alert_env.tmp)),
+                              "--cbs-designations")
+    assert "!! CBS DESIGNATIONS UNAVAILABLE on 1 page(s)" in out
+    assert "1714 rows but no designation icon at all" in out
+    assert code == 1
