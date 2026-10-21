@@ -30,6 +30,41 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
+## STATSDECK REPLACEMENT (2026-10-20): Jeff said go
+
+**The plan is `docs/plans/2026-10-20-replace-statsdeck.md`, and its section 11 holds Jeff's
+decisions.** The alerts' injuries move to nflverse (the record), Sleeper (same-day
+statuses), CBS's own designation (read from the capture) and ESPN's public injury feed (the
+news text). Yahoo Pick 6s moves to the Yahoo Fantasy Sports API with Read access. There's
+no two-week trial; a replay test against the three saved StatsDeck files takes its place
+(Jeff confirmed it 10-20). StatsDeck's four write tools have been denied by exact name since
+10-20, and `get_injuries` still works, so the alerts run on StatsDeck until the switch. The
+Sunday alert runs at 11:45 since 10-20, so the 1 pm inactives (out at 11:30) can make it.
+
+**What the read-only CBS probe found (10-20):**
+
+- CBS's injury designations are in the league pages' markup, not in their text. Each
+  player cell has a `span.playerIconsWrapper` whose `title` and `aria-label` read like
+  `Injury Report: <body part>: Questionable for Week 7 at <opponent>`, with an icon class
+  (`icon-red_cross`, `icon-player-status-ir`, `icon-player-status-pup`, `icon-suspended`).
+  The captured text loses them, so **`cbs_weekly.OUT_STATUSES` has never fired on a live
+  capture**. Build step 1 reads them in the capture's existing `page.evaluate` call.
+- A label applies only to the week it names. Bye players' labels name their next game's
+  week, and on 10-20 seven stale labels still named week 5 or 6.
+- The icon carries only a news headline. The news body is RotoWire's, on the player page.
+- Saved under `.superpowers/sdd/2026-10-20-replace-statsdeck/cbs-probe-2026-10-20/`
+  (gitignored).
+
+**STRIPES's playoffs are weeks 15 to 17.** CBS's `/rules` page, "SCHEDULE & PLAYOFFS",
+read 10-20: Playoffs Start Week 15, Playoffs Last 3 Weeks, Automatic Playoffs No. The
+regular season is weeks 1 to 14 (the team schedule lists periods 1 to 14), and the
+commissioner enters the playoff matchups by hand (`/standings/playoff-race`). NFL week 15
+starts Wed 2026-12-16, and week 17 ends Tue 2027-01-05. The plan's freeze means no
+injury-source switch from week 13 (Wed 12-02) on.
+
+**Next:** build steps 1 to 3, the replay test, Ultron's vet, then the switch on Jeff's OK
+(by Tue 12-01).
+
 ## DATA ARCHIVE AND THE 2027 RUNBOOK (2026-10-19)
 
 **Next season starts from `docs/operations/preseason-runbook.md`.** It has every step and
@@ -334,9 +369,10 @@ StatsDeck's injury feed uses nflverse ids (`00-0036900` for Ja'Marr Chase) - a d
 namespace CBS's `playerpage/<id>` has no relationship to - so `sffl.injuries.for_roster`
 stays name-based (`identity.normalize_name`), by design; see that module's own docstring
 for why this is judged an acceptable, narrower residual (wrong news beside a player, never
-a silently dropped lineup slot). Unifying that would need a cross-source id mapping (e.g.
-via nflverse's own CBS-id crosswalk, if one exists) - not attempted here, and not cheap:
-correctly out of scope, same reasoning as Task 3b's own brief.
+a silently dropped lineup slot). The cross-source id mapping exists: ffverse's
+`db_playerids.csv` carries `cbs_id` beside the nflverse id (checked 2026-10-20). The
+StatsDeck replacement matches by CBS id with it (plan step 3); until that lands, matching
+stays name-based.
 
 **Jeff is not attending the auction.** A surrogate drafts for him on 08-26. **Jeff owns the
 BID; the surrogate owns the SELECTION.** The Excel + `Key & Intel` sheet is the deliverable;

@@ -13,7 +13,7 @@ WHY A FAILED CAPTURE SUPPRESSES THE LINEUP. An expired CBS session returns a
 well-formed login page, which parses to an empty roster - a valid-looking
 input meaning "Jeff owns nobody". Printing a lineup derived from an
 unverified capture is how a confident, entirely wrong start/sit reaches the
-phone ninety minutes before kickoff.
+phone 75 minutes before kickoff.
 
 FRIDAY AND SUNDAY MUST ACTUALLY READ DIFFERENTLY, NOT JUST BE TITLED
 DIFFERENTLY. The original version of this module led both kinds with the
@@ -163,7 +163,8 @@ STALE_PROJECTIONS_HOURS = 36
 #   FRIDAY   practice participation (DNP / limited / full) only exists after
 #            Wednesday-to-Friday practices, so Tuesday cannot carry it. This
 #            is a start/sit message, not a claim message.
-#   SUNDAY   official inactives, ninety minutes out. The last word.
+#   SUNDAY   official inactives, 75 minutes out (11:45, just after they're
+#            announced at 11:30 for the 1pm games). The last word.
 _KINDS = {
     "tuesday": ("Tuesday waiver window",
                 "Drop/add is open - claims process ~2am Wednesday."),
@@ -567,7 +568,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     checks, and BOTH default to None meaning "the check did not fire" -
     never "the check passed". They are rendered as warnings at the TOP of
     the digest rather than as a refusal to send: this job runs unattended
-    ninety minutes before kickoff, and a lineup that says its own inputs
+    75 minutes before kickoff, and a lineup that says its own inputs
     look wrong is strictly more useful than no message at all.
     `projections_age_hours` is how old the freshest captured page said it
     was, rendered whenever known so the reader can judge for themselves.
@@ -601,7 +602,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     thing left to say is "you will be a man short", not a list to shop from.
 
     `trade_targets` is [(candidate, owner, gain)] for the TUESDAY digest only
-    - it is the planning message, and Sunday is ninety minutes from kickoff
+    - it is the planning message, and Sunday is 75 minutes from kickoff
     with no use for a trade idea.
     `None` means the block was not attempted (not Tuesday, or --no-trade); `[]`
     means it ran and found nothing worth naming, and the two render

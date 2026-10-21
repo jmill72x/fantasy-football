@@ -10,7 +10,7 @@ first time, and what each failure mode means and how to fix it.
 |---|---|---|
 | `com.sffl.alert.tuesday` | Tuesday 16:45 local | **The claim run.** Drop/add opens Tuesday in this league and CBS processes waivers ~2am Wednesday, so this is the only digest whose claim advice can still be acted on. Carries the bye look-ahead and the trade targets. |
 | `com.sffl.alert.friday` | Friday 16:45 local | Practice participation (DNP / limited / full), which only exists after Wednesday-to-Friday practices - so Tuesday cannot carry it. Also carries waiver targets (added 2026-10-02), each tagged with its own CBS clear date - after Wednesday's run players clear on different days. |
-| `com.sffl.alert.sunday` | Sunday 11:30 local | Official inactives, ninety minutes before the 1pm kickoff window. |
+| `com.sffl.alert.sunday` | Sunday 11:45 local | Official inactives, 75 minutes before the 1pm kickoff window. Teams announce inactives 90 minutes before kickoff (11:30 for 1pm games), so the run moved from 11:30 to 11:45 on 2026-10-20 to give them time to land (Jeff: "Yes, change the sun run to 11:45."). |
 
 **Why Tuesday was added (2026-09-16).** The planning content used to ride on the
 Friday run, where it was incoherent: the bye look-ahead told Jeff "a claim has to
@@ -22,8 +22,8 @@ All three are `launchd` **LaunchAgent**s (`ops/com.sffl.alert.<kind>.plist`), ea
 running `ops/run_alert.sh <tuesday|friday|sunday>`.
 
 `StartCalendarInterval`'s `Hour`/`Minute` are the **machine's local time**. This Mac's
-local time is already Eastern, which is the league's timezone, so 16:45/11:30 fire at
-4:45pm/11:30am ET exactly as intended and this needs **no timezone handling anywhere in
+local time is already Eastern, which is the league's timezone, so 16:45/11:45 fire at
+4:45pm/11:45am ET exactly as intended and this needs **no timezone handling anywhere in
 the code**. If a future reader is tempted to add TZ conversion because "launchd surely
 means UTC" - it doesn't; leave it alone.
 
