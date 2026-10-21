@@ -26,6 +26,27 @@ only when it is page furniture, or from a page saved before this existed
 `player_id`) before `_ROW` ever sees the line, so `_ROW` itself never
 needs to know it exists.
 
+TWO ROW SHAPES ON TODAY'S PAGE (2026-10-20). A player with a game this week
+renders his GAME TIME cell on a line of its own, so his row is three lines -
+the row line, the kickoff time, then the stat block - and `capture`'s id
+prefix lands on the LAST of them (`_prefix_ids` puts it at the start of the
+row's last non-blank line), not on the row line:
+
+    \tWR\tPat Example WR . SEA \t@MIA\t
+    Sun 1:00pm EDT
+    id=9000001\t\t8\t43.5\t...
+
+A player ON BYE has no kickoff time, so his whole row - opponent BYE, then the
+stat block - is ONE line, and the id prefix stays on it:
+
+    id=9000002\t\tWR\tLee Sample WR . LAC \tBYE\t\t7\t\t---\t...
+
+`_ROW` used to require the row line to END after the opponent, so every
+bye-week row failed to match and the player silently vanished from the parsed
+roster (the 10-16 digest left out two; a bye starter could never be flagged).
+It now accepts anything after the opponent's own tab, which keeps every row it
+matched before exactly as it was.
+
 Field 1 is the position column. Field 2 is `NAME POS . TEAM`, where TEAM
 sometimes carries a TRAILING SPACE - that's where an injury glyph renders in
 the live page; it is not part of the team code. Field 3 is the opponent,
@@ -119,6 +140,11 @@ _POS = r"TQB|QB|RB|WR|TE|K|DST"
 # just matched) - see `parse_lineup_rows` and `RosterRow` below, which need
 # it to build the same (name, pos, team) identity `identity.player_key`
 # already gives every other vendor source in this project.
+#
+# AFTER THE OPPONENT: nothing, a lone tab, or a tab and the rest of the row.
+# The last is a bye-week row, which is one line with its stat block on it -
+# see the module docstring's "TWO ROW SHAPES". Before 2026-10-20 this ended
+# `\t?$`, which dropped every player on bye.
 _ROW = re.compile(
     r"^\t(?P<slot>%s)\t"
     r"(?P<name>[A-Za-z0-9.'\- ]+?)\s+"
@@ -126,7 +152,7 @@ _ROW = re.compile(
     r"\s*[•-]\s*"
     r"(?P<team>[A-Z]{2,3})"
     r" ?\t"
-    r"@?[A-Z]{2,3}\t?$" % (_POS, _POS)
+    r"@?[A-Z]{2,3}(?:\t.*)?$" % (_POS, _POS)
 )
 
 _RESERVES_MARKER = "RESERVES"

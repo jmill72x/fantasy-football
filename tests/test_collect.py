@@ -146,14 +146,17 @@ def test_end_to_end_cli_into_scratch_archive_and_bare_repo(
     assert "COLLECT FAILED" not in out
     assert "COLLECT OK push" in out
 
+    # The Tuesday run of week 6 projects week 7 (cli._projection_week), so its
+    # pages are filed under wk07; its results are the week just played, wk06.
     wk = repo / "2026" / "cbs" / "weekly" / "wk06"
-    assert sorted(os.listdir(str(wk))) == ["2026-10-20-results",
-                                           "2026-10-20-tuesday"]
+    wk_pages = repo / "2026" / "cbs" / "weekly" / "wk07"
+    assert sorted(os.listdir(str(wk))) == ["2026-10-20-results"]
+    assert sorted(os.listdir(str(wk_pages))) == ["2026-10-20-tuesday"]
     res = sorted(os.listdir(str(wk / "2026-10-20-results")))
     assert res == sorted(["results-RB-WR-TE.txt", "results-TQB.txt",
                           "results-K.txt", "results-DST.txt",
                           col.NOTE, col.MANIFEST])
-    note = (wk / "2026-10-20-tuesday" / col.NOTE).read_text()
+    note = (wk_pages / "2026-10-20-tuesday" / col.NOTE).read_text()
     assert "not_refreshed_this_run: DST.txt" in note
 
     # Pushed: the bare remote's main is the local main, one new commit, and
@@ -163,14 +166,15 @@ def test_end_to_end_cli_into_scratch_archive_and_bare_repo(
     msg = _git("log", "-1", "--format=%s", cwd=repo)
     assert msg.startswith("chore: automated: 2026 CBS pages")
     files = _git("show", "--name-only", "--format=", "HEAD", cwd=repo)
-    assert all(f == "MANIFEST.sha256" or f.startswith("2026/cbs/weekly/wk06/")
+    assert all(f == "MANIFEST.sha256"
+               or f.startswith(("2026/cbs/weekly/wk06/", "2026/cbs/weekly/wk07/"))
                for f in files.splitlines())
 
     # The repo manifest covers the new files, stays sorted, and checks out.
     man = (repo / "MANIFEST.sha256").read_text().splitlines()
     paths = [l.split("  ", 1)[1] for l in man]
     assert paths == sorted(paths)
-    assert "./2026/cbs/weekly/wk06/2026-10-20-tuesday/roster.txt" in paths
+    assert "./2026/cbs/weekly/wk07/2026-10-20-tuesday/roster.txt" in paths
     r = subprocess.run(["shasum", "-a", "256", "-c", "MANIFEST.sha256"],
                        cwd=str(repo), capture_output=True, text=True)
     assert r.returncode == 0, r.stdout + r.stderr

@@ -267,9 +267,9 @@ was called once that day). Output and comparison: `.superpowers/sdd/2026-10-20-r
 - **One rule added:** ESPN keeps an "Active" row, usually a game recap, for most players
   (610 of 800 left out on the second run). Kept as-is, it put 10 recaps into the roster's
   injury block. An Active row now appears only as a change: a return from a designation.
-- **Found on the way** (live today, outside this plan; NEXT.md has the detail): the roster
-  parser drops every bye-week row, the roster capture carries no CBS id on rows with a
-  game, and the Tuesday run scores the week just played.
+- **Found on the way** (outside this plan; NEXT.md has the detail): the roster parser
+  dropped every bye-week row, and the Tuesday run scored the week just played. Both were
+  fixed on 10-20. Still open: the roster capture carries no CBS id on rows with a game.
 
 ## 8. What Ultron vets first
 

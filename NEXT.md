@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1012` passed
+- full_suite: `1024` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -104,20 +104,28 @@ Jeff's roster, the official block is the same rows labelled "as of 08:41 EDT, vi
 and intel gains four real items. The full result is in the plan, and the files are in
 `.superpowers/sdd/2026-10-20-replace-statsdeck/replay-2026-10-20/` (gitignored).
 
-**Found while building (live today, NOT fixed in this change):**
+**Found while building, and what happened to each:**
 
-- **The roster parser drops every bye-week row.** `cbs_roster._ROW` requires the line to
-  end after the opponent, but a bye row is a single line with its stats on it. The 10-16
-  digest left out Chase and Jameson Williams. Friday 10-23 will leave out McConkey (a CBS
-  starter on bye in week 7), the Chargers TQB and Vidal, so the bye-starter warning can't
-  fire for them.
-- **The roster's CBS ids are missing on rows with a game.** The game time sits on its own
+- **FIXED 10-20: the roster parser dropped every bye-week row.** `cbs_roster._ROW`
+  required the line to end after the opponent, but a bye row is a single line with its
+  stats on it. The 10-16 digest left out Chase and Jameson Williams, and Friday 10-23 would
+  have left out McConkey (a CBS starter on bye in week 7), the Chargers TQB and Vidal.
+  `_ROW` now accepts anything after the opponent's own tab. Today's `roster.txt` parses to
+  all 13 rows (it gave 10), and every roster capture in the data repo keeps every row it
+  matched before, adding only its BYE rows. A bye starter now shows under SIT, or under
+  "ON BYE BUT STILL IN YOUR LINEUP" when nobody can replace him.
+- **OPEN: the roster's CBS ids are missing on rows with a game.** The game time sits on its own
   line, so `capture`'s id prefix lands on the stats line and `parse_lineup_rows` reads no
   id. On 10-20 only bye rows carried one. The roster-projection join quietly uses the
   composite key, and injury matching falls back to name and team for those rows.
-- **On Tuesdays the alert scores the week just played.** `run_alert.sh`'s formula gives
-  week 6 on Tue 10-20. The projections, best lineup and waiver ranking therefore come from
-  week 6's page, games already played, while the bye look-ahead uses week 7.
+- **FIXED 10-20: on Tuesdays the alert scored the week just played.** `run_alert.sh`'s
+  formula gives week 6 on Tue 10-20, so the projections, best lineup, waiver ranking and
+  trade games-left all came from week 6's page, games already played. `cli._projection_week`
+  now makes a Tuesday run project week+1 (clamped to 18). Friday and Sunday are unchanged,
+  and so is `run_alert.sh`. Results stay on the week just played, and the bye look-ahead
+  keeps `--week`+1, the week the Tuesday-night claim is for. `sffl collect` files a Tuesday
+  run's pages under the week they project (Tue 10-27, in week 7, files them under wk08),
+  with its results unit still under the week just played.
 
 **Next:**
 

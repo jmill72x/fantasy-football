@@ -121,6 +121,22 @@ def _ros_url(group):
     return ROS_URL_TEMPLATE % (GROUP_SCOPES[group], PROJECTIONS_PAGE_ROWS)
 
 
+# THE WEEK A RUN PROJECTS. `--week` is the NFL week the run falls in, as
+# `ops/run_alert.sh` computes it: a week runs Wednesday to Tuesday, so on a
+# Tuesday it is the week JUST PLAYED. But the Tuesday run is the claim run -
+# drop/add opens Tuesday and CBS processes waivers ~2am Wednesday - so its
+# projections, best lineup and waiver ranking are for the COMING week. Before
+# 2026-10-20 Tuesday scored the week just played: its lineup, waiver gains
+# and trade games-left were a week stale. Friday and Sunday project the week
+# they fall in. Results (`--results-week`) are unaffected: Tuesday still takes
+# the week just played. Clamped to 18, the last regular-season week.
+def _projection_week(kind, week):
+    """The NFL week a `kind` run's projections are for."""
+    if kind == "tuesday":
+        return min(18, week + 1)
+    return week
+
+
 def _projections_url(group, week):
     """The CBS weekly-projections URL for one position group's page.
 
@@ -223,6 +239,10 @@ def _cmd_collect(args, capture_fn=None, runner=None):
             if args.week is None or args.since is None:
                 raise ValueError("--kind needs --week and --since")
             unit = col.unit_name(day, args.kind)
+            # Filed under the week the pages ARE for: a Tuesday run's
+            # projections are next week's (see `_projection_week`), while its
+            # results unit below keeps `--results-week`, the week just played.
+            pages_week = _projection_week(args.kind, args.week)
             fresh, missing = col.fresh_files(args.captures,
                                              _capture_keys(args.kind),
                                              args.since)
@@ -234,11 +254,11 @@ def _cmd_collect(args, capture_fn=None, runner=None):
                     "page, so there is nothing of this week's to keep (the "
                     "alert's own output says why)"))
             else:
-                units.append((args.week, unit, fresh, col.note_text(
+                units.append((pages_week, unit, fresh, col.note_text(
                     "projections, roster and injuries captured by the %s "
-                    "alert run" % args.kind, season, args.week, unit,
+                    "alert run" % args.kind, season, pages_week, unit,
                     missing)))
-                labels.append("wk%02d %s" % (args.week, unit))
+                labels.append("wk%02d %s" % (pages_week, unit))
 
         live = []
         if args.results_week:
@@ -1553,6 +1573,11 @@ def _cmd_alert(args):
     from sffl import cbs_icons
 
     lg = load_league(args.league)
+    # The week this run's pages, lineup and waiver ranking are for - the
+    # coming week on a Tuesday (see `_projection_week`). `args.week` stays the
+    # week the run falls in: the bye look-ahead's "next week" below is still
+    # `args.week + 1`, the week the Tuesday-night claim deadline is for.
+    week = _projection_week(args.kind, args.week)
 
     # CBS'S OWN DESIGNATIONS (`--cbs-designations`, built 2026-10-20, OFF
     # until the StatsDeck switch). With it on, every page is captured with its
@@ -1687,7 +1712,7 @@ def _cmd_alert(args):
                 cbs_injury_rows = cbs_icons.roster_rows(
                     roster_rows,
                     cbs_icons.load_sidecar(cbs_icons.sidecar_path(roster_path)),
-                    args.week, datetime.date.today().isoformat())
+                    week, datetime.date.today().isoformat())
             except (OSError, ValueError) as exc:
                 designation_failures.append(("roster", str(exc)))
         age_days = int(
@@ -1718,12 +1743,12 @@ def _cmd_alert(args):
         for group in ALERT_GROUPS:
             url = (args.projections_url
                    if group == "RB-WR-TE" and args.projections_url
-                   else _projections_url(group, args.week))
+                   else _projections_url(group, week))
             try:
                 written = capture({group: url}, args.out_dir,
                                   args.profile_dir, **icons_kw)
                 rows = parse_weekly(written[url], group=group,
-                                    week=args.week, season=lg.season)
+                                    week=week, season=lg.season)
             except (CaptureError, ValueError) as exc:
                 group_failures.append((group, str(exc)))
                 continue
@@ -1733,7 +1758,7 @@ def _cmd_alert(args):
                 try:
                     cbs_icons.apply_designations(
                         rows, cbs_icons.load_sidecar(
-                            cbs_icons.sidecar_path(written[url])), args.week)
+                            cbs_icons.sidecar_path(written[url])), week)
                 except (OSError, ValueError) as exc:
                     designation_failures.append((group, str(exc)))
             group_rows.append((group, rows))
@@ -2064,7 +2089,7 @@ def _cmd_alert(args):
                                       args.out_dir, args.profile_dir)
                     ros_rows.extend(parse_weekly(
                         written[_ros_url(group)], group=ROS_GROUPS[group],
-                        week=args.week, season=lg.season))
+                        week=week, season=lg.season))
                 # Loaded here rather than assumed in scope: `_cmd_alert`
                 # never needed owner codes before this block, and referring
                 # to a name that only exists in `_cmd_week`/`_cmd_trade` is
@@ -2088,8 +2113,10 @@ def _cmd_alert(args):
                         % (hits, len(mine_names)))
                 else:
                     def _ros_pts(p):
+                        # From the coming week on a Tuesday: the week just
+                        # played is no longer a game left to count.
                         p.games = float(
-                            games_remaining(args.week, p.bye)) or 1.0
+                            games_remaining(week, p.bye)) or 1.0
                         return (score_season_calibrated(lg, p, curves)
                                 if curves else score_season(lg, p))
                     mine_ros = [Candidate(p.name, p.pos, _ros_pts(p), p.team)
@@ -3116,7 +3143,10 @@ def main(argv=None):
     alr.add_argument("--kind", choices=["tuesday", "friday", "sunday"],
                      required=True)
     alr.add_argument("--league", default=DEFAULT_LEAGUE)
-    alr.add_argument("--week", type=int, required=True)
+    alr.add_argument("--week", type=int, required=True,
+                     help="the NFL week the run falls in (Wednesday to "
+                          "Tuesday, as ops/run_alert.sh computes it); a "
+                          "Tuesday run projects the week after it")
     alr.add_argument("--curves")
     alr.add_argument("--injuries", help="JSON written by ops/fetch_injuries.sh")
     alr.add_argument("--team-url", default=DEFAULT_TEAM_URL,
@@ -3170,7 +3200,10 @@ def main(argv=None):
                                         "data repo (reads CBS, never writes)")
     co.add_argument("--kind", choices=["tuesday", "friday", "sunday"],
                     help="collect what this alert run captured")
-    co.add_argument("--week", type=int, help="the week --kind's pages are for")
+    co.add_argument("--week", type=int,
+                    help="the NFL week the --kind run fell in (the alert's "
+                         "--week); a Tuesday run's pages are filed under the "
+                         "next week, the week they project")
     co.add_argument("--since", type=float,
                     help="epoch seconds the run started; older captures are "
                          "left out")

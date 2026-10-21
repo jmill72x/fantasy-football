@@ -977,3 +977,151 @@ def test_a_direct_feed_file_is_matched_by_cbs_id(alert_env, capsys):
             "Participation in Practice / Knee "
             "[official as of 2026-10-23 08:41 EDT, via nflverse]") in out
     assert "!! espn unavailable this run: HTTP 403" in out
+
+
+# --- bye-week starters (2026-10-20) ----------------------------------------
+#
+# On the live team page a player ON BYE is a single line (opponent BYE, then
+# his stat block); the roster parser used to drop that shape, so a starter on
+# bye vanished from the digest. These rewrite one constructed fixture row into
+# that shape, and mark the same player BYE on his projections page.
+
+CHASE_ID = "9845591"        # a WR starter on the constructed roster
+MCPHERSON_ID = "9939336"    # the roster's only K, a starter
+
+
+def _make_bye_roster_row(path, player_id):
+    """Rewrite `player_id`'s three-line row into the one-line bye shape."""
+    lines = path.read_text().split("\n")
+    out, skip = [], 0
+    for line in lines:
+        if skip:
+            skip -= 1
+            continue
+        if line.startswith("id=%s\t" % player_id):
+            f = line.split("\t")          # id, "", slot, name, opp, ""
+            out.append("\t".join(f[:4] + ["BYE", "", "6", "", "---", "",
+                                          "85%", "85%", "0.00", "1.00", "0.00"]))
+            skip = 2                      # its kickoff-time and stat lines
+            continue
+        out.append(line)
+    path.write_text("\n".join(out))
+
+
+def _bye_projection(line, player_id=None, name=None):
+    """A projections row turned into a bye row: opponent BYE, every stat 0."""
+    f = line.split("\t")       # id, "", avail, name, OPP, OVP, BYE, ROST, START, EXPERT, stats...
+    if player_id is not None:
+        f[0] = "id=%s" % player_id
+    if name is not None:
+        f[3] = name
+    f[4] = "BYE"
+    f[10:] = ["0.0"] * len(f[10:])
+    return "\t".join(f)
+
+
+def _make_bye_projection(path, player_id):
+    lines = path.read_text().split("\n")
+    path.write_text("\n".join(_bye_projection(l) if l.startswith("id=%s\t" % player_id)
+                              else l for l in lines))
+
+
+def _sit_column(out):
+    block = out.split("START / SIT vs your current CBS lineup:")[1].split("\n\n")[0]
+    return [l[20:].strip() for l in block.splitlines()[2:]]
+
+
+def test_a_starter_on_bye_stays_on_the_roster_and_is_told_to_sit(alert_env, capsys):
+    _make_bye_roster_row(alert_env.tmp / "roster.txt", CHASE_ID)
+    _make_bye_projection(alert_env.tmp / "rbwrte.txt", CHASE_ID)
+    code, out = alert_env.run(capsys, "--injuries",
+                              str(_injuries_file(alert_env.tmp)))
+    assert "Ja'Marr Chase" in _sit_column(out)
+    bench = out.split("BENCH")[1]
+    chase = [l for l in bench.splitlines() if "Ja'Marr Chase" in l]
+    assert chase and "BYE" in chase[0]
+
+
+def test_a_bye_starter_nobody_can_replace_gets_the_on_bye_warning(alert_env, capsys):
+    _make_bye_roster_row(alert_env.tmp / "roster.txt", MCPHERSON_ID)
+    k = alert_env.tmp / "k.txt"
+    template = next(l for l in k.read_text().split("\n") if l.startswith("id="))
+    k.write_text(k.read_text().rstrip("\n") + "\n" + _bye_projection(
+        template, MCPHERSON_ID, "Evan McPherson K • CIN ") + "\n")
+    code, out = alert_env.run(capsys, "--injuries",
+                              str(_injuries_file(alert_env.tmp)))
+    warning = out.split("!! ON BYE BUT STILL IN YOUR LINEUP - these score ZERO:")[1]
+    assert "Evan McPherson" in warning.split("\n\n")[0]
+    lineup = out.split("BEST LINEUP")[1].split("\n\n")[0]
+    assert [l for l in lineup.splitlines() if "Evan McPherson" in l][0].endswith("BYE")
+
+
+# --- the week each kind of run projects (2026-10-20) -----------------------
+#
+# A Tuesday run falls in the week just played (run_alert.sh's weeks run
+# Wednesday to Tuesday) but is the claim run for the COMING week, so it
+# projects week+1. Friday and Sunday project the week they fall in.
+
+def _record_capture_urls(monkeypatch):
+    import sffl.capture
+
+    urls = []
+    inner = sffl.capture.capture
+
+    def recording(pages, out_dir, profile_dir, **kwargs):
+        urls.extend(pages.values())
+        return inner(pages, out_dir, profile_dir, **kwargs)
+
+    monkeypatch.setattr("sffl.capture.capture", recording)
+    return urls
+
+
+@pytest.mark.parametrize("kind,week,projected", [
+    ("tuesday", 6, 7),
+    ("friday", 7, 7),
+    ("sunday", 7, 7),
+    ("tuesday", 7, 8),
+    ("tuesday", 18, 18),      # no week 19: clamped like run_alert.sh's week
+])
+def test_each_kind_of_run_projects_its_own_week(alert_env, capsys, monkeypatch,
+                                                kind, week, projected):
+    urls = _record_capture_urls(monkeypatch)
+    alert_env.run(capsys, "--kind", kind, "--week", str(week), "--injuries",
+                  str(_injuries_file(alert_env.tmp, "injuries-%s.json" % kind)))
+    weekly = [u for u in urls if "/standard/projections" in u
+              and "restofseason" not in u]
+    assert len(weekly) == 4
+    assert all("/%d:p/standard/projections" % projected in u for u in weekly)
+
+
+def test_the_projected_week_around_the_tuesday_to_wednesday_boundary():
+    """run_alert.sh's own anchor and formula (its weeks start on a
+    Wednesday), then the week each kind of run projects. Results stay on the
+    week just played: the script's Tuesday results week is its own week."""
+    import datetime
+    import re
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    text = open(os.path.join(here, "..", "ops", "run_alert.sh")).read()
+    y, m, d = map(int, re.search(
+        r"start = datetime\.date\((\d+), (\d+), (\d+)\)", text).groups())
+    start = datetime.date(y, m, d)
+
+    def run_week(day):
+        return min(18, max(1, (day - start).days // 7 + 1))
+
+    def day_of(week, offset):          # 0 = that week's Wednesday
+        return start + datetime.timedelta(days=7 * (week - 1) + offset)
+
+    cases = [
+        (day_of(6, 6), "tuesday", 6, 7),     # the Tuesday ending week 6
+        (day_of(7, 0), None, 7, None),       # the Wednesday after: week 7
+        (day_of(7, 2), "friday", 7, 7),
+        (day_of(7, 4), "sunday", 7, 7),
+        (day_of(7, 6), "tuesday", 7, 8),
+    ]
+    for day, kind, week, projected in cases:
+        assert run_week(day) == week, day
+        if kind:
+            assert cli._projection_week(kind, week) == projected, (day, kind)
+    assert 'tuesday) RESULTS_WEEK="$WEEK"' in text

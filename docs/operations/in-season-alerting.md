@@ -8,7 +8,7 @@ first time, and what each failure mode means and how to fix it.
 
 | Job | Fires | Carries |
 |---|---|---|
-| `com.sffl.alert.tuesday` | Tuesday 16:45 local | **The claim run.** Drop/add opens Tuesday in this league and CBS processes waivers ~2am Wednesday, so this is the only digest whose claim advice can still be acted on. Carries the bye look-ahead and the trade targets. |
+| `com.sffl.alert.tuesday` | Tuesday 16:45 local | **The claim run.** Drop/add opens Tuesday in this league and CBS processes waivers ~2am Wednesday, so this is the only digest whose claim advice can still be acted on. Carries the bye look-ahead and the trade targets. It projects the COMING week: `run_alert.sh`'s week on a Tuesday is the week just played, so `sffl alert` adds one for a Tuesday run (since 2026-10-20; before that, Tuesday scored the week already played). |
 | `com.sffl.alert.friday` | Friday 16:45 local | Practice participation (DNP / limited / full), which only exists after Wednesday-to-Friday practices - so Tuesday cannot carry it. Also carries waiver targets (added 2026-10-02), each tagged with its own CBS clear date - after Wednesday's run players clear on different days. |
 | `com.sffl.alert.sunday` | Sunday 11:45 local | Official inactives, 75 minutes before the 1pm kickoff window. Teams announce inactives 90 minutes before kickoff (11:30 for 1pm games), so the run moved from 11:30 to 11:45 on 2026-10-20 to give them time to land (Jeff: "Yes, change the sun run to 11:45."). |
 
@@ -319,7 +319,8 @@ download. you don't need my permission each time for that."
   corrections, Sunday takes none. A page older than the run's start is left out
   and named in the unit's `COLLECTED.txt`.
 - **Where:** one dated folder per unit (`<date>-<kind>` or `<date>-results`) under
-  `wkNN/` in the local archive (`~/Archive/fantasy-football-data/<season>/cbs-weekly/`),
+  `wkNN/` - for a Tuesday run's pages, the week they project (the run's `--week` plus
+  one), and for results, the week the results are for - in the local archive (`~/Archive/fantasy-football-data/<season>/cbs-weekly/`),
   on the Pi (`Documents/fantasy-football-data/<season>/cbs-weekly/`) and in the
   private data repo (`<season>/cbs/weekly/`), each with a `MANIFEST.sha256`. The data
   repo's top-level manifest gets the new files, and the job commits only those paths
@@ -339,7 +340,9 @@ day, from the repo root:
 PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect --kind tuesday --week <N> \
   --since <epoch the run started> --results-week <N>
 ```
-`--since 0` takes whatever is in `data/captures/` now, so check the files' dates first.
+`<N>` is the run's own week, as `run_alert.sh` computed it: a Tuesday run's pages land
+under week N+1 and its results under week N. `--since 0` takes whatever is in
+`data/captures/` now, so check the files' dates first.
 `--no-pi`, `--no-repo` and `--no-push` turn a destination off. `--backfill-weeks 1-5`
 captures past weeks' projections and results as CBS serves them today.
 

@@ -342,3 +342,89 @@ def test_parse_lineup_rows_collapses_a_repeat_even_when_only_one_side_has_an_id(
     )
     starters2, _reserves2 = parse_lineup_rows(str(p2))
     assert starters2 == [RosterRow("Ja'Marr Chase", "WR", "CIN", "9845591")]
+
+
+# --------------------------------------------- bye-week rows (2026-10-20)
+#
+# A constructed page in the shape of the live team page of 2026-10-20: a
+# player with a game spreads over three lines (row line, kickoff time, then
+# the stat block, which is where the capture's id prefix lands), while a
+# player ON BYE is a single line - opponent BYE, then his stat block - with
+# the id prefix on it. Invented names, ids and numbers throughout.
+
+BYE_WEEK_PAGE = "\n".join([
+    "League",
+    "My Team",
+    "EDIT\tPOS\tPLAYERS\tOPP\tGAME TIME\tBYE\tO/U\tPOSRNK\tOVP\tROST\tSTART\tPRD. ",
+    "",
+    "\tTQB\tHawks TQB • SEA \t@MIA\t",
+    "Sun 1:00pm EDT",
+    "id=9100001\t\t8\t41.0\t---\t---\t50%\t25%\t1.11\t2.22\t3.33",
+    "",
+    "\tWR\tPat Example WR • SEA\tDEN\t",
+    "Thurs 8:15pm EDT",
+    "id=9100002\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+    "",
+    "id=9100003\t\tWR\tLee Sample WR • LAC \tBYE\t\t7\t\t---\t\t50%\t25%\t0.00\t1.11\t0.00",
+    "",
+    "\tK\tKim Kicker K • NYG \t@HOU\t",
+    "Sun 1:00pm EDT",
+    "id=9100004\t\t8\t43.0\t40\t15\t50%\t25%\t1.11\t2.22\t3.33",
+    "RESERVES",
+    "",
+    "id=9100005\t\tTQB\tBolts TQB • LAC\tBYE\t\t7\t\t---\t\t50%\t25%\t1.11\t2.22\t0.00",
+    "",
+    "\tRB\tSam Runner RB • DET\tGB\t",
+    "Sun 1:00pm EDT",
+    "id=9100006\t\t5\t47.5\t18\t8\t50%\t25%\t1.11\t2.22\t3.33",
+    "ACTIVE: 4 RESERVE: 2",
+    "",
+])
+
+
+def _bye_page(tmp_path):
+    path = tmp_path / "team_page_bye_week.txt"
+    path.write_text(BYE_WEEK_PAGE)
+    return str(path)
+
+
+def test_a_bye_week_row_parses_with_its_slot_team_and_id(tmp_path):
+    starters, reserves = parse_lineup_rows(_bye_page(tmp_path))
+    assert starters == [
+        RosterRow("Hawks", "TQB", "SEA", ""),
+        RosterRow("Pat Example", "WR", "SEA", ""),
+        RosterRow("Lee Sample", "WR", "LAC", "9100003"),
+        RosterRow("Kim Kicker", "K", "NYG", ""),
+    ]
+    assert reserves == [
+        RosterRow("Bolts", "TQB", "LAC", "9100005"),
+        RosterRow("Sam Runner", "RB", "DET", ""),
+    ]
+
+
+def test_every_roster_parser_keeps_the_bye_rows(tmp_path):
+    path = _bye_page(tmp_path)
+    assert parse_roster(path) == ["Hawks", "Pat Example", "Lee Sample",
+                                  "Kim Kicker", "Bolts", "Sam Runner"]
+    assert parse_positions(path)["Lee Sample"] == "WR"
+    assert parse_lineup(path) == (["Hawks", "Pat Example", "Lee Sample",
+                                   "Kim Kicker"], ["Bolts", "Sam Runner"])
+
+
+def test_the_row_pattern_still_refuses_page_furniture():
+    for line in ("\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+                 "Sun 1:00pm EDT",
+                 "EDIT\tPOS\tPLAYERS\tOPP\tGAME TIME\tBYE\tO/U",
+                 "RESERVES",
+                 "ACTIVE: 4 RESERVE: 2"):
+        assert _ROW.match(line) is None, line
+
+
+def test_a_row_ending_after_its_opponent_matches_exactly_as_before():
+    # The shape every row had before byes started: nothing after the
+    # opponent but an optional tab. Same groups as ever.
+    for line in ("\tWR\tPat Example WR • SEA \t@MIA\t",
+                 "\tTQB\tHawks TQB • SEA\tMIA"):
+        m = _ROW.match(line)
+        assert m is not None
+        assert (m.group("slot"), m.group("team")) in (("WR", "SEA"), ("TQB", "SEA"))
