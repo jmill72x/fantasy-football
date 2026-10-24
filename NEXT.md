@@ -30,12 +30,12 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
-## ROSTER IDS AND STALE-SEASON WARNINGS (2026-10-21): on a branch, merge after Friday
+## ROSTER IDS AND STALE-SEASON WARNINGS (2026-10-21): merged 10-24, first run Sunday 10-25
 
-**Branch `fix/roster-id-and-stale-defaults`**, in the worktree
-`~/.local/state/jarvis/worktrees/fantasy-football-1021`, staged, not committed. It merges
-into `main` after the Friday 10-23 alert (the first run with the bye fix), on Jeff's C&P;
-until then the jobs run `main` as before. Two board items (Jeff's go, 10-21):
+**Merged and pushed 2026-10-24 as `2758ae4`, on Jeff's C&P** (a fast-forward of `main` from
+`d21c19c`). The branch `fix/roster-id-and-stale-defaults` and its worktree are removed. The
+first scheduled run on it is the Sunday 10-25 alert at 11:45, and board item 2a268bf1
+checks that run. Two board items (Jeff's go, 10-21):
 
 - **Roster rows with a game keep their CBS id.** `capture` puts a row's id at the start of
   its last non-blank line, which on the team page is a playing row's stats line, so those
@@ -49,11 +49,21 @@ until then the jobs run `main` as before. Two board items (Jeff's go, 10-21):
     ids on the row line, the shape `tests/fixtures/cbs_team_page.txt` was built in, and
     review round 2 (`9e63c02`, the same day) moved the anchor. The fixture is now in the
     live shape (prefixes moved, same bytes).
-  - **Replay on every saved real roster page** (the 10-19 snapshot, both week-6 Tuesday
-    units, the live 10-20 capture): 13 of 13 rows identical, ids from 2 or 3 to 13 (all
-    unique), every row joins the same projection as before, and every recovered id is the
-    id of the projection row the composite key matched. So today's digest doesn't change.
-    The ids matter at the switch: the roster's CBS labels (`cbs_icons.roster_rows`) and the
+  - **Replayed on every saved real roster page**, the old parser (`d21c19c`) against the
+    new: on 10-21 the 10-19 snapshot, both week-6 Tuesday units and the live 10-20
+    capture, and on 10-24, on `main`, Friday 10-23's page too (Ultron's check, board
+    2a268bf1). On every page: 13 of 13 rows identical (name, slot, team); ids go from 2 or 3
+    to 13, all unique, with every old id unchanged; each id sits 2 lines down (a row with a
+    game: the row line, its kickoff time, its stats line) or on its own row (a bye row);
+    every row joins the same projection row as before; and every recovered id is the id of
+    the projection row the composite key matched. Friday's page: 10 ids 2 lines down, 3 on
+    their own row, 13 of 13 joined. So the digest doesn't change.
+  - **A finished game keeps the same shape.** Friday's page has two rows whose game
+    (Thursday's) was over. The two 10-19 pages, week 6 captured on the Monday, already had
+    ten. Every one keeps its kickoff time on its own line, so its id is still 2 lines down.
+    No capture has caught a game in progress yet, and Sunday's 11:45 run won't on the
+    current roster: its earliest Sunday kickoff is 1:00pm.
+  - The ids matter at the switch: the roster's CBS labels (`cbs_icons.roster_rows`) and the
     direct feed's id matching need them, and three end-to-end tests fail without the fix.
 - **The season-bound defaults warn when stale (`src/sffl/season.py`).** Stale means the
   value's season is older than the run's: `--year` for ingest, value, render, plan and
@@ -71,11 +81,16 @@ until then the jobs run `main` as before. Two board items (Jeff's go, 10-21):
   - Silent today: the real defaults against today's date, 2027-01-05, 2027-01-12 and
     2027-02-28 give nothing; 2027-03-01 gives all three. The tests pin
     `sffl.season.today` (`tests/conftest.py`) so the suite can't go red by the calendar.
-- **Verified in the worktree:** full suite (the main tree's venv and 2025 game logs, read
-  only), `ops/lint_run_alert.sh`, the production `value` board.csv md5 unchanged
+- **Verified in the worktree (10-21):** full suite (the main tree's venv and 2025 game logs,
+  read only), `ops/lint_run_alert.sh`, the production `value` board.csv md5 unchanged
   (`676a25ba…`), the 2026 render's Key & Intel unchanged (41 of 45 rows), a 2027 rehearsal
   render shows the note (42 of 45). **Not run:** `run_alert.sh` end to end (it captures CBS
-  and starts `claude -p`); its week formula gives the same week as before (7 today).
+  and starts `claude -p`); its week formula gives the same week as before (7 on 10-21).
+- **On `main` after the merge (10-24):** the full suite gives 1122 passed and 1 failed. The
+  failure is the fixture guard's known false alarm (board 8e7e9333, waiting on Jeff), not
+  this change. For Sunday 10-25, the first run to pass `--week1`: the stale-season check
+  finds nothing, the week formula gives 7, and the alert parses the exact arguments
+  `run_alert.sh` builds (checked without running it).
 
 ## STATSDECK REPLACEMENT (2026-10-20): Jeff said go
 
@@ -112,7 +127,8 @@ injury-source switch from week 13 (Wed 12-02) on.
 
 **Built 2026-10-20: steps 1 to 3, pushed (`d5643d0`), NOT live.** The jobs run from this
 working tree, so every new behaviour is off by default and the scheduled runs do exactly
-what they did. Ultron's fixes and Jeff's two calls (below) are staged on top:
+what they did. Ultron's fixes and Jeff's two calls (below) followed on 10-21 as `d21c19c`,
+after his re-vet:
 
 - **CBS designations: `sffl alert --cbs-designations`**, off until the switch.
   - `capture(..., icons=True)` asks the same `page.evaluate` call for each row's icon
@@ -163,7 +179,8 @@ what they did. Ultron's fixes and Jeff's two calls (below) are staged on top:
   last snapshot. The stale docstrings in `injuries.py` and `alert.py` are fixed.
 
 **Ultron vetted `d5643d0` on 10-20: OK to switch on after fixes; 0 critical or high, 2
-medium, 7 low.** What changed per finding, all staged 10-20 for his re-vet:
+medium, 7 low.** What changed per finding, re-vetted by him and committed 10-21 as
+`d21c19c`:
 
 | # | Finding | What changed | Tests |
 |---|---|---|---|
@@ -200,10 +217,10 @@ and intel gains four real items. The full result is in the plan, and the files a
   all 13 rows (it gave 10), and every roster capture in the data repo keeps every row it
   matched before, adding only its BYE rows. A bye starter now shows under SIT, or under
   "ON BYE BUT STILL IN YOUR LINEUP" when nobody can replace him.
-- **FIXED 10-21 (on the branch above): the roster's CBS ids were missing on rows with a
-  game.** The game time sits on its own line, so `capture`'s id prefix lands on the stats
-  line, and `parse_lineup_rows` read no id; on 10-20 only bye rows carried one.
-  `cbs_roster` now reads it back from the stats line.
+- **FIXED 10-21, merged 10-24 as `2758ae4` (section above): the roster's CBS ids were
+  missing on rows with a game.** The game time sits on its own line, so `capture`'s id
+  prefix lands on the stats line, and `parse_lineup_rows` read no id; on 10-20 only bye
+  rows carried one. `cbs_roster` now reads it back from the stats line.
 - **FIXED 10-20: on Tuesdays the alert scored the week just played.** `run_alert.sh`'s
   formula gives week 6 on Tue 10-20, so the projections, best lineup, waiver ranking and
   trade games-left all came from week 6's page, games already played. `cli._projection_week`
@@ -215,8 +232,8 @@ and intel gains four real items. The full result is in the plan, and the files a
 
 **Next:**
 
-- Ultron vets steps 1 to 3 (plan section 8).
-- Then the switch, on Jeff's OK, by Tue 12-01:
+- The switch, on Jeff's OK, by Tue 12-01 (Ultron's vet of steps 1 to 3, plan section 8,
+  is done):
   - `run_alert.sh` runs `sffl injuries-fetch --allow-live-path` in place of
     `fetch_injuries.sh` and passes `--cbs-designations`.
   - `sffl collect` archives the sidecars.
