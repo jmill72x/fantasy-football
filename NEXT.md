@@ -22,13 +22,60 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1067` passed
+- full_suite: `1123` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
 `top10_bias` is **+4.1025**, positive. It is not −0.25: that number was fabricated, sat in
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
+
+## ROSTER IDS AND STALE-SEASON WARNINGS (2026-10-21): on a branch, merge after Friday
+
+**Branch `fix/roster-id-and-stale-defaults`**, in the worktree
+`~/.local/state/jarvis/worktrees/fantasy-football-1021`, staged, not committed. It merges
+into `main` after the Friday 10-23 alert (the first run with the bye fix), on Jeff's C&P;
+until then the jobs run `main` as before. Two board items (Jeff's go, 10-21):
+
+- **Roster rows with a game keep their CBS id.** `capture` puts a row's id at the start of
+  its last non-blank line, which on the team page is a playing row's stats line, so those
+  rows parsed with no id (on 10-20 only bye rows had one) and the roster ↔ projections join
+  fell back to name, team and position. `cbs_roster._iter_lines` now gives an id-less row
+  line the id of the first id-carrying line below it, and stops at the next line that
+  starts like a row (a bye row's line included), RESERVES, the footer, or 4 lines down, so
+  an id never crosses rows. Fixed in the parser, not `capture`: every saved roster page
+  reads its ids too, and the projection pages' prefixing is untouched.
+  - **Why no test saw it:** the capture's first anchor rule (08-30, `060cda0`) put roster
+    ids on the row line, the shape `tests/fixtures/cbs_team_page.txt` was built in, and
+    review round 2 (`9e63c02`, the same day) moved the anchor. The fixture is now in the
+    live shape (prefixes moved, same bytes).
+  - **Replay on every saved real roster page** (the 10-19 snapshot, both week-6 Tuesday
+    units, the live 10-20 capture): 13 of 13 rows identical, ids from 2 or 3 to 13 (all
+    unique), every row joins the same projection as before, and every recovered id is the
+    id of the projection row the composite key matched. So today's digest doesn't change.
+    The ids matter at the switch: the roster's CBS labels (`cbs_icons.roster_rows`) and the
+    direct feed's id matching need them, and three end-to-end tests fail without the fix.
+- **The season-bound defaults warn when stale (`src/sffl/season.py`).** Stale means the
+  value's season is older than the run's: `--year` for ingest, value, render, plan and
+  fit-market; otherwise the season of today's date, with January and February still the
+  previous season's (`season_for`, moved here from `direct_injuries`, so the repo has one
+  rule). January 2027 is the 2026 season; 2027-03-01 starts 2027. A value newer than the
+  run's season is flagged too ("AHEAD").
+  - Checked: the league profile's `season:` (every command that loads it), the bye file's
+    new `season:` key (render, plan), and `WEEK1` in `ops/run_alert.sh` (line 56; the
+    script passes it as `sffl alert --week1`; `--curves` is now line 99).
+  - Shown: a `** STALE SEASON VALUE **` banner on the terminal with the fix and the runbook
+    step; `render` also puts it atop the Key & Intel sheet; `sffl alert` opens the pushed
+    digest with `!! STALE SEASON VALUES` and exits non-zero. Nothing refuses to run. Not yet
+    on the PDF board, which prints byes too (a board idea).
+  - Silent today: the real defaults against today's date, 2027-01-05, 2027-01-12 and
+    2027-02-28 give nothing; 2027-03-01 gives all three. The tests pin
+    `sffl.season.today` (`tests/conftest.py`) so the suite can't go red by the calendar.
+- **Verified in the worktree:** full suite (the main tree's venv and 2025 game logs, read
+  only), `ops/lint_run_alert.sh`, the production `value` board.csv md5 unchanged
+  (`676a25ba…`), the 2026 render's Key & Intel unchanged (41 of 45 rows), a 2027 rehearsal
+  render shows the note (42 of 45). **Not run:** `run_alert.sh` end to end (it captures CBS
+  and starts `claude -p`); its week formula gives the same week as before (7 today).
 
 ## STATSDECK REPLACEMENT (2026-10-20): Jeff said go
 
@@ -153,10 +200,10 @@ and intel gains four real items. The full result is in the plan, and the files a
   all 13 rows (it gave 10), and every roster capture in the data repo keeps every row it
   matched before, adding only its BYE rows. A bye starter now shows under SIT, or under
   "ON BYE BUT STILL IN YOUR LINEUP" when nobody can replace him.
-- **OPEN: the roster's CBS ids are missing on rows with a game.** The game time sits on its own
-  line, so `capture`'s id prefix lands on the stats line and `parse_lineup_rows` reads no
-  id. On 10-20 only bye rows carried one. The roster-projection join quietly uses the
-  composite key, and injury matching falls back to name and team for those rows.
+- **FIXED 10-21 (on the branch above): the roster's CBS ids were missing on rows with a
+  game.** The game time sits on its own line, so `capture`'s id prefix lands on the stats
+  line, and `parse_lineup_rows` read no id; on 10-20 only bye rows carried one.
+  `cbs_roster` now reads it back from the stats line.
 - **FIXED 10-20: on Tuesdays the alert scored the week just played.** `run_alert.sh`'s
   formula gives week 6 on Tue 10-20, so the projections, best lineup, waiver ranking and
   trade games-left all came from week 6's page, games already played. `cli._projection_week`
@@ -271,9 +318,9 @@ old commits are gone from it.
   (old full id, new full id; match on the prefix). Every id quoted in this repo's tracked
   files was updated on 2026-10-19, except where a line describes the bundle's own
   contents (`d378a31`, `a4dacd3` above).
-- **GitHub's cached views:** the request to purge cached views of the old commits (and to
-  run GC) has been filed with GitHub Support and is pending. Until it's done, old commit
-  URLs may still render on github.com.
+- **GitHub's cached views:** GitHub Support ran its cache clearance and GC on 2026-10-21
+  and closed the request (filed 2026-10-19). Old commit URLs may still render on
+  github.com.
 - The plan, with the run's record and the section-E checks, is
   `~/.local/state/jarvis/reports/fantasy-history-rewrite-plan-2026-10-19.md`.
   `history_scan.py` over this checkout on 2026-10-19: 779 blobs, 0 commit messages
@@ -320,7 +367,7 @@ the 2026 files standing in for 2027:
 | 7, 8. Price the board, plan | OK: `render` and `plan` run as written and print the CROSS-SEASON note. Fixed: `value` takes no `--byes` |
 | 9, 10, 11. Print, sealed bid, league data | Unchanged: needs Jeff (the two-sheet print has still never been verified) |
 | 12. Out-of-sample test, refit | Gap: the out-of-sample price scoring has no command (the 2026 result was measured ad hoc), so it isn't reproducible. `fit-market` runs and reproduces `market/2026.yaml` (only `fitted_on` differs) |
-| 13. In-season switch-over | OK: week-1 date and `--curves` at `ops/run_alert.sh` lines 59 and 91 (since the 10-19 collection step). `ops/run_alert.sh tuesday --dry-run` ran (injury fetch stubbed, see below) |
+| 13. In-season switch-over | OK: `WEEK1` and `--curves` at `ops/run_alert.sh` lines 56 and 99 (since 10-21, when the week-1 date became `WEEK1`). `ops/run_alert.sh tuesday --dry-run` ran (injury fetch stubbed, see below) |
 | Collect and archive | Built 2026-10-19 after the audit (above) |
 | Removed files | OK: nothing in the runbook, the in-season runbook, README or CLAUDE.md names a file the cleanup or rewrite removed |
 
@@ -1902,9 +1949,10 @@ Ordered most-silent first. A crash is fine; these do not crash.
    hardcodes 1 TQB + flex + 1 K + 1 DST; `_select_flex_starters` hardcodes the 1 RB /
    1 WR-TE floor; WR/TE-as-one-position is baked into the FLEX tuple. `starters: 8` in the
    YAML is loaded and used for nothing on the auction path.
-4. **Season-bound defaults.** `DEFAULT_BYES` is the 2026 bye file — a 2027 render silently
-   prints 2026 byes. `DEFAULT_LEAGUE` is the 2026 profile. `lg.season` is never compared
-   to `--year`.
+4. **Season-bound defaults.** `DEFAULT_BYES` is the 2026 bye file, so a 2027 render on
+   the default prints 2026 byes, and `DEFAULT_LEAGUE` is the 2026 profile. Until 2026-10-21
+   nothing said so and `lg.season` was never compared to `--year`; now `sffl.season` warns
+   (the terminal, the Key & Intel sheet, the alert digest; see the 10-21 section at the top).
 5. **`DEFAULT_BIDS` is an absolute path into THIS repo's bid history** — a second league
    with a `silent_auction:` key renders STRIPES' five-year bid table on its page.
 6. **Price joining is keyed to this league's artifacts** — `identity/aliases.yaml` holds

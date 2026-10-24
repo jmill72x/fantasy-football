@@ -48,18 +48,25 @@ mkdir -p logs data/captures
 export CLAUDE_BIN="${CLAUDE_BIN:-/Users/jeff/.local/bin/claude}"
 export PATH="$(dirname "$CLAUDE_BIN"):$PATH"
 
+# THE SEASON'S WEEK-1 DATE: NFL week 1 of the 2026 season begins Wed
+# 2026-09-09. Season-bound - set it to the new season's Wednesday every year
+# (docs/operations/preseason-runbook.md, step 13). `sffl alert --week1`
+# checks it against today's season, and last season's date opens the digest
+# with a STALE SEASON VALUES banner and makes the run exit non-zero.
+WEEK1="2026-09-09"
+
 WEEK=$(./.venv/bin/python -c "
-import datetime
-# NFL week 1 of the 2026 season begins Wed 2026-09-09. Clamp to a minimum
+import datetime, sys
+# Weeks run Wednesday to Tuesday from WEEK1. Clamp to a minimum
 # of 1 so a run before the season starts (a pre-season dry-run, or a job
 # firing while testing this script) never computes zero or negative, and
 # to a maximum of 18 - the last week of the NFL regular season - so a bug
 # in this arithmetic late in the year (or a run long after the season
 # ends) can't ask CBS for a week that doesn't exist.
-start = datetime.date(2026, 9, 9)
+start = datetime.date.fromisoformat(sys.argv[1])
 week = (datetime.date.today() - start).days // 7 + 1
 print(min(18, max(1, week)))
-")
+" "$WEEK1")
 
 # The injury fetch is allowed to fail without taking the alert with it: a
 # digest carrying the lineup but no news is far better than no digest at
@@ -88,6 +95,7 @@ ops/fetch_injuries.sh "$INJ" || echo "WARN: injury fetch failed; continuing" >&2
 PYTHONPATH=src ./.venv/bin/python -m sffl.cli alert \
   --kind "$KIND" \
   --week "$WEEK" \
+  --week1 "$WEEK1" \
   --curves calibration/2025.yaml \
   --injuries "$INJ" \
   $DRY_RUN_FLAG

@@ -68,6 +68,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# The NFL season a date belongs to (January and February are the previous
+# season's). One rule for the repo, kept in `sffl.season`, which also checks
+# the season-bound defaults against it; this module picks nflverse's season
+# file with it.
+from sffl.season import season_for
+
 USER_AGENT = "sffl-injuries/1.0 (personal, non-commercial fantasy digest)"
 TIMEOUT_S = 60           # per socket operation
 WALL_S = 120             # per request, start to last byte
@@ -595,12 +601,6 @@ def cached_get(cache_dir, name, url, max_bytes, max_age_s, now, get, parse):
     _atomic_write(meta_path, json.dumps({"fetched_at": stamp,
                                          "host": _host(url)}).encode("utf-8"))
     return parsed, stamp, "fetched"
-
-
-def season_for(day):
-    """The NFL season a date belongs to: January and February are the
-    previous season's playoffs."""
-    return day.year if day.month >= 3 else day.year - 1
 
 
 def _strip_keys(rows):

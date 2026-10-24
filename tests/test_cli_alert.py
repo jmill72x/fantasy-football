@@ -991,21 +991,19 @@ MCPHERSON_ID = "9939336"    # the roster's only K, a starter
 
 
 def _make_bye_roster_row(path, player_id):
-    """Rewrite `player_id`'s three-line row into the one-line bye shape."""
+    """Rewrite `player_id`'s three-line row into the one-line bye shape.
+
+    The fixture is in the live capture's shape: the row line, the kickoff
+    time, then the stats line, which carries the row's id. A bye row is one
+    line with the id on it."""
     lines = path.read_text().split("\n")
-    out, skip = [], 0
-    for line in lines:
-        if skip:
-            skip -= 1
-            continue
-        if line.startswith("id=%s\t" % player_id):
-            f = line.split("\t")          # id, "", slot, name, opp, ""
-            out.append("\t".join(f[:4] + ["BYE", "", "6", "", "---", "",
-                                          "85%", "85%", "0.00", "1.00", "0.00"]))
-            skip = 2                      # its kickoff-time and stat lines
-            continue
-        out.append(line)
-    path.write_text("\n".join(out))
+    at = next(i for i, line in enumerate(lines)
+              if line.startswith("id=%s\t" % player_id))
+    f = lines[at - 2].split("\t")         # "", slot, name, opp, ""
+    lines[at - 2:at + 1] = ["\t".join(
+        ["id=%s" % player_id] + f[:3] + ["BYE", "", "6", "", "---", "",
+                                        "85%", "85%", "0.00", "1.00", "0.00"])]
+    path.write_text("\n".join(lines))
 
 
 def _bye_projection(line, player_id=None, name=None):
@@ -1103,9 +1101,12 @@ def test_the_projected_week_around_the_tuesday_to_wednesday_boundary():
 
     here = os.path.dirname(os.path.abspath(__file__))
     text = open(os.path.join(here, "..", "ops", "run_alert.sh")).read()
+    # The anchor is the script's WEEK1 (2026-10-21; it was an inline
+    # datetime.date(...) before), handed to the formula as its argument.
     y, m, d = map(int, re.search(
-        r"start = datetime\.date\((\d+), (\d+), (\d+)\)", text).groups())
+        r'^WEEK1="(\d{4})-(\d\d)-(\d\d)"$', text, re.M).groups())
     start = datetime.date(y, m, d)
+    assert "start = datetime.date.fromisoformat(sys.argv[1])" in text
 
     def run_week(day):
         return min(18, max(1, (day - start).days // 7 + 1))
@@ -1141,3 +1142,80 @@ def test_a_long_page_with_no_designation_icon_is_said_in_the_message(alert_env, 
     assert "!! CBS DESIGNATIONS UNAVAILABLE on 1 page(s)" in out
     assert "1714 rows but no designation icon at all" in out
     assert code == 1
+
+
+# --- season-bound values (2026-10-21) --------------------------------------
+#
+# The league profile and the week-1 date ops/run_alert.sh passes as --week1,
+# against the season of today's date (sffl.season). Silent for the whole 2026
+# season, January 2027 included; a run in the 2027 season on 2026's values
+# opens the PUSHED body with a banner and exits non-zero. `today` is stubbed.
+
+def _on(monkeypatch, day):
+    import datetime
+    monkeypatch.setattr("sffl.season.today", lambda: datetime.date(*day))
+
+
+@pytest.mark.parametrize("day", [(2026, 10, 21), (2027, 1, 5), (2027, 1, 12)])
+def test_a_2026_season_run_with_its_week1_carries_no_season_banner(
+        alert_env, capsys, monkeypatch, day):
+    _on(monkeypatch, day)
+    code, out = alert_env.run(capsys, "--week1", "2026-09-09", "--injuries",
+                              str(_injuries_file(alert_env.tmp)))
+    assert code == 0
+    assert "SEASON VALUE" not in out
+    assert not alert_env.sent_calls[0][2].startswith("!!")
+
+
+def test_a_2027_run_on_2026_values_opens_the_digest_with_the_banner(
+        alert_env, capsys, monkeypatch):
+    _on(monkeypatch, (2027, 9, 15))
+    code, out = alert_env.run(capsys, "--week1", "2026-09-09", "--injuries",
+                              str(_injuries_file(alert_env.tmp)))
+    assert code == 1
+    body = alert_env.sent_calls[0][2]
+    assert body.startswith("!! STALE SEASON VALUES - this run is for the 2027 "
+                           "season (by today's date, 2027-09-15), but:")
+    head = body.split("\n\n")[0]
+    assert ("the league profile leagues/sffl/2026.yaml is the 2026 season's"
+            in head)
+    assert ("the week-1 date 2026-09-09 (ops/run_alert.sh, WEEK1) is the 2026 "
+            "season's: the week number is wrong" in head)
+    assert "BEST LINEUP" in body           # the digest still goes out
+    assert alert_env.discord_calls[0][1] == body
+    assert "** STALE SEASON VALUE **" in out   # and the log has the fixes
+
+
+def test_the_banner_rides_on_a_capture_failure_too(alert_env, capsys,
+                                                   monkeypatch):
+    _on(monkeypatch, (2027, 9, 15))
+    alert_env.fail_capture(SessionExpired("CBS served its login page"))
+    code, _out = alert_env.run(capsys, "--week1", "2026-09-09")
+    body = alert_env.sent_calls[0][2]
+    assert code == 1
+    assert body.startswith("!! STALE SEASON VALUES")
+    assert "CAPTURE FAILED" in body
+
+
+def test_next_seasons_week1_in_a_january_run_is_from_another_season(
+        alert_env, capsys, monkeypatch):
+    # The 2027 date put in early, while the 2026 season's results still run.
+    _on(monkeypatch, (2027, 1, 12))
+    code, _out = alert_env.run(capsys, "--week1", "2027-09-08", "--injuries",
+                               str(_injuries_file(alert_env.tmp)))
+    body = alert_env.sent_calls[0][2]
+    assert code == 1
+    assert body.startswith("!! SEASON VALUES FROM ANOTHER SEASON - this run is "
+                           "for the 2026 season")
+    assert "the week-1 date 2027-09-08" in body
+    assert "league profile" not in body.split("\n\n")[0]
+
+
+def test_without_week1_only_the_profile_is_checked(alert_env, capsys,
+                                                   monkeypatch):
+    _on(monkeypatch, (2027, 9, 15))
+    code, _out = alert_env.run(capsys, "--injuries",
+                               str(_injuries_file(alert_env.tmp)))
+    head = alert_env.sent_calls[0][2].split("\n\n")[0]
+    assert code == 1
+    assert "league profile" in head and "week-1 date" not in head

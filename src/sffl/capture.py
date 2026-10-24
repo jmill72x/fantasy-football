@@ -206,6 +206,14 @@ def _prefix_ids(full_text, rows):
     ordinary case, no quirk) still gets offset 0, unchanged from inserting
     at the literal start.
 
+    ON THE TEAM (ROSTER) PAGE THAT LINE IS THE STATS LINE: a row with a game
+    is three lines there (the row line, its kickoff time, its stats), so its
+    prefix lands two lines below the row line it identifies, while a bye row
+    is one line and keeps it. `sffl.cbs_roster` reads the id back from the
+    stats line (2026-10-21); until then every playing-week roster row parsed
+    with no id, unnoticed because the team-page fixture still had the shape
+    the first version of this function wrote.
+
     THIS MUST BE THE LAST NON-BLANK LINE, NOT SIMPLY THE LAST NEWLINE:
     review round 2 caught the mirror-image bug an earlier version had - a
     row's real content followed by a TRAILING empty or whitespace-only

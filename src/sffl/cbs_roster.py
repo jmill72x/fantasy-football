@@ -47,6 +47,24 @@ roster (the 10-16 digest left out two; a bye starter could never be flagged).
 It now accepts anything after the opponent's own tab, which keeps every row it
 matched before exactly as it was.
 
+THE PLAYING-WEEK ROW'S ID IS READ BACK OFF ITS STATS LINE (2026-10-21).
+Until then a row with a game parsed with NO id - on 10-20 only the bye rows
+had one - and every roster ↔ projections join fell back to the (name, team,
+pos) composite. Why it went unseen: the capture's first anchor rule (08-30)
+put the prefix on the row line, the shape `tests/fixtures/cbs_team_page.txt`
+was built in; review round 2 moved it to the row's last non-blank line the
+same day (right for the projections pages' leading "Add" and blank cells),
+which on this page is the stats line. `_iter_lines` now gives an id-less row
+line the id of the first id-carrying line below it, and only when that line
+is the same row's own: the search stops at the next line that starts like a
+row (`_ROW_START`, even one `_ROW` cannot read, and a bye row's own id line
+is one), at the RESERVES marker or the table's footer, and after
+`_ID_LOOKAHEAD` lines. So an id can never cross from one row to another; a
+row whose stats line carries no id keeps "" and the composite join, as
+before. Fixed here rather than in `capture`, so every roster page already
+saved (the data repo's weekly units) reads its ids too, and the eight
+projection pages' prefixing is untouched.
+
 Field 1 is the position column. Field 2 is `NAME POS . TEAM`, where TEAM
 sometimes carries a TRAILING SPACE - that's where an injury glyph renders in
 the live page; it is not part of the team code. Field 3 is the opponent,
@@ -167,6 +185,26 @@ _RESERVES_MARKER = "RESERVES"
 # as it always discarded everything past what `_ROW` itself captures.
 _ID_PREFIX = re.compile(r"^id=(?P<id>\d+)\t")
 
+# A line that STARTS a roster row (its id prefix already stripped): a tab, a
+# bare position code, a tab. Looser than `_ROW` on purpose - any name, any
+# rest - because it marks where one row's text ends and the next one's
+# begins: a row line `_ROW` cannot read (a name with a character it does not
+# allow) must still stop `_continuation_id` from handing that row's id to the
+# row above it. A stats line (`\t8\t43.5\t...`) never matches: a number, not
+# a position code, follows its first tab.
+_ROW_START = re.compile(r"^\t(?:%s)\t" % _POS)
+
+# How many lines below an id-less row line its own id may sit. The live
+# shape needs two (the kickoff time, then the stats line, measured on every
+# saved roster page of 2026-10-19 and 10-20); the rest is room for a game-time
+# cell that renders on more than one line (a game in progress has never been
+# captured). The row-start and end-of-table stops below are what keep an id
+# on its own row; this bound only keeps the search short.
+_ID_LOOKAHEAD = 4
+
+# The line under the last reserve's row: "ACTIVE: 8 RESERVE: 5".
+_FOOTER_PREFIX = "ACTIVE:"
+
 # name/slot/team/player_id. `team` is RAW off the page - it is NOT run
 # through `identity.normalize_team` here (a page-parsing module has no
 # opinion on identity normalization; `parse_lineup_rows`'s CALLERS do that,
@@ -186,20 +224,54 @@ RosterRow = namedtuple("RosterRow", "name slot team player_id",
 def _iter_lines(path):
     """Yield (player_id, line) - `line` with any leading id prefix removed.
 
-    `player_id` is "" for every line that carried no such prefix - which is
-    every line on a page saved before `sffl.capture.capture` grew this
-    feature, and every non-player line (nav, headers, RESERVES) on a page
-    saved after, since only a row `capture()` could pair with a
-    `playerpage/<id>` link ever gets one.
+    `player_id` is the line's own prefix, or - for a roster row line with
+    none of its own - the id `capture` put on that row's stats line below it
+    (see `_continuation_id` and the module docstring's "THE PLAYING-WEEK
+    ROW'S ID"). It is "" for every other line without a prefix: every line
+    on a page saved before `sffl.capture.capture` grew this feature, and
+    every non-player line (nav, headers, RESERVES) on a page saved after,
+    since only a row `capture()` could pair with a `playerpage/<id>` link
+    ever gets one.
     """
+    lines = []
     with open(path) as fh:
         for raw_line in fh:
             line = raw_line.rstrip("\n")
             m = _ID_PREFIX.match(line)
             if m:
-                yield m.group("id"), line[m.end():]
+                lines.append((m.group("id"), line[m.end():]))
             else:
-                yield "", line
+                lines.append(("", line))
+    for i, (player_id, line) in enumerate(lines):
+        if not player_id and _ROW_START.match(line):
+            player_id = _continuation_id(lines, i)
+        yield player_id, line
+
+
+def _ends_table(line):
+    """True for a line no row's text runs past: RESERVES, or the footer."""
+    return line == _RESERVES_MARKER or line.startswith(_FOOTER_PREFIX)
+
+
+def _continuation_id(lines, i):
+    """The id `capture` put below the id-less row line `lines[i]`, or "".
+
+    `lines` is `_iter_lines`' list of (player_id, prefix-stripped line). The
+    first line below `i` that carries an id is this row's stats line - unless
+    something that ends this row's text comes first: a line that starts like
+    a row (`_ROW_START`; a bye row's line, id and all, is the NEXT row's, so
+    it stops the search without being taken), the RESERVES marker or the
+    footer. Never more than `_ID_LOOKAHEAD` lines down. A row whose own id
+    line is missing (`_prefix_ids` could not place it) therefore gets "",
+    never a neighbour's id.
+    """
+    for j in range(i + 1, min(len(lines), i + 1 + _ID_LOOKAHEAD)):
+        player_id, line = lines[j]
+        if _ROW_START.match(line) or _ends_table(line):
+            return ""
+        if player_id:
+            return player_id
+    return ""
 
 
 def _empty_roster_error(path):

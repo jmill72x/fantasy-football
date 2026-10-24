@@ -229,9 +229,17 @@ def _cmd_collect(args, capture_fn=None, runner=None):
     if runner is None:
         runner = subprocess.run
 
-    season = load_league(args.league).season
+    lg = load_league(args.league)
+    season = lg.season
     day = (datetime.date.fromisoformat(args.date) if args.date
            else datetime.date.today())
+    # The profile's season decides where every unit is filed, so one that is
+    # not the date's season says so here (the alert run before this one has
+    # already put it on the digest). Warned, not refused: the end-of-season
+    # sweep can run after March on purpose, and a week's pages filed under
+    # the wrong season can be moved, while pages never kept cannot. Checked
+    # against --date when one is given, else today (`sffl.season.today`).
+    _season_mismatches(lg, args, day=day if args.date else None)
     units, steps, labels = [], [], []
     tmp = None
     try:
@@ -349,6 +357,42 @@ def _banner(title, body):
     for line in textwrap.wrap(body, 74):
         print("     " + line)
     print("")
+
+
+def _season_mismatches(lg, args, year=None, day=None, week1=None):
+    """The season-bound values this run uses that are not for its season.
+
+    The run's season is `year` (a command's --year) when given, else the
+    season of `day` (default: today). Checks the league profile always, the
+    bye file when the command takes --byes, and the alert's week-1 date when
+    one was passed. Prints a banner for each and returns them; `sffl.season`
+    says exactly what counts as stale, and why none of this refuses to run.
+    Silent for every 2026 run.
+    """
+    from sffl import season
+
+    run, basis = season.run_season(year=year, day=day)
+    found = [season.check("league profile", args.league, lg.season, run,
+                          basis)]
+    byes = getattr(args, "byes", None)
+    if byes:
+        found.append(season.check("bye file", byes, season.file_season(byes),
+                                  run, basis))
+    if week1 is not None:
+        found.append(season.check(
+            "week-1 date", "%s (ops/run_alert.sh, WEEK1)" % week1.isoformat(),
+            season.season_for(week1), run, basis))
+    found = [m for m in found if m is not None]
+    for m in found:
+        _banner(season.title(m), season.detail(m))
+    return found
+
+
+def _iso_date(text):
+    """argparse type: a YYYY-MM-DD date."""
+    import datetime
+
+    return datetime.date.fromisoformat(text)
 
 
 def _load_prices_announcing(path, tqb_starters_path, season):
@@ -615,6 +659,7 @@ def _print_plan(outcomes, bid_floor):
 
 def cmd_ingest(args):
     lg = load_league(args.league)
+    _season_mismatches(lg, args, year=args.year)
     pool = build_pool(lg, args.source, args.file, args.year, args.set)
 
     by_pos = {}
@@ -640,6 +685,7 @@ def cmd_ingest(args):
 
 def cmd_value(args):
     lg = load_league(args.league)
+    _season_mismatches(lg, args, year=args.year)
     result = _value_pool(lg, args)
     if result is None:
         return 1
@@ -752,6 +798,11 @@ def cmd_render(args):
         return 1
 
     lg = load_league(args.league)
+    # The bye file and the league profile against --year. Printed now, and
+    # put on the Key & Intel sheet below: the workbook is what goes to the
+    # draft table, and it must say what stdout says.
+    from sffl.season import board_note
+    season_mismatches = _season_mismatches(lg, args, year=args.year)
     result = _value_pool(lg, args)
     if result is None:
         return 1
@@ -787,7 +838,9 @@ def cmd_render(args):
         # terminal and "year-matched to this board" in the workbook - and the
         # workbook is what goes to the draft table.
         facts = gather_intel(lg, rows, pool=pool, prices=prices, curve=curve,
-                             market=market, year=args.year)
+                             market=market, year=args.year,
+                             season_note=(board_note(season_mismatches)
+                                          if season_mismatches else None))
         stats = render_xlsx(lg, rows, args.xlsx, intel=facts)
         print("wrote %s" % args.xlsx)
         # render_xlsx truncates to a hard two-page row budget (derived from
@@ -827,6 +880,7 @@ def cmd_plan(args):
     so an unreadable history is a hard failure rather than a blank page.
     """
     lg = load_league(args.league)
+    _season_mismatches(lg, args, year=args.year)
     result = _value_pool(lg, args)
     if result is None:
         return 1
@@ -929,6 +983,7 @@ def cmd_fit_market(args):
             "checkable." % (args.file, args.year))
 
     lg = load_league(args.league)
+    _season_mismatches(lg, args, year=args.year)
     pool = build_pool(lg, args.source, args.file, args.year, args.set)
 
     if args.curves:
@@ -1170,6 +1225,7 @@ def _cmd_week(args):
     owner_codes = _load_owner_codes(DEFAULT_PROFILE)
 
     lg = load_league(args.league)
+    _season_mismatches(lg, args)
     curves = load_curves(args.curves) if args.curves else None
 
     # --projections/--group is the ORIGINAL single-page interface and stays
@@ -1571,8 +1627,18 @@ def _cmd_alert(args):
     from sffl.notify import send, send_discord, topic_from_keychain
     from sffl.pool import score_week
     from sffl import cbs_icons
+    from sffl import season as season_mod
 
     lg = load_league(args.league)
+    # SEASON-BOUND VALUES (2026-10-21): the league profile, and the week-1
+    # date `ops/run_alert.sh` computes `--week` from (passed as --week1),
+    # against the season of today's date. One that is not this season's
+    # opens the pushed digest with a banner and makes the exit code non-zero:
+    # an unattended run is read on the phone, so a forgotten step for a new
+    # season has to show there. Empty for every 2026 run, January 2027
+    # included (see sffl.season).
+    season_mismatches = _season_mismatches(
+        lg, args, week1=getattr(args, "week1", None))
     # The week this run's pages, lineup and waiver ranking are for - the
     # coming week on a Tuesday (see `_projection_week`). `args.week` stays the
     # week the run falls in: the bye look-ahead's "next week" below is still
@@ -2438,6 +2504,12 @@ def _cmd_alert(args):
             residual_banner.append("  - %s (%s, %s)" % (name, pos, team))
         body = body + "\n\n" + "\n".join(residual_banner)
 
+    # At the TOP, unlike the banners above, and on every path (a capture
+    # failure included): every number in the digest rests on these values,
+    # and the first lines are what the phone's notification shows.
+    if season_mismatches:
+        body = "\n".join(season_mod.banner(season_mismatches)) + "\n\n" + body
+
     print(body)
 
     # TAP-TO-CLAIM. Each waiver target gets a link - an ntfy button, a line
@@ -2527,12 +2599,16 @@ def _cmd_alert(args):
     # printed body above, not the exit code, is what tells them apart. A
     # missing --injuries argument is NOT counted here: that is a deliberate
     # invocation, not a failed step, and it is still stated in the body.
+    # A season-bound value from another season (`season_mismatches`, see
+    # sffl.season) counts too: the run asked CBS for the wrong week or scored
+    # with another season's profile, however clean the rest looks.
     return 1 if (capture_error or projections_capture_error
                 or injury_fetch_failed or delivery_error or discord_error
                 or group_failures or designation_failures
                 or cross_group_duplicates or id_coverage_losses
                 or residual_projection_duplicates
-                or week_mismatch or stale_projections) else 0
+                or week_mismatch or stale_projections
+                or season_mismatches) else 0
 
 
 # The repo root, from this file's own place (src/sffl/cli.py), so paths the
@@ -2655,6 +2731,7 @@ def _cmd_trade(args):
                             release_cost)
 
     lg = load_league(args.league)
+    _season_mismatches(lg, args)
     curves = load_curves(args.curves) if args.curves else None
     owner_codes = _load_owner_codes(DEFAULT_PROFILE)
 
@@ -3202,6 +3279,12 @@ def main(argv=None):
                      help="the NFL week the run falls in (Wednesday to "
                           "Tuesday, as ops/run_alert.sh computes it); a "
                           "Tuesday run projects the week after it")
+    alr.add_argument("--week1", type=_iso_date, default=None,
+                     help="YYYY-MM-DD, the Wednesday NFL week 1 began - the "
+                          "date ops/run_alert.sh computes --week from. "
+                          "Checked against today's season: last season's "
+                          "date opens the digest with a STALE SEASON VALUES "
+                          "banner and exits non-zero")
     alr.add_argument("--curves")
     alr.add_argument("--injuries", help="JSON written by ops/fetch_injuries.sh")
     alr.add_argument("--team-url", default=DEFAULT_TEAM_URL,

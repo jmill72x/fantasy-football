@@ -388,18 +388,171 @@ def _bye_page(tmp_path):
     return str(path)
 
 
-def test_a_bye_week_row_parses_with_its_slot_team_and_id(tmp_path):
+def test_every_row_keeps_its_cbs_id_whether_it_has_a_game_or_a_bye(tmp_path):
+    # Until 2026-10-21 the rows WITH a game parsed with "" here: their id
+    # sits on the stats line, two lines below the row line, and only the
+    # one-line bye rows carried theirs. Every row now has its own id.
     starters, reserves = parse_lineup_rows(_bye_page(tmp_path))
     assert starters == [
-        RosterRow("Hawks", "TQB", "SEA", ""),
-        RosterRow("Pat Example", "WR", "SEA", ""),
+        RosterRow("Hawks", "TQB", "SEA", "9100001"),
+        RosterRow("Pat Example", "WR", "SEA", "9100002"),
         RosterRow("Lee Sample", "WR", "LAC", "9100003"),
-        RosterRow("Kim Kicker", "K", "NYG", ""),
+        RosterRow("Kim Kicker", "K", "NYG", "9100004"),
     ]
     assert reserves == [
         RosterRow("Bolts", "TQB", "LAC", "9100005"),
-        RosterRow("Sam Runner", "RB", "DET", ""),
+        RosterRow("Sam Runner", "RB", "DET", "9100006"),
     ]
+
+
+# ------------------------- a playing-week row's id, off its stats line
+#
+# The live capture puts a row's id at the start of the row's LAST non-blank
+# line (`capture._prefix_ids`), which for a row with a game is its stats line.
+# `cbs_roster._iter_lines` reads it back from there - and must never hand one
+# row's id to another. Invented names, ids and numbers throughout.
+
+def _page(tmp_path, lines):
+    path = tmp_path / "team_page.txt"
+    path.write_text("\n".join(lines + [""]))
+    return str(path)
+
+
+def test_a_roster_row_with_a_game_keeps_its_cbs_id(tmp_path):
+    path = _page(tmp_path, [
+        "\tWR\tPat Example WR • SEA \t@MIA\t",
+        "Sun 1:00pm EDT",
+        "id=9200001\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "RESERVES",
+    ])
+    starters, reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", "9200001")]
+    assert reserves == []
+
+
+def test_a_row_whose_stats_line_lost_its_id_never_takes_the_next_bye_rows(tmp_path):
+    # The next row is a bye row: one line, its OWN id on it. That id line
+    # starts like a row, so it ends the search for the row above.
+    path = _page(tmp_path, [
+        "\tWR\tPat Example WR • SEA \t@MIA\t",
+        "Sun 1:00pm EDT",
+        "\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "",
+        "id=9200002\t\tWR\tLee Sample WR • LAC \tBYE\t\t7\t\t---\t\t50%\t25%\t0.00\t1.11\t0.00",
+        "RESERVES",
+    ])
+    starters, _reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", ""),
+                        RosterRow("Lee Sample", "WR", "LAC", "9200002")]
+
+
+def test_a_row_whose_stats_line_lost_its_id_never_takes_the_next_games_id(tmp_path):
+    path = _page(tmp_path, [
+        "\tWR\tPat Example WR • SEA \t@MIA\t",
+        "Sun 1:00pm EDT",
+        "\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "\tK\tKim Kicker K • NYG \t@HOU\t",
+        "Sun 1:00pm EDT",
+        "id=9200003\t\t8\t43.0\t40\t15\t50%\t25%\t1.11\t2.22\t3.33",
+        "RESERVES",
+    ])
+    starters, _reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", ""),
+                        RosterRow("Kim Kicker", "K", "NYG", "9200003")]
+
+
+def test_a_row_line_the_parser_cannot_read_still_keeps_its_id_to_itself(tmp_path):
+    # `_ROW` allows only [A-Za-z0-9.'- ] in a name, so this next row is not
+    # parsed at all (as before). It still starts like a row, so its stats
+    # line's id is never given to the row above.
+    path = _page(tmp_path, [
+        "\tWR\tPat Example WR • SEA \t@MIA\t",
+        "Sun 1:00pm EDT",
+        "\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "\tRB\tJosé Ejemplo RB • DET\tGB\t",
+        "Sun 1:00pm EDT",
+        "id=9200004\t\t5\t47.5\t18\t8\t50%\t25%\t1.11\t2.22\t3.33",
+        "RESERVES",
+    ])
+    starters, _reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", "")]
+
+
+def test_a_starters_id_never_comes_from_below_the_reserves_marker(tmp_path):
+    path = _page(tmp_path, [
+        "\tK\tKim Kicker K • NYG \t@HOU\t",
+        "Sun 1:00pm EDT",
+        "RESERVES",
+        "id=9200005\t\t8\t43.0\t40\t15\t50%\t25%\t1.11\t2.22\t3.33",
+    ])
+    starters, _reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Kim Kicker", "K", "NYG", "")]
+
+
+def test_the_last_reserves_search_ends_at_the_footer(tmp_path):
+    path = _page(tmp_path, [
+        "RESERVES",
+        "\tRB\tSam Runner RB • DET\tGB\t",
+        "Sun 1:00pm EDT",
+        "\t\t5\t47.5\t18\t8\t50%\t25%\t1.11\t2.22\t3.33",
+        "ACTIVE: 0 RESERVE: 1",
+        "id=9200006\tSomething Else",
+    ])
+    _starters, reserves = parse_lineup_rows(path)
+    assert reserves == [RosterRow("Sam Runner", "RB", "DET", "")]
+
+
+def test_a_game_time_on_two_lines_still_finds_the_stats_lines_id(tmp_path):
+    # Never captured (no saved page has a game in progress), so this is the
+    # tolerance, not a measured shape: a game-time cell that renders on two
+    # lines puts the stats line three below the row line.
+    path = _page(tmp_path, [
+        "\tWR\tPat Example WR • SEA \t@MIA\t",
+        "W 14-10",
+        "Q3 5:21",
+        "id=9200007\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "RESERVES",
+    ])
+    starters, _reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", "9200007")]
+
+
+def test_the_search_stops_after_its_lookahead(tmp_path):
+    path = _page(tmp_path, [
+        "\tWR\tPat Example WR • SEA \t@MIA\t",
+        "a", "b", "c", "d",
+        "id=9200008\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "RESERVES",
+    ])
+    starters, _reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", "")]
+
+
+def test_an_id_on_the_row_line_is_still_read_from_there(tmp_path):
+    # The shape the first id-prefixing rule wrote (2026-08-30): id on the
+    # row line, kickoff time and stats below it with none.
+    path = _page(tmp_path, [
+        "id=9200009\t\tWR\tPat Example WR • SEA \t@MIA\t",
+        "Sun 1:00pm EDT",
+        "\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "RESERVES",
+    ])
+    starters, _reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", "9200009")]
+
+
+def test_the_fixture_gives_every_row_its_own_id_once():
+    # The constructed team page is in the live shape since 2026-10-21: every
+    # row has a game, so every id sits on a stats line.
+    starters, reserves = parse_lineup_rows(FIXTURE)
+    ids = [r.player_id for r in starters + reserves]
+    assert len(ids) == 13 and all(ids)
+    assert len(set(ids)) == len(ids)
+    with open(FIXTURE) as fh:
+        id_lines = [l for l in fh if l.startswith("id=")]
+    assert not any(_ROW.match(_strip_id(l.rstrip("\n"))) for l in id_lines), (
+        "the fixture's ids should sit on stats lines, as the live capture "
+        "writes them")
 
 
 def test_every_roster_parser_keeps_the_bye_rows(tmp_path):

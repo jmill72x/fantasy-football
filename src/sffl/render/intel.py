@@ -117,11 +117,17 @@ class IntelFacts(object):
     league_name: str = ""
     # The season THIS BOARD prices (`gather`'s `year`, i.e. `render --year`),
     # falling back to the league profile's own season. Not always the same
-    # number: one profile serves several seasons, and a pre-auction 2027
-    # board is built from leagues/sffl/2026.yaml. Everything on this page
+    # number: a board can be priced from another season's profile (a 2027
+    # board before the preseason runbook's step 2 writes the 2027 one, which
+    # `sffl.season` warns about - see `season_note`). Everything on this page
     # that says "this board's season" - including the cross-season verdict -
     # must read it from here, or the page contradicts the run that made it.
     season: Optional[int] = None
+    # The stale-season warning this run printed (`sffl.season.board_note`):
+    # the bye file or the league profile is another season's. "" when they
+    # are this board's. Shown ahead of the subtitle, because the printed
+    # page must say what stdout said.
+    season_note: str = ""
     flat_price: Optional[float] = None
     flat_pools: Tuple[str, ...] = ()
     bid_floor: Optional[int] = None
@@ -264,8 +270,9 @@ def _market_provenance(board_season, prices, market, n_curve_obs):
     market/2026.yaml` run announced CROSS-SEASON in the terminal while the
     workbook that goes to the draft table said "year-matched to this board".
     The workbook is the artifact somebody drafts from, and it stated the
-    opposite of the truth. One league profile serves several seasons - there
-    is no `leagues/sffl/2027.yaml` - so the profile's season is exactly the
+    opposite of the truth. A board can be priced from another season's
+    profile (before the preseason runbook's step 2 writes the new one;
+    `sffl.season` warns when it is), so the profile's season is exactly the
     wrong thing to compare a model against.
 
     `curve` (a, b) is silent about its own origin - both an in-process fit
@@ -373,7 +380,7 @@ def _history_facts(facts, history):
 
 
 def gather(lg, rows, pool=None, prices=None, curve=None, market=None,
-           history=None, bids_path=DEFAULT_BIDS, year=None):
+           history=None, bids_path=DEFAULT_BIDS, year=None, season_note=None):
     """Everything the intel sheet may state about THIS render.
 
     `pool` and `prices` come from the valuation run (`sffl.cli._value_pool`);
@@ -390,14 +397,19 @@ def gather(lg, rows, pool=None, prices=None, curve=None, market=None,
 
     `year` is the season this run is pricing (`sffl render --year`). It
     defaults to the league profile's own season, which is right for every
-    same-year run and wrong for exactly the run this branch exists to serve:
-    a pre-auction 2027 board built from the 2026 profile (there is no 2027
-    profile). Getting it from the caller is what keeps the page's
-    cross-season verdict identical to the one stdout prints.
+    same-year run and wrong for a board priced from another season's
+    profile (a 2027 board built before the 2027 profile exists). Getting it
+    from the caller is what keeps the page's cross-season verdict identical
+    to the one stdout prints.
+
+    `season_note` is the stale-season sentence the run printed
+    (`sffl.season.board_note`), or None; the sheet shows it ahead of its
+    subtitle.
     """
     board_season = lg.season if year is None else int(year)
     facts = IntelFacts(total_capital=lg.total_capital(),
-                       league_name=lg.name, season=board_season)
+                       league_name=lg.name, season=board_season,
+                       season_note=season_note or "")
 
     if lg.flat_priced_pools:
         facts.flat_pools = tuple(sorted(lg.flat_priced_pools))
@@ -779,11 +791,17 @@ def title(f):
 
 
 def subtitle(f):
-    """One line under the title, naming what this page is and is not."""
-    return ("What the Board sheet's columns mean, what this room has done with "
+    """One line under the title, naming what this page is and is not.
+
+    Opens with the run's stale-season warning when there is one
+    (`IntelFacts.season_note`): a board built with another season's bye file
+    or league profile must say so on the page that goes to the table."""
+    text = ("What the Board sheet's columns mean, what this room has done with "
             "its money, and where the model is weak. Every figure below is "
             "measured from the same run that printed the board beside it. "
             "Context, not instructions - the picks are the drafter's call.")
+    note = getattr(f, "season_note", "") if f is not None else ""
+    return "%s %s" % (note, text) if note else text
 
 
 def left_sections(f):

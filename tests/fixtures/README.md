@@ -15,6 +15,11 @@ site in August 2026 and replaced on 2026-10-19 with constructed copies:
   tie and tolerance tests exercise the same behaviour. FPTS sits inside the TQB and DST
   tolerance windows measured on the real capture, and K's FPTS follows CBS's flat
   convention (field goals plus extra points).
+- **One layout change since (2026-10-21):** `cbs_team_page.txt`'s `id=` prefixes moved from
+  each row line to that row's stats line, two lines below, where the live capture writes
+  them (`sffl.capture._prefix_ids` anchors on a row's last non-blank line). The August page
+  had them on the row line, the shape the capture's first version wrote, which is why no
+  test saw roster rows with a game lose their ids. Same ids, same bytes, only moved.
 - **The real pages** are kept in the private data repo (`jmill72x/fantasy-football-data`,
   `2026/cbs/snapshot-2026-10-19/test-fixtures/`). `poc/measure_weekly_calibration.py`
   reads the real RB-WR-TE page from there by default.

@@ -99,10 +99,11 @@ not run.
 ## The week number
 
 `ops/run_alert.sh` computes the NFL week from today's date rather than a hardcoded
-number, anchored on the 2026 season's Week 1 start (Wednesday 2026-09-09):
+number, anchored on the season's Week 1 start, `WEEK1` (line 56; Wednesday 2026-09-09 for
+2026):
 
 ```
-week = (today - 2026-09-09).days // 7 + 1
+week = (today - WEEK1).days // 7 + 1
 ```
 
 It's clamped to a minimum of **1**, so a run before the season starts (or a manual
@@ -112,11 +113,22 @@ arithmetic - or a run long after the season ends - can't ask CBS for a week that
 exist. Both bounds are simple `min`/`max` calls in the script; there's no fallback logic
 if a week outside `[1, 18]` would otherwise have been computed, it's just clamped.
 
-**The date is 2026's and must be changed every season.** Nothing warns when it's stale: in
-2027 the 2026 date makes every run clamp to week 18. Before week 1, set `start` (line 59
-of `ops/run_alert.sh`) to the Wednesday of the new season's week-1 week, and change
-`--curves` (line 91) if the curves changed. `docs/operations/preseason-runbook.md`, step
-13, has the whole switch-over.
+**The date is 2026's and must be changed every season.** In 2027 the 2026 date makes every
+run clamp to week 18. Before week 1, set `WEEK1` (line 56 of `ops/run_alert.sh`) to the
+Wednesday of the new season's week-1 week, and change `--curves` (line 99) if the curves
+changed. `docs/operations/preseason-runbook.md`, step 13, has the whole switch-over.
+
+**A stale date or league profile now says so (since 2026-10-21).** The script passes
+`WEEK1` to `sffl alert --week1`, which checks it and the league profile's `season:`
+against the season of today's date (`sffl.season`; January and February count as the
+previous season, so the 2026 season's January runs, the 2027-01-12 results run included,
+stay silent). From 2027-03-01, a run still on 2026's values opens the digest with
+`!! STALE SEASON VALUES`, one line per value with its runbook step, and exits non-zero;
+the digest still goes out. The same run's `sffl collect` prints the warning too and still
+files its unit, under the profile's season, so a unit collected that way may need moving
+by hand once the values are fixed. If the alert jobs stay loaded through the off-season,
+every run from March 1 carries the banner until steps 2 and 13 are done (or Vision unloads
+the jobs).
 
 ## "I got no alert"
 

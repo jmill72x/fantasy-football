@@ -251,10 +251,11 @@ def _for_roster_by_id(reports, roster_rows):
       name alone when the row has no team. A row WITH a CBS id is never matched
       to him by name: its id already says which player it is.
     - A rostered player whose own id was not captured gets every row matching
-      his name and team, id or not. This is the common case today: the roster
-      page puts a playing week's game time on its own line, so `capture`'s id
-      prefix lands on the row's last line and `cbs_roster.parse_lineup_rows`
-      reads no id (measured 2026-10-20: only bye-week rows carried one).
+      his name and team, id or not. Rare since 2026-10-21: the roster page
+      puts a playing week's game time on its own line, so `capture`'s id
+      prefix lands on the row's stats line, and `cbs_roster` now reads it
+      back from there (before, only bye-week rows carried an id; measured
+      2026-10-20).
     - A Team QB unit (slot TQB) gets its NFL team's quarterbacks' rows, by the
       row's position and team.
     - A defense (slot DST) gets none: a team defense is never designated.

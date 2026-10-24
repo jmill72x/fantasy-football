@@ -77,17 +77,32 @@ recreate it with `./.venv/bin/python ops/cbs_login.py`.
 
 ## Season-bound values
 
-None of these warns when it's stale. Each one is a 2026 value in code or a script.
+Each one is a 2026 value in code or a script. **The first three warn when they're stale**
+(since 2026-10-21, `src/sffl/season.py`); the rest don't.
 
-| Value | Where | 2026 value | What to do for 2027 |
-|---|---|---|---|
-| League profile | `DEFAULT_LEAGUE`, `src/sffl/cli.py:32` | `leagues/sffl/2026.yaml` | Step 2: write `leagues/sffl/2027.yaml` and point the default at it |
-| Bye weeks | `DEFAULT_BYES`, `src/sffl/render/rows.py:21` | `leagues/nfl-byes-2026.yaml` | Step 3: write `leagues/nfl-byes-2027.yaml`; pass `--byes` or move the default |
-| TQB starter map | `DEFAULT_TQB_STARTERS`, `src/sffl/fit.py:25` | `identity/tqb-2025-starters.yaml` | Read only with `--prices`. Step 11 writes the 2027 map after the auction |
-| Market model | the `--market` flag | `market/2026.yaml` | Use it as is before the 2027 auction (step 7); fit `market/2027.yaml` after it (step 12) |
-| Calibration curves | `--curves` everywhere; `ops/run_alert.sh` line 91 | `calibration/2025.yaml` | Step 6 |
-| Alert week-1 date | `ops/run_alert.sh` line 59 | `datetime.date(2026, 9, 9)` | Step 13 |
-| CBS parse season | `season=2026` default in `cbs_weekly.parse` | 2026 | CLI callers pass the league profile's season, so step 2 covers it |
+| Value | Where | 2026 value | What to do for 2027 | Warns? |
+|---|---|---|---|---|
+| League profile | `DEFAULT_LEAGUE`, `src/sffl/cli.py:32` | `leagues/sffl/2026.yaml` | Step 2: write `leagues/sffl/2027.yaml` and point the default at it | Yes: its `season:` against `--year`, or today's season |
+| Bye weeks | `DEFAULT_BYES`, `src/sffl/render/rows.py:21` | `leagues/nfl-byes-2026.yaml` | Step 3: write `leagues/nfl-byes-2027.yaml` with `season: 2027`; pass `--byes` or move the default | Yes: its `season:` against `--year` (`render`, `plan`) |
+| Alert week-1 date | `WEEK1` in `ops/run_alert.sh` (line 56) | `2026-09-09` | Step 13 | Yes: against today's season (`sffl alert --week1`) |
+| TQB starter map | `DEFAULT_TQB_STARTERS`, `src/sffl/fit.py:25` | `identity/tqb-2025-starters.yaml` | Read only with `--prices`. Step 11 writes the 2027 map after the auction | Its own guard: `--prices` refuses a map whose `season:` isn't `--year` |
+| Market model | the `--market` flag | `market/2026.yaml` | Use it as is before the 2027 auction (step 7); fit `market/2027.yaml` after it (step 12) | Prints its `CROSS-SEASON apply` note, by design |
+| Calibration curves | `--curves` everywhere; `ops/run_alert.sh` line 99 | `calibration/2025.yaml` | Step 6 | No |
+| CBS parse season | `season=2026` default in `cbs_weekly.parse` | 2026 | CLI callers pass the league profile's season, so step 2 covers it | Through the league profile |
+
+**What "stale" means.** A value is stale when the season it's for is older than the
+season the run is for. The run's season is `--year` for `ingest`, `value`, `render`,
+`plan` and `fit-market`; for `alert`, `week`, `trade` and `collect` it's the season of
+today's date, where January and February still belong to the previous season (the
+2026 season's playoffs and its 2027-01-12 results run are 2026's; 2027 starts on
+2027-03-01, the NFL's new league year). A value newer than the run's season is flagged
+too, as "AHEAD": the same mistake the other way round.
+
+**What it does.** Every command that uses a stale value prints a `** STALE SEASON VALUE **`
+banner naming the value, the fix and the step below. `render` also puts it at the top of
+the Key & Intel sheet. `sffl alert` opens the pushed digest with `!! STALE SEASON VALUES`
+and exits non-zero; the digest still goes out. Nothing refuses to run, so a rehearsal with
+last year's files still works and says so. Every 2026 run is silent.
 
 ## Steps, in order
 
@@ -116,7 +131,10 @@ Check the league's settings on CBS for any change since last season.
 
 - **No change:** copy `leagues/sffl/2026.yaml` to `leagues/sffl/2027.yaml`, set
   `season: 2027`, and point `DEFAULT_LEAGUE` (`src/sffl/cli.py:32`) at it. The alert job
-  passes no `--league`, so the default is what it uses.
+  passes no `--league`, so the default is what it uses. Until this is done, a `--year 2027`
+  run and every alert from 2027-03-01 print `STALE SEASON VALUE` for the profile (above).
+  `tests/test_season.py` checks that the default profile's `season:` matches the year in
+  its file name, so a copy that kept `season: 2026` fails the suite.
 - **A change:** do the same, change the bands, and validate each changed band against real
   CBS weekly points before trusting it (design spec, "a 2027 rule change is a new file").
   Never validate against pre-2025 data: the rules changed between 2024 and 2025. Don't
@@ -128,9 +146,10 @@ Check the league's settings on CBS for any change since last season.
 
 Write `leagues/nfl-byes-2027.yaml` the way the 2026 file's header describes: two
 independent sources that agree on all 32 teams, keys quoted (unquoted `NO` parses as
-false), and the per-week counts summing to 32. Pass `--byes leagues/nfl-byes-2027.yaml`
-on every render and plan, or move `DEFAULT_BYES`. A 2027 render without it silently prints
-2026 byes.
+false), the per-week counts summing to 32, and `season: 2027`. Pass `--byes
+leagues/nfl-byes-2027.yaml` on every render and plan, or move `DEFAULT_BYES`. A 2027 render
+without it prints 2026 byes, under a `STALE SEASON VALUE` banner in the terminal and on the
+Key & Intel sheet.
 
 ### 4. Draft Sharks export
 
@@ -174,7 +193,7 @@ Unmatched players are reported loudly. Add any fixes to `identity/aliases.yaml`.
   FOLLOW-UP RAN"). Only another season adds power here: 2025 is exhausted.
 
 If the curves change, pass the new file to every `--curves`, including
-`ops/run_alert.sh` line 91, and refit the market model on the new curves (step 12).
+`ops/run_alert.sh` line 99, and refit the market model on the new curves (step 12).
 
 ### 7. Price the board before the auction
 
@@ -255,10 +274,11 @@ curves change (`tests/test_docs_match_artifacts.py` checks it).
 
 ### 13. Before week 1: in-season switch-over
 
-- Change the week-1 date in `ops/run_alert.sh` line 59 to the Wednesday of 2027's
-  week-1 week (2026 used Wednesday 2026-09-09). The week number is computed from it; see
-  `docs/operations/in-season-alerting.md`, "The week number".
-- Change `--curves` on line 91 if step 6 changed the curves.
+- Change `WEEK1` in `ops/run_alert.sh` (line 56) to the Wednesday of 2027's week-1 week
+  (2026 used Wednesday 2026-09-09). The week number is computed from it; see
+  `docs/operations/in-season-alerting.md`, "The week number". Until it's changed, every
+  alert from 2027-03-01 opens with `!! STALE SEASON VALUES` and exits non-zero.
+- Change `--curves` on line 99 if step 6 changed the curves.
 - Refresh the CBS login if it has expired: `./.venv/bin/python ops/cbs_login.py`.
 - Rehearse with `ops/run_alert.sh tuesday --dry-run`. If CBS changed its pages, the
   `expect_tokens` guards refuse them loudly. A dry run still captures, so it overwrites
@@ -315,9 +335,13 @@ carry every stat the scoring uses before relying on them alone.
   rolls over, take one final sweep of every week, which picks up late stat corrections,
   and check that all 18 weeks are there:
   ```bash
-  PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect --backfill-weeks 1-18
+  PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect --backfill-weeks 1-18 \
+    --league leagues/sffl/2026.yaml
   ls ~/Archive/fantasy-football-data/<season>/cbs-weekly/
   ```
+  `--league` names the season the sweep is filed under, so it stays right even after
+  `DEFAULT_LEAGUE` has moved to 2027. A sweep on or after 2027-03-01 prints a
+  `STALE SEASON VALUE` banner for that profile: expected for this sweep, and it still runs.
   If it can't wait for CBS, also convert the pages to game logs (step 6) while the
   site still serves the per-player game logs as a cross-check.
 - Archive, verify both copies, and add the season to the private data repo

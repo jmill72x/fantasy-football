@@ -642,10 +642,17 @@ def _rename_patriots_dst_to_chargers(text):
     Chargers id 8219 keeps this reproduction internally consistent AND upgrades what
     it proves: the Chargers TQB+DST case (Task 3's original bug) now
     resolves via the id join, one step stronger than the composite
-    fallback it required before this task."""
-    return text.replace(
-        "id=8100\t\tDST\tPatriots DST • NE \t",
-        "id=8219\t\tDST\tChargers DST • LAC \t")
+    fallback it required before this task.
+
+    The fixture is in the live capture's shape (2026-10-21): the name is on
+    the row line and the id on the row's stats line two lines below, so the
+    two are rewritten separately, and each exactly once."""
+    renamed = text.replace("\tDST\tPatriots DST • NE \t",
+                           "\tDST\tChargers DST • LAC \t")
+    renamed = renamed.replace("\nid=8100\t", "\nid=8219\t")
+    assert renamed.count("Chargers DST • LAC") == 1
+    assert renamed.count("\nid=8219\t") == 1 and "id=8100\t" not in renamed
+    return renamed
 
 
 _LEADING_ID = re.compile(r"^id=\d+\t")

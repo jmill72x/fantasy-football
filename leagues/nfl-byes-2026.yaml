@@ -20,6 +20,10 @@
 # SPOT-CHECK THIS BEFORE THE AUCTION. A wrong bye week is a plausible-looking
 # error that costs a real roster decision, and this is the one file here whose
 # contents came from outside the pipeline.
+#
+# `season` is the season these byes are for. `sffl render` and `sffl plan`
+# warn when it is not --year (sffl.season), so next year's copy must change it.
+season: 2026
 byes:
   "ARI": 14
   "ATL": 11
