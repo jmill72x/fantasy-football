@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1123` passed
+- full_suite: `1154` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -282,28 +282,43 @@ and intel gains four real items. The full result is in the plan, and the files a
     `fetch_injuries.sh` and passes `--cbs-designations`.
   - `sffl collect` archives the sidecars.
   - The runbook's StatsDeck sections are rewritten.
-- **Locking down `fetch_injuries.sh` needs a redesign, not just flags (tested 10-30).**
-  Ultron's 10-30 hooks inventory (finding 1): the fetch's `claude -p` inherits auto mode
-  in this public repo while it reads third-party news. Jeff OK'd adding
-  `--permission-mode manual --setting-sources user` and restricting tools ("test and then if
-  good yes"). With those flags plus `--tools Write`, the real run wrote nothing.
-  `get_injuries` returns about 85 to 140 KB, so Claude Code saves the result to a
-  `tool-results/` file instead of returning it to the model, and the model had no tool to
-  open that file. Every scheduled fetch since 10-20 got past this with **Bash** (auto mode
-  allowed it): the transcripts show a python one-liner pulling `data.report` and
-  `data.intel` out of that file. So the "transport, not author" design has quietly depended
-  on shell access. `MAX_MCP_OUTPUT_TOKENS=200000` does not keep the result inline. The
-  committed script is unchanged and still runs.
-  **The proven alternative (10-30, one run):** give the model only the injury tool
-  (`--tools ""`, `--allowedTools mcp__claude_ai_StatsDeck__get_injuries`, manual mode, user
-  settings only) and `--output-format stream-json --verbose`. Then the script, not the
-  model, parses the stream: it takes the `tool_result`, follows the `<persisted-output>`
-  path when the result was saved to a file (a JSON list of content blocks; the first `text`
-  block is StatsDeck's `{"data": {...}}`), and lifts the two arrays. That run's arrays
-  (162 report, 100 intel) were identical to the 16:45 scheduled file. `--permission-mode
-  manual` shows as `permissionMode: "default"` in the init event, and it is not auto.
-  `--strict-mcp-config` was not used: StatsDeck is a claude.ai connector, so it would be
-  dropped (from `claude --help`, not run). Building this waits on Jeff's pick.
+- **`fetch_injuries.sh` rebuilt with no shell and no writes (10-30, staged, not committed;
+  Jeff's option (a)).** Why: Ultron's 10-30 hooks inventory (finding 1) found the fetch's
+  `claude -p` inheriting auto mode in this public repo while it reads third-party news, and
+  every scheduled fetch since 10-20 had used **Bash** to read the saved result: get_injuries
+  returns 85 to 140 KB, which Claude Code saves to a `tool-results/` file instead of
+  returning it, so locking the flags down alone wrote no file. Now:
+  - The session gets `--tools ""` (no built-in tools), `--allowedTools
+    mcp__claude_ai_StatsDeck__get_injuries` (nothing else runs without a prompt, and nobody
+    can answer one), `--permission-mode manual`, `--setting-sources user` and
+    `--output-format stream-json --verbose`. No `--strict-mcp-config`: StatsDeck is a
+    claude.ai connector, which it would drop (from `claude --help`, not run). The model only
+    calls the tool; its prompt no longer mentions a file.
+  - The script, not the model, writes the file: `src/sffl/injury_stream.py` (stdlib only)
+    reads the stream into a temp file, refuses a session whose init event lists any
+    built-in tool or a mode other than default/manual (manual shows as `"default"`), finds
+    the get_injuries `tool_result` and lifts `data.report` and `data.intel` unchanged,
+    writing via a temp file and a rename. A failed parse leaves no file, as before.
+  - **Claude Code 2.1.310 saves an over-size result two ways**, both handled, and the path
+    is followed only inside a `tool-results/` folder under `~/.claude/projects`:
+    by default (the MCP token limit) the tool_result reads `Error: result (...) exceeds
+    maximum allowed tokens. Output has been saved to <...>.txt.` and the file is the plain
+    result text; under a raised `MAX_MCP_OUTPUT_TOKENS` it is a `<persisted-output>`
+    pointer to a `.json` list of content blocks, and the stream's `tool_use_result` also
+    carries the full text. The first real run of the rebuilt script (18:33) failed because
+    the parser knew only the second shape; this morning's test run had hit that one.
+  - Verified: `tests/test_fetch_injuries.py` (the real script with a stub `CLAUDE_BIN`
+    that records its arguments: the flags above, no shell or file tool named anywhere,
+    no stale file left on failure, a session listing Bash refused) and
+    `tests/test_injury_stream.py` (both pointer shapes, paths outside `tool-results`
+    refused, a path quoted in the preview never followed, permissive modes and built-in
+    tools refused, rows copied exactly), on the synthetic `tests/fixtures/
+    injury_stream.jsonl` (invented players). Real run 18:34 into a scratch file: 162
+    report and 100 intel rows, arrays and key order identical to the 16:45 Friday file
+    (only a trailing newline differs), and the session's one tool call was get_injuries.
+    No alert was run and no live file written.
+  - Live already: the jobs run the working tree, so Sunday 11-01 11:45 uses it, committed
+    or not. Rollback is `git checkout 4a9f2d9 -- ops/fetch_injuries.sh`.
 
 ## DATA ARCHIVE AND THE 2027 RUNBOOK (2026-10-19)
 

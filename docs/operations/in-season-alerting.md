@@ -195,11 +195,21 @@ its lineup half but no injury news - and says so, in the message body, rather th
 printing "no designations on your roster" the way a genuinely quiet week does. The run
 exits non-zero. The alert is still sent: a lineup with no news beats no digest at all.
 
-Read `logs/alert-<kind>.err` for the fetch's own message. Common causes: StatsDeck was
-unreachable, or `claude -p` refused/denied the tool and exited without writing. The
-script removes its output file **before** fetching and again if the result is empty or is
-not `{"report": [...], "intel": [...]}`, so a failed fetch can never leave the previous
-run's file to be rendered as today's news.
+Read `logs/alert-<kind>.err` for the fetch's own message. Since 2026-10-30 the headless
+`claude -p` session gets only StatsDeck's `get_injuries` (no shell, no file tools, manual
+permission mode) and the script lifts the result out of the session's stream-json itself
+(`src/sffl/injury_stream.py`). Its messages, all prefixed `fetch_injuries:`:
+
+- `the model never called ...`: the session answered without calling the tool.
+- `get_injuries returned an error` or `... has no data.report/data.intel`: StatsDeck was
+  unreachable or changed its result's shape, or Claude Code saved an over-size result in
+  a way the parser doesn't know yet (it knows the `Error: result ... saved to <.txt>` and
+  `<persisted-output>` pointers of CLI 2.1.310).
+- `session had built-in tools` or `session ran in permission mode ...`: a flag was
+  dropped or the CLI widened the session. The fetch refuses rather than run wider.
+
+The script removes its output file **before** fetching and again on any of these, so a
+failed fetch can never leave the previous run's file to be rendered as today's news.
 
 ## "The alert says STALE INJURY DATA"
 

@@ -33,6 +33,11 @@ invented numbers (cleaned 2026-08-18). `footballguys_sample.csv` is not verbatim
 `tests/test_scoring.py` are real 2025 CBS game logs. They are the evidence behind the
 scoring engine's validation, and swapping in invented lines would make that check circular.
 
+`injury_stream.jsonl` (2026-10-30) is a constructed `claude -p --output-format stream-json`
+run of StatsDeck's get_injuries: the event layout of a real run (init, tool_use,
+tool_result with `tool_use_result`, result), with invented players, ids, teams and dates.
+No real StatsDeck result is committed.
+
 Never add a real capture or vendor export here. Put it in the private data repo and, if a
 test needs its shape, construct rows the way these were.
 
