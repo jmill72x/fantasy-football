@@ -37,9 +37,15 @@ check over the whole repo; these are the parts that guard the fixtures):
                 projections are short decimals, and on 2026-10-19 16
                 constructed fixture lines shared a 4- or 5-number run with
                 another player's row in weeks 1 to 6. There a run counts only
+                when it is LONG_RUN numbers or more, as a copied row's is, or
                 when the reference row names the same player as the fixture
-                line, or when it is LONG_RUN numbers or more, as a copied
-                row's is.
+                line and the run holds SAME_PLAYER_MIN independent numbers.
+                Independent drops repeats (DST's AVG equals its TOTAL) and
+                CBS's averages whose two operands sit in the same run (rush
+                avg = rush yds / att, which rounding allows). On 2026-10-23
+                JSN's constructed row ran 4 numbers with his own new week-7
+                row: rush att, yds, avg and targets, only 3 independent
+                values, and a chance match on a page made after the row.
   name+values   a fixture line naming a reference player that also carries
                 NAME_VALUES distinctive values (a decimal of 1 or more, or
                 above 100) from one row of that same player. Not applied to
@@ -73,8 +79,10 @@ SKIP_REFERENCE_NAMES = {"COLLECTED.txt", "MANIFEST.sha256"}
 STRICT_TIERS = {"vendor", "snapshot", "game-log"}
 
 # Observed on 2026-10-19: different-player weekly runs reach 5 numbers; a
-# copied CBS row runs 10 or more.
+# copied CBS row runs 10 or more. LONG_RUN counts raw numbers;
+# SAME_PLAYER_MIN counts independent ones (see _independent).
 LONG_RUN = 8
+SAME_PLAYER_MIN = 4
 NAME_VALUES = {"vendor": 4, "snapshot": 4, "game-log": 4}
 
 # Whole fixture files left out of the scan, each by a recorded decision.
@@ -235,32 +243,77 @@ def _real_id(ref, line):
     return any(t in ref.ids for t in CBS_ID.findall(line) + ID_TOKEN.findall(line))
 
 
-def _longest_run(pairs):
-    """Numbers in the longest stretch where consecutive fixture grams are
-    consecutive grams of the reference row too (one shared gram is 4)."""
+def _runs(pairs):
+    """(first fixture number index, length) for each maximal stretch where
+    consecutive fixture grams are consecutive grams of the reference row too
+    (one shared gram is 4 numbers)."""
     have = set(pairs)
-    best = 0
-    for i, j in pairs:
+    for i, j in sorted(have):
         if (i - 1, j - 1) in have:
             continue
         n = 1
         while (i + n, j + n) in have:
             n += 1
-        best = max(best, n + 3)
-    return best
+        yield i, n + 3
+
+
+def _bounds(tok):
+    """The interval a printed number rounds from (0.3 is 0.25 to 0.35)."""
+    v = float(tok)
+    half = 0.5 * 10 ** -len(tok.split(".")[1]) if "." in tok else 0.5
+    return v - half, v + half
+
+
+def _ratio_of(tok, a, b):
+    """True if tok, a decimal, can be a rounded a / b of two printed numbers."""
+    if "." not in tok:
+        return False
+    alo, ahi = _bounds(a)
+    blo, bhi = _bounds(b)
+    if blo <= 0 <= bhi or alo < 0 or blo < 0:
+        return False
+    lo, hi = _bounds(tok)
+    return alo / bhi <= hi and ahi / blo >= lo
+
+
+def _independent(tokens):
+    """How many of a run's numbers carry information of their own, read in
+    order: a repeat counts once, and a decimal that rounding allows to be the
+    last counted number over the one before it is not counted. That is CBS's
+    layout for an average (att, yds, avg; rec, yds, avg). Only that pair is
+    tried: any pair would drop chance ratios of small decimals (0.7 is 5.8 /
+    8.4) and let a short paste through."""
+    kept, seen = [], set()
+    for tok in tokens:
+        n = _norm(tok)
+        if n in seen:
+            continue
+        seen.add(n)
+        if len(kept) >= 2 and _ratio_of(tok, kept[-1], kept[-2]):
+            continue
+        kept.append(tok)
+    return len(kept)
+
+
+def _longest_run(pairs):
+    """Numbers in the longest shared stretch (raw, repeats included)."""
+    return max((n for _, n in _runs(pairs)), default=0)
 
 
 def _numeric_run(ref, line):
+    seq = _numbers(line)
     shared = {}  # reference row -> [(fixture gram index, row gram index)]
-    for i, g in _grams(_numbers(line)):
+    for i, g in _grams(seq):
         for idx in ref.grams.get(g, ()):
             shared.setdefault(idx, []).append((i, ref.rows[idx][2][g]))
     key = _line_key(line)
     for idx, pairs in shared.items():
         tier, player, _ = ref.rows[idx]
-        if (tier in STRICT_TIERS
-                or (player and (" %s " % player) in key)
-                or _longest_run(pairs) >= LONG_RUN):
+        if tier in STRICT_TIERS or _longest_run(pairs) >= LONG_RUN:
+            return True
+        if player and (" %s " % player) in key and any(
+                _independent([t for t, _ in seq[i:i + n]]) >= SAME_PLAYER_MIN
+                for i, n in _runs(pairs)):
             return True
     return False
 
@@ -387,6 +440,25 @@ def test_guard_flags_a_real_row_with_its_id_and_name_changed(reference):
     _expect(reference, disguised, "planted.txt", {"numeric-run"})
 
 
+def test_guard_flags_a_short_real_paste_under_the_same_name(reference):
+    """A real row cut to fewer than LONG_RUN numbers, still under its player's
+    name, is caught by the same-player clause (the 2026-10-30 rule)."""
+    real = _real_line(BACKFILL, r"id=\d+.*•")
+    name = CBS_NAME.search(real).group(0)
+    toks = [t for t, _ in _numbers(real)]
+    for k in range(len(toks) - 5):
+        piece = toks[k:k + 6]
+        if (_independent(piece) >= SAME_PLAYER_MIN
+                and all(sum(_distinctive(t) for t in piece[m:m + 4]) >= 2
+                        for m in range(3))):
+            break
+    else:
+        pytest.fail("no usable 6-number stretch in the real line",
+                    pytrace=False)
+    paste = "id=1234567\t\tTeam X\t%s\tOPP\t%s" % (name, "\t".join(piece))
+    _expect(reference, paste, "planted.txt", {"numeric-run"})
+
+
 def test_guard_flags_a_planted_vendor_row(reference):
     real = _real_line(("*/draftsharks/preseason/*.csv",), r"[A-Za-z]")
     _expect(reference, real, "planted.csv", {"numeric-run", "name+values"})
@@ -451,3 +523,67 @@ def test_allowlist_entries_name_a_current_fixture_line():
     stale = sorted("%s %s" % (f, kind) for (f, kind, digest) in ALLOWLIST
                    if (f, digest) not in current)
     assert not stale, "stale ALLOWLIST entries: %s" % stale
+
+
+# ----------------------------- the weekly same-player rule (2026-10-30)
+#
+# Synthetic rows only, scanned against an in-memory reference, so these run
+# on a fresh clone too. Column shape of a CBS RB-WR-TE weekly row after the
+# id, team, name and opponent: rush att, yds, avg, TD, targets, rec, yds,
+# avg, TD, FPTS.
+
+@pytest.mark.parametrize("run,want", [
+    (["0.4", "2.2", "5.5", "7.3"], 3),    # 10-23 shape: avg = yds / att
+    (["5.8", "71.9", "12.4", "0.6"], 3),  # rec, yds, avg, TD
+    (["8.4", "5.8", "71.9", "12.4", "0.6", "9.35"], 5),
+    (["5.5", "5.5", "12", "3"], 3),       # DST: AVG repeats TOTAL
+    (["2.2", "0.4", "5.5", "7.3"], 4),    # not yds then att: not an average
+    (["5.8", "8.4", "0.7", "9.35"], 4),   # 0.7 is 5.8 / 8.4: not the last pair
+    (["14.2", "61.0", "4.3", "3.8"], 3),  # rounding: 61.0 / 14.2 is 4.296
+])
+def test_independent_counts_repeats_and_averages_once(run, want):
+    assert _independent(run) == want
+
+
+def _row(name, nums, rid=9000002):
+    return "id=%d\t\tTeam X\t%s WR \u2022 SEA\tMIA\t%s" % (
+        rid, name, "\t".join(nums))
+
+
+# Its numbers as the guard reads them (zeros dropped): 4.1 17.6 4.3 7.2 5.0
+# 61.4 12.3 0.4 11.84, where 4.3 is 17.6 / 4.1 and 12.3 is 61.4 / 5.0.
+REF_NUMS = ["4.1", "17.6", "4.3", "0.0", "7.2", "5.0", "61.4", "12.3",
+            "0.4", "11.84"]
+
+
+def _scan_against(tier, ref_name, line):
+    ref = Reference()
+    ref.add_row(tier, ref_name, _row(ref_name, REF_NUMS, rid=9000001))
+    return {k for _, _, k in scan_lines(ref, "f.txt", [line])}
+
+
+@pytest.mark.parametrize("tier,ref_name,fix_name,nums,flagged", [
+    # The 10-23 false alarm, rebuilt: the same player, 4 shared numbers of
+    # which 3 are independent (att, yds, avg, targets).
+    ("weekly", "Pat Example", "Pat Example",
+     ["9.9", "4.1", "17.6", "4.3", "7.2", "1.1", "2.2"], False),
+    # The same player with 4 independent shared numbers still counts.
+    ("weekly", "Pat Example", "Pat Example",
+     ["9.9", "61.4", "12.3", "0.4", "11.84", "1.1"], True),
+    # So does a longer run that contains an average.
+    ("weekly", "Pat Example", "Pat Example",
+     ["4.1", "17.6", "4.3", "7.2", "5.0", "2.2"], True),
+    # Another player's run under LONG_RUN is a coincidence...
+    ("weekly", "Pat Example", "Lee Sample",
+     ["4.1", "17.6", "4.3", "7.2", "5.0", "61.4", "12.3", "1.1"], False),
+    # ...until it is LONG_RUN numbers, as a copied row's is.
+    ("weekly", "Pat Example", "Lee Sample",
+     ["4.1", "17.6", "4.3", "7.2", "5.0", "61.4", "12.3", "0.4"], True),
+    # Strict tiers keep the plain 4-number rule, averages and all.
+    ("snapshot", "Pat Example", "Lee Sample",
+     ["9.9", "4.1", "17.6", "4.3", "7.2", "1.1"], True),
+])
+def test_the_weekly_numeric_run_rules(tier, ref_name, fix_name, nums,
+                                      flagged):
+    kinds = _scan_against(tier, ref_name, _row(fix_name, nums))
+    assert ("numeric-run" in kinds) is flagged

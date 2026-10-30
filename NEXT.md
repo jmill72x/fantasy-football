@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1154` passed
+- full_suite: `1168` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -119,9 +119,9 @@ board items (Jeff's go, 10-21):
   (`676a25ba…`), the 2026 render's Key & Intel unchanged (41 of 45 rows), a 2027 rehearsal
   render shows the note (42 of 45). **Not run:** `run_alert.sh` end to end (it captures CBS
   and starts `claude -p`); its week formula gives the same week as before (7 on 10-21).
-- **On `main` after the merge (10-24):** the full suite gives 1122 passed and 1 failed. The
-  failure is the fixture guard's known false alarm (board 8e7e9333, waiting on Jeff), not
-  this change. For Sunday 10-25, the first run to pass `--week1`: the stale-season check
+- **On `main` after the merge (10-24):** every test passed except the fixture guard's
+  10-23 false alarm, which was unrelated and was fixed on 10-30 (DATA ARCHIVE, "Same-player rule").
+  For Sunday 10-25, the first run to pass `--week1`: the stale-season check
   finds nothing, the week formula gives 7, and the alert parses the exact arguments
   `run_alert.sh` builds (checked without running it).
 - **The first live runs on it are clean (checked 10-30, board 2a268bf1 closed).** Sunday
@@ -379,13 +379,38 @@ commits, no history change:
   (fresh clone, CI) it skips with the reason; `SFFL_DATA_REPO` points it at another clone.
   The weekly pages `sffl collect` adds grow all season and already hold 16 short
   coincidences with *other* players' rows (weeks 1 to 6, at most 5 numbers long), so
-  against weekly pages a run counts only for the same player or at 8+ numbers; against
-  the vendor exports, the 10-19 snapshot and the 2025 game logs any 4-number run counts.
-  The rescan's two 10-19 coincidences fall under that rule, so `ALLOWLIST` is empty; add
-  an entry (file, kind, sha256 of the line) only after checking the match is another
-  player's row. `weekly_sample.csv` is exempt (below). Three self-tests plant a real CBS
-  row, the same row with its id and name changed, and a Draft Sharks row, in memory, and
-  must see them flagged. The rescan above doesn't read `cbs/weekly/` yet; the guard does.
+  against weekly pages a run counts only at 8+ numbers (`LONG_RUN`, raw), or for the same
+  player when it holds 4+ *independent* numbers (`SAME_PLAYER_MIN`, since 10-30, below).
+  Against the vendor exports, the 10-19 snapshot and the 2025 game logs any 4-number run
+  counts. The rescan's two 10-19 coincidences fall under that rule, so `ALLOWLIST` is
+  empty; add an entry (file, kind, sha256 of the line) only after checking the match is
+  another player's row. `weekly_sample.csv` is exempt (below). Four self-tests plant, in
+  memory, a real CBS row, the same row with its id and name changed, a real row cut to 6
+  numbers under its own name, and a Draft Sharks row, and must see each flagged. The
+  rescan above doesn't read `cbs/weekly/` yet; the guard does.
+- **Same-player rule in independent numbers (fixed 2026-10-30, Jeff's pick (a), board
+  8e7e9333).** From the 10-23 Friday collect until this fix the suite was red at
+  `cbs_weekly_tab_rbwrte.txt:3` (JSN). His constructed row ran 4 numbers with his own
+  new wk07 row: rush att, rush yds, rush avg (= yds/att) and targets, only 3 independent
+  values, 2 of them unscored. It was chance: the page post-dates the row. The 10-19
+  repair rule had also let small real values stay singly (his rush yds 2.0 is his August
+  value). CBS's averages (yds/att, yds/rec) and DST's AVG = TOTAL pairs pad most chance
+  runs. Measured 10-23: 23% of RB-WR-TE players share a 4+ run with their own row from
+  another week, and simulated constructed sets got about 0.2 same-player alarms per new
+  unit under the old rule. The fix (`_independent` in the guard): a repeat counts once,
+  and a decimal that rounding allows to be *the last counted number over the one before
+  it* (CBS's att, yds, avg layout) is not counted. Only that pair is tried; trying any
+  pair also dropped chance ratios of small decimals (0.7 ≈ 5.8 / 8.4) and would let a short
+  paste through. `LONG_RUN` (8 raw) and the strict tiers are unchanged. Tests: synthetic
+  rules that need no data repo (the JSN shape passes; 4 independent same-player numbers,
+  a longer run with an average, another player's 8-run and any strict-tier run are
+  flagged) and the real 6-number paste above. Mutation-checked 10-30: the old rule
+  brings the JSN failure back, and dropping the same-player clause, the order rule,
+  `LONG_RUN` or the repeat rule each fails its own tests. **Not re-measured on 10-30:** how
+  many real same-player cross-week runs the new rule still counts (a counts-only scan
+  of the weekly pages was blocked by the auto-mode classifier). The guard can still go
+  red by chance as the season adds pages; if it does, check the player and the run's
+  columns before touching thresholds.
 - **Not cleaned, by decision:** the 2025 CBS game logs behind the scoring validation
   (`tests/fixtures/weekly_sample.csv`, `tests/test_scoring.py`'s golden lines, the
   `poc/validate_*.py` and `seed_weekly.py` logs). They're Jeff's call (the history-risk
