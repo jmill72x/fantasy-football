@@ -5,8 +5,15 @@ data/extracts/
 raw/
 exports/
 
-# Generated cheatsheets (Excel + PDF output)
-output/
+# Generated cheatsheets (Excel + PDF) in output/ ARE tracked since 2026-10-30
+# (Jeff: keep persistent copies of prior work). They carry only model-derived
+# values (MY$, EST$, tier, AVG in league scoring, ranks by MY$) - check every
+# new one for vendor columns before staging it.
+# The 2026-08-04 layout POC prints FantasyPros' own K/DST auction values
+# (its THEIR$ column) and their K/DST order: licensed, never committed.
+output/sffl-cheatsheet-poc.pdf
+# Excel's lock files while a workbook is open
+output/~$*
 build/
 
 # Python

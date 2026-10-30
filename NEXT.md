@@ -30,6 +30,40 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
+## OUTPUT/ IS TRACKED (2026-10-30): the cheatsheets are kept in the repo
+
+**Why:** Jeff, 10-30: "I'd like them published so we have persistent copies of prior work",
+and "The rankings themselves are derived from our model." `.gitignore` no longer ignores
+`output/`; 13 files were staged for his C&P (not committed by this note).
+
+**The licensed-data check, file by file (10-30).** Read from the files themselves, not
+the code: every workbook's header rows and Key & Intel text (openpyxl), every PDF's text
+(its decompressed content streams), and a vendor-name grep over both. No vendor name, ADP,
+vendor rank, tier or note column in any of the 13:
+- **Workbooks** (`after`, `baseline`, `board`, `head-board`, `intel-check`, `new-board`,
+  `noprice`, `sffl-2026` `.xlsx`): columns `Rank | Name | Team/Bye | Pos | Tier | AVG | MY$ |
+  EST$`, nothing else. Rank and `Pos`'s positional rank are by MY$; Tier is our
+  natural-break tiers (`render/rows.py`); AVG is our scoring engine's points per game
+  (`score_season[_calibrated]`, not a vendor points column); MY$ is VORP dollars; EST$ is
+  our price curve fitted on the league's own prices. Key & Intel is model and league
+  figures only.
+- **PDFs** (`before`, `after`, `final`, `sffl-2026`, `page17`): `# | PLAYER | TM/BYE | MY$ |
+  EST$ | PAID` (PAID is blank, for marking up); K/DST sort by MY$ then our points. `page17`
+  is the Auction Management page (league bid history).
+- **Excluded and ignored by name: `output/sffl-cheatsheet-poc.pdf`** (08-04,
+  `poc/render_poc.py`). Its Kickers & Team Defense page passes the 2025 FantasyPros
+  cheatsheet straight through: the `THEIR$` column is FantasyPros' auction value, and the
+  K/DST order is FantasyPros' own (MY$ is a flat $1 there). Its skill rows are MY$ from
+  2024 Draft Sharks projections, which is fine, but the page isn't. Nobody has decided to
+  strip or delete it; it stays on disk, untracked.
+- AVG is the closest thing to vendor content (vendor stat projections through our scoring
+  and curves). It's derived, and Jeff's "derived from our model" covers it.
+
+**Every new render needs the same check before it's staged:** a new column or a new
+source (a vendor's auction value, ADP or rank shown beside ours) would go public on the
+next commit. All files are under 600 KB, well inside the planned 1 MB blob limit; a
+17-page PDF is about 0.6 MB, so one render a season is no size problem.
+
 ## ROSTER IDS AND STALE-SEASON WARNINGS (2026-10-21): merged 10-24, first run Sunday 10-25
 
 **Merged and pushed 2026-10-24 as `2758ae4`, on Jeff's C&P** (a fast-forward of `main` from
@@ -894,7 +928,8 @@ risk is entirely on the 08-21 re-pull, and specifically on the AUCTION/Snake set
   short receiving TD scores 5; 36-74 yard rushing scores 8 where receiving scores 6.
 - **WR and TE are ONE position.** Never split them for valuation.
 - **The repo is public.** `data/extracts/` and `data/weekly/` are gitignored because they
-  hold licensed vendor and CBS data. Never commit from either.
+  hold licensed vendor and CBS data. Never commit from either. `output/` IS tracked
+  since 2026-10-30; check each new render for vendor columns first (section at the top).
 - **Python 3.9.6 only.** No `match`, no `int | None`. Use the venv at `.venv/`.
 - **A zero is not a no-op for `def_pa` and `def_ya`.** Both band the value `0` at their
   MAXIMUM (6 points). Any code that loops over `lg.bands` for every player pays a phantom
