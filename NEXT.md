@@ -64,12 +64,11 @@ source (a vendor's auction value, ADP or rank shown beside ours) would go public
 next commit. All files are under 600 KB, well inside the planned 1 MB blob limit; a
 17-page PDF is about 0.6 MB, so one render a season is no size problem.
 
-## ROSTER IDS AND STALE-SEASON WARNINGS (2026-10-21): merged 10-24, first run Sunday 10-25
+## ROSTER IDS AND STALE-SEASON WARNINGS (2026-10-21): merged 10-24, live runs checked clean 10-30
 
 **Merged and pushed 2026-10-24 as `2758ae4`, on Jeff's C&P** (a fast-forward of `main` from
-`d21c19c`). The branch `fix/roster-id-and-stale-defaults` and its worktree are removed. The
-first scheduled run on it is the Sunday 10-25 alert at 11:45, and board item 2a268bf1
-checks that run. Two board items (Jeff's go, 10-21):
+`d21c19c`). The branch `fix/roster-id-and-stale-defaults` and its worktree are removed. Two
+board items (Jeff's go, 10-21):
 
 - **Roster rows with a game keep their CBS id.** `capture` puts a row's id at the start of
   its last non-blank line, which on the team page is a playing row's stats line, so those
@@ -125,6 +124,17 @@ checks that run. Two board items (Jeff's go, 10-21):
   this change. For Sunday 10-25, the first run to pass `--week1`: the stale-season check
   finds nothing, the week formula gives 7, and the alert parses the exact arguments
   `run_alert.sh` builds (checked without running it).
+- **The first live runs on it are clean (checked 10-30, board 2a268bf1 closed).** Sunday
+  10-25, Tuesday 10-27 and Friday 10-30 all exited 0 (launchd's last exit code; the `.err`
+  files are empty), with no `SEASON VALUE`, `ID COVERAGE`, `UNFILLED` or `DEGRADED` line in
+  their blocks, and each collected its unit under the right week (Sunday under `wk07`;
+  Tuesday and Friday under `wk08`, plus a `wk07` results unit). The old-vs-new replay on the
+  saved roster pages of 10-23, 10-25, 10-27 and 10-30: 13 of 13 rows identical on each, ids
+  from 3 to 13 (unique, old ids kept), and all 13 rows join the same projection row as
+  before, every one by id. The `UNFILLED`/`DEGRADED` lines that a grep finds in
+  `logs/alert-*.log` are from August and early-September runs at the top of those
+  append-only logs (no timestamps), not from these runs. The real week-8 hole is a kicker:
+  Dominic Zvada is on bye and is the only K rostered, so the digests since Sunday say so.
 
 ## STATSDECK REPLACEMENT (2026-10-20): Jeff said go
 
@@ -272,6 +282,28 @@ and intel gains four real items. The full result is in the plan, and the files a
     `fetch_injuries.sh` and passes `--cbs-designations`.
   - `sffl collect` archives the sidecars.
   - The runbook's StatsDeck sections are rewritten.
+- **Locking down `fetch_injuries.sh` needs a redesign, not just flags (tested 10-30).**
+  Ultron's 10-30 hooks inventory (finding 1): the fetch's `claude -p` inherits auto mode
+  in this public repo while it reads third-party news. Jeff OK'd adding
+  `--permission-mode manual --setting-sources user` and restricting tools ("test and then if
+  good yes"). With those flags plus `--tools Write`, the real run wrote nothing.
+  `get_injuries` returns about 85 to 140 KB, so Claude Code saves the result to a
+  `tool-results/` file instead of returning it to the model, and the model had no tool to
+  open that file. Every scheduled fetch since 10-20 got past this with **Bash** (auto mode
+  allowed it): the transcripts show a python one-liner pulling `data.report` and
+  `data.intel` out of that file. So the "transport, not author" design has quietly depended
+  on shell access. `MAX_MCP_OUTPUT_TOKENS=200000` does not keep the result inline. The
+  committed script is unchanged and still runs.
+  **The proven alternative (10-30, one run):** give the model only the injury tool
+  (`--tools ""`, `--allowedTools mcp__claude_ai_StatsDeck__get_injuries`, manual mode, user
+  settings only) and `--output-format stream-json --verbose`. Then the script, not the
+  model, parses the stream: it takes the `tool_result`, follows the `<persisted-output>`
+  path when the result was saved to a file (a JSON list of content blocks; the first `text`
+  block is StatsDeck's `{"data": {...}}`), and lifts the two arrays. That run's arrays
+  (162 report, 100 intel) were identical to the 16:45 scheduled file. `--permission-mode
+  manual` shows as `permissionMode: "default"` in the init event, and it is not auto.
+  `--strict-mcp-config` was not used: StatsDeck is a claude.ai connector, so it would be
+  dropped (from `claude --help`, not run). Building this waits on Jeff's pick.
 
 ## DATA ARCHIVE AND THE 2027 RUNBOOK (2026-10-19)
 
