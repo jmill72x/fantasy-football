@@ -13,7 +13,7 @@
 # reads a relative path, and WorkingDirectory in the plist is belt-and-braces
 # for the same reason.
 #
-# NOT `set -e`: the injury fetch (ops/fetch_injuries.sh) is allowed to fail
+# NOT `set -e`: the injury fetch (`sffl injuries-fetch`) is allowed to fail
 # without taking the whole alert down - see the comment at the fetch below.
 # A bare `set -e` would abort the script the instant that command returned
 # non-zero, before the `|| echo ... continuing` fallback ever got a chance to
@@ -41,10 +41,34 @@ fi
 cd "$(dirname "$0")/.."
 mkdir -p logs data/captures
 
-# PATH under launchd is minimal (no ~/.local/bin, no interactive-shell
-# additions), and ops/fetch_injuries.sh below shells out to the `claude` CLI.
-# Resolve it explicitly rather than depending on however this script happens
-# to be invoked. Verified on this machine with `command -v claude`.
+# THE INJURY FEED. Since the StatsDeck switch the alert's injuries come from
+# `sffl injuries-fetch` (nflverse, Sleeper and ESPN's public feed; see
+# docs/plans/2026-10-20-replace-statsdeck.md), and CBS's own designations from
+# the capture (`--cbs-designations`). THE ROLLBACK is the one line below: set
+# it to "statsdeck" and the next run uses ops/fetch_injuries.sh again (a
+# headless `claude -p` session with StatsDeck's get_injuries only). That
+# script stays in the tree for a week after the switch, then goes with
+# StatsDeck (plan section 10). SFFL_INJURY_FEED in the environment overrides
+# it for a test or a rehearsal; launchd sets nothing.
+INJURY_FEED="${SFFL_INJURY_FEED:-direct}"
+
+# CBS's designations (Q/D/O/IR/PUP/SUSP from the pages' icons). Its own
+# rollback, independent of the feed: set SFFL_CBS_DESIGNATIONS's default to 0.
+# A plain scalar, used unquoted like DRY_RUN_FLAG above, for the same reason.
+CBS_DESIGNATIONS_FLAG=""
+if [ "${SFFL_CBS_DESIGNATIONS:-1}" = "1" ]; then
+    CBS_DESIGNATIONS_FLAG="--cbs-designations"
+fi
+
+# The direct fetch gets a hard limit, enforced by killing it: each request has
+# its own timeouts, but a stuck run must never hold the digest. The mini has
+# no `timeout` binary, so perl's alarm does it (SIGALRM survives the exec and
+# kills the Python process; exit 142). 300 s against a normal run of seconds.
+FETCH_TIMEOUT_S="${SFFL_INJURY_FETCH_TIMEOUT_S:-300}"
+
+# Only the rollback path needs the `claude` CLI. PATH under launchd is
+# minimal (no ~/.local/bin), so resolve it explicitly. Verified on this
+# machine with `command -v claude`.
 export CLAUDE_BIN="${CLAUDE_BIN:-/Users/jeff/.local/bin/claude}"
 export PATH="$(dirname "$CLAUDE_BIN"):$PATH"
 
@@ -72,7 +96,7 @@ print(min(18, max(1, week)))
 # digest carrying the lineup but no news is far better than no digest at
 # all. A missing --injuries file is NOT rendered as a quiet week -
 # `sffl.cli._cmd_alert` notices the file doesn't exist, states that
-# explicitly in the pushed message body ("... the StatsDeck fetch step ...
+# explicitly in the pushed message body ("... the injury fetch step ...
 # did not produce a file"), and marks the run DEGRADED, so `sffl alert`
 # still composes and pushes the digest but exits non-zero. `set -e` is
 # deliberately NOT set above so this `||` fallback actually runs instead of
@@ -85,7 +109,38 @@ print(min(18, max(1, week)))
 RUN_START=$(date +%s)
 
 INJ="data/captures/injuries-${KIND}.json"
-ops/fetch_injuries.sh "$INJ" || echo "WARN: injury fetch failed; continuing" >&2
+# Removed before fetching, whichever feed runs: a failed fetch must never leave
+# an earlier run's file to be read as today's news. It also clears the last
+# StatsDeck-shaped file at the switch, which `injuries-fetch` would refuse to
+# replace (it only replaces its own earlier output).
+rm -f "$INJ" "$INJ.tmp"
+if [ "$INJURY_FEED" = "statsdeck" ]; then
+    ops/fetch_injuries.sh "$INJ" || echo "WARN: injury fetch failed; continuing" >&2
+else
+    # A dry run fetches as `--kind manual`: it never reads or writes the
+    # scheduled change state, caches on its own, and leaves ESPN out (its
+    # one call per 12 hours is the scheduled runs').
+    if [ -n "$DRY_RUN_FLAG" ]; then
+        FETCH_KIND="manual"
+    else
+        FETCH_KIND="$KIND"
+    fi
+    /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' \
+        "$FETCH_TIMEOUT_S" \
+        env PYTHONPATH=src ./.venv/bin/python -m sffl.cli injuries-fetch \
+        --kind "$FETCH_KIND" \
+        --out "$INJ" \
+        --allow-live-path
+    FETCH_RC=$?
+    if [ "$FETCH_RC" -ne 0 ]; then
+        rm -f "$INJ" "$INJ.tmp"
+        if [ "$FETCH_RC" -eq 142 ]; then
+            echo "WARN: injury fetch killed after ${FETCH_TIMEOUT_S}s; continuing" >&2
+        else
+            echo "WARN: injury fetch failed (exit $FETCH_RC); continuing" >&2
+        fi
+    fi
+fi
 
 # --team-url and --projections-url are NOT passed here: `sffl alert`
 # defaults --team-url to bare /teams (CBS resolves it to whoever is
@@ -98,8 +153,9 @@ PYTHONPATH=src ./.venv/bin/python -m sffl.cli alert \
   --week1 "$WEEK1" \
   --curves calibration/2025.yaml \
   --injuries "$INJ" \
+  $CBS_DESIGNATIONS_FLAG \
   $DRY_RUN_FLAG
-  # ^ deliberately unquoted: DRY_RUN_FLAG is either "" (contributes zero
+  # ^ deliberately unquoted (both flags): DRY_RUN_FLAG is either "" (contributes zero
   # words - the empty-string default case) or the single word "--dry-run"
   # (no embedded whitespace/glob chars to mis-split), so this is safe. Do
   # not "fix" this by quoting it - quoting would pass a single empty-string

@@ -84,10 +84,10 @@ Each one is a 2026 value in code or a script. **The first three warn when they'r
 |---|---|---|---|---|
 | League profile | `DEFAULT_LEAGUE`, `src/sffl/cli.py:32` | `leagues/sffl/2026.yaml` | Step 2: write `leagues/sffl/2027.yaml` and point the default at it | Yes: its `season:` against `--year`, or today's season |
 | Bye weeks | `DEFAULT_BYES`, `src/sffl/render/rows.py:21` | `leagues/nfl-byes-2026.yaml` | Step 3: write `leagues/nfl-byes-2027.yaml` with `season: 2027`; pass `--byes` or move the default | Yes: its `season:` against `--year` (`render`, `plan`) |
-| Alert week-1 date | `WEEK1` in `ops/run_alert.sh` (line 56) | `2026-09-09` | Step 13 | Yes: against today's season (`sffl alert --week1`) |
+| Alert week-1 date | `WEEK1` in `ops/run_alert.sh` (its `WEEK1=` line) | `2026-09-09` | Step 13 | Yes: against today's season (`sffl alert --week1`) |
 | TQB starter map | `DEFAULT_TQB_STARTERS`, `src/sffl/fit.py:25` | `identity/tqb-2025-starters.yaml` | Read only with `--prices`. Step 11 writes the 2027 map after the auction | Its own guard: `--prices` refuses a map whose `season:` isn't `--year` |
 | Market model | the `--market` flag | `market/2026.yaml` | Use it as is before the 2027 auction (step 7); fit `market/2027.yaml` after it (step 12) | Prints its `CROSS-SEASON apply` note, by design |
-| Calibration curves | `--curves` everywhere; `ops/run_alert.sh` line 99 | `calibration/2025.yaml` | Step 6 | No |
+| Calibration curves | `--curves` everywhere; `ops/run_alert.sh`'s `--curves` line | `calibration/2025.yaml` | Step 6 | No |
 | CBS parse season | `season=2026` default in `cbs_weekly.parse` | 2026 | CLI callers pass the league profile's season, so step 2 covers it | Through the league profile |
 
 **What "stale" means.** A value is stale when the season it's for is older than the
@@ -193,7 +193,7 @@ Unmatched players are reported loudly. Add any fixes to `identity/aliases.yaml`.
   FOLLOW-UP RAN"). Only another season adds power here: 2025 is exhausted.
 
 If the curves change, pass the new file to every `--curves`, including
-`ops/run_alert.sh` line 99, and refit the market model on the new curves (step 12).
+`ops/run_alert.sh`'s `--curves` line, and refit the market model on the new curves (step 12).
 
 ### 7. Price the board before the auction
 
@@ -274,11 +274,11 @@ curves change (`tests/test_docs_match_artifacts.py` checks it).
 
 ### 13. Before week 1: in-season switch-over
 
-- Change `WEEK1` in `ops/run_alert.sh` (line 56) to the Wednesday of 2027's week-1 week
+- Change `WEEK1` in `ops/run_alert.sh` (its `WEEK1=` line) to the Wednesday of 2027's week-1 week
   (2026 used Wednesday 2026-09-09). The week number is computed from it; see
   `docs/operations/in-season-alerting.md`, "The week number". Until it's changed, every
   alert from 2027-03-01 opens with `!! STALE SEASON VALUES` and exits non-zero.
-- Change `--curves` on line 99 if step 6 changed the curves.
+- Change `--curves` (its `--curves calibration/` line) if step 6 changed the curves.
 - Refresh the CBS login if it has expired: `./.venv/bin/python ops/cbs_login.py`.
 - Rehearse with `ops/run_alert.sh tuesday --dry-run`. If CBS changed its pages, the
   `expect_tokens` guards refuse them loudly. A dry run still captures, so it overwrites

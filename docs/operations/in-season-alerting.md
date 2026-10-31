@@ -90,7 +90,7 @@ ops/run_alert.sh friday --dry-run
 (or `DRY_RUN=1 ops/run_alert.sh friday`). This runs the real capture and scoring
 pipeline and prints the full digest to stdout, but passes `--dry-run` through to `sffl
 alert` so nothing is pushed to the phone. Confirm the roster names are Jeff's, the
-digest reads sensibly for the current week, and no StatsDeck point values appear anywhere
+digest reads sensibly for the current week, and no Yahoo point values appear anywhere
 in the text. Two age lines are printed for exactly this check: the roster age (captured
 by this run, so `0 days`) and the injury-data age (`fetched N minutes ago`) - if the
 second reads in the hours, or the message says `STALE INJURY DATA`, the fetch step did
@@ -99,7 +99,7 @@ not run.
 ## The week number
 
 `ops/run_alert.sh` computes the NFL week from today's date rather than a hardcoded
-number, anchored on the season's Week 1 start, `WEEK1` (line 56; Wednesday 2026-09-09 for
+number, anchored on the season's Week 1 start, `WEEK1` (its `WEEK1=` line; Wednesday 2026-09-09 for
 2026):
 
 ```
@@ -114,8 +114,8 @@ exist. Both bounds are simple `min`/`max` calls in the script; there's no fallba
 if a week outside `[1, 18]` would otherwise have been computed, it's just clamped.
 
 **The date is 2026's and must be changed every season.** In 2027 the 2026 date makes every
-run clamp to week 18. Before week 1, set `WEEK1` (line 56 of `ops/run_alert.sh`) to the
-Wednesday of the new season's week-1 week, and change `--curves` (line 99) if the curves
+run clamp to week 18. Before week 1, set `WEEK1` (the `WEEK1=` line of `ops/run_alert.sh`) to the
+Wednesday of the new season's week-1 week, and change `--curves` (the `--curves calibration/` line) if the curves
 changed. `docs/operations/preseason-runbook.md`, step 13, has the whole switch-over.
 
 **A stale date or league profile now says so (since 2026-10-21).** The script passes
@@ -188,28 +188,64 @@ A code that looks like a number (`12`) is YAML-parsed as an integer rather than 
 That is handled - the loader coerces every code with `str()` - so it neither crashes the
 command nor silently fails to match. Quoting it (`"12"`) is still clearer.
 
+## Where the injury news comes from
+
+Since the StatsDeck switch, `ops/run_alert.sh` runs `sffl injuries-fetch` (no Claude
+session, standard library only) and passes `--cbs-designations` to the alert. The feed
+(`src/sffl/direct_injuries.py`; the plan is `docs/plans/2026-10-20-replace-statsdeck.md`):
+
+- **nflverse** (the official report, the record). The only source that can fail the fetch.
+  It's published once a day, so Friday's digest carries Thursday's report and says "as of".
+- **Sleeper** (same-day statuses; cached 24 hours, the digest prints its age) and
+  **ESPN's public injury feed** (the news text; at most one call per 12 hours, and switched
+  off by `data/cache/espn-off.json` after a refusal). Either can drop out alone; its line
+  in `logs/alert-<kind>.log` says why, and the digest goes on without it.
+- **CBS's own designations** (Q, D, O, IR, PUP, SUSP), read from the pages' icons by the
+  capture itself. An Out, IR, PUP or SUSP label keeps a player out of the recommended
+  lineup; a label naming no week benches until CBS removes it.
+
+The fetch is removed before it runs and killed after 300 seconds (`FETCH_TIMEOUT_S`). A
+dry run fetches as `--kind manual`: it leaves ESPN out and never touches the scheduled
+change state.
+
+**Don't call ESPN by hand within 12 hours of a scheduled run** (`sffl injuries-fetch
+--espn`). The 12-hour marker is shared, so the scheduled run would skip ESPN and go out
+without its news text. Sleeper and nflverse don't have this limit.
+
+**Rollback.** In `ops/run_alert.sh`, change `INJURY_FEED="${SFFL_INJURY_FEED:-direct}"` to
+`statsdeck`: the next run uses `ops/fetch_injuries.sh` (a headless `claude -p` with
+StatsDeck's `get_injuries` only) as before the switch. CBS's designations have their own
+switch: change the default of `SFFL_CBS_DESIGNATIONS` from 1 to 0. Both stay possible until
+StatsDeck is removed (plan section 10).
+
 ## "The alert says INJURY DATA UNAVAILABLE"
 
-The StatsDeck fetch (`ops/fetch_injuries.sh`) produced no usable file, so the digest has
-its lineup half but no injury news - and says so, in the message body, rather than
-printing "no designations on your roster" the way a genuinely quiet week does. The run
-exits non-zero. The alert is still sent: a lineup with no news beats no digest at all.
+The injury fetch produced no file, so the digest has its lineup half but no injury news -
+and says so, in the message body, rather than printing "no designations on your roster"
+the way a genuinely quiet week does. The run exits non-zero. The alert is still sent: a
+lineup with no news beats no digest at all.
 
-Read `logs/alert-<kind>.err` for the fetch's own message. Since 2026-10-30 the headless
-`claude -p` session gets only StatsDeck's `get_injuries` (no shell, no file tools, manual
-permission mode) and the script lifts the result out of the session's stream-json itself
-(`src/sffl/injury_stream.py`). Its messages, all prefixed `fetch_injuries:`:
+Read `logs/alert-<kind>.err` (the `WARN` line) and `.log` (the fetch's own lines):
 
-- `the model never called ...`: the session answered without calling the tool.
-- `get_injuries returned an error` or `... has no data.report/data.intel`: StatsDeck was
-  unreachable or changed its result's shape, or Claude Code saved an over-size result in
-  a way the parser doesn't know yet (it knows the `Error: result ... saved to <.txt>` and
-  `<persisted-output>` pointers of CLI 2.1.310).
-- `session had built-in tools` or `session ran in permission mode ...`: a flag was
-  dropped or the CLI widened the session. The fetch refuses rather than run wider.
+- `WARN: injury fetch killed after 300s`: a source hung. Each request also has its own
+  timeouts; check which host was slow before raising the limit.
+- `injuries-fetch: nflverse failed (...)`: the official report couldn't be read (GitHub
+  down, the file moved or changed shape). Nothing is written on purpose: an empty report
+  would read as a clean roster.
+- `... under half of the previous run's ...; refusing it as truncated`: nflverse served a
+  short week. The next run usually clears it.
+- `injuries-fetch: ... is not an earlier injuries-fetch output`: something other than the
+  fetcher left a file at that path, and `run_alert.sh` didn't remove it first. Check the
+  script wasn't edited.
 
-The script removes its output file **before** fetching and again on any of these, so a
-failed fetch can never leave the previous run's file to be rendered as today's news.
+On the rollback path (`INJURY_FEED=statsdeck`) the messages are `fetch_injuries:` ones:
+the session never called the tool, `get_injuries` returned an error or a shape the parser
+doesn't know (it knows CLI 2.1.310's `Error: result ... saved to <.txt>` and
+`<persisted-output>` pointers), or the session had tools or a mode it shouldn't, which
+the script refuses.
+
+Whichever feed runs, the file is removed **before** fetching and again on any failure, so
+a failed fetch can never leave the previous run's file to be rendered as today's news.
 
 ## "The alert says STALE INJURY DATA"
 
@@ -222,9 +258,9 @@ degraded and exits non-zero.
 
 ## "The digest says older item(s) hidden"
 
-Working as intended. StatsDeck's intel feed is a rolling window about four weeks deep, so
-for a player nobody has written about lately the newest item is an old one, about a game
-already played. Since 2026-10-02 the digest drops intel older than 7 days
+Working as intended. A news feed keeps a player's latest item until there's a newer one,
+so for a player nobody has written about lately the newest item is an old one, about a
+game already played. Since 2026-10-02 the digest drops intel older than 7 days
 (`injuries.INTEL_MAX_AGE_DAYS`, one game cycle) and prints how many it hid, so a hidden
 item never reads as a quiet week. Official-report rows are never aged out, and undated
 intel is kept, because unknown age is not "old".
