@@ -251,9 +251,16 @@ def _cmd_collect(args, capture_fn=None, runner=None):
             # projections are next week's (see `_projection_week`), while its
             # results unit below keeps `--results-week`, the week just played.
             pages_week = _projection_week(args.kind, args.week)
-            fresh, missing = col.fresh_files(args.captures,
-                                             _capture_keys(args.kind),
-                                             args.since)
+            keys = _capture_keys(args.kind)
+            fresh, missing = col.fresh_files(args.captures, keys, args.since)
+            # CBS's designation sidecars (`--cbs-designations`) go with their
+            # pages when this run wrote them. Optional: a run without the flag
+            # writes none, so an absent sidecar is never listed as missing.
+            icons, _ = col.fresh_files(
+                args.captures,
+                [k + ".icons.json" for k in keys if not k.endswith(".json")],
+                args.since)
+            fresh.update(icons)
             if ("roster.txt" not in fresh
                     or not any(g + ".txt" in fresh for g in ALERT_GROUPS)):
                 steps.append(col.Step(
@@ -2286,8 +2293,9 @@ def _cmd_alert(args):
                         "injury feed was read at all")
     elif not os.path.exists(args.injuries):
         injury_error = (
-            "%s does not exist - the StatsDeck fetch step (see "
-            "ops/fetch_injuries.sh) did not produce a file" % args.injuries)
+            "%s does not exist - the injury fetch step (see "
+            "ops/run_alert.sh and logs/alert-<kind>.log) did not produce a "
+            "file" % args.injuries)
         injury_fetch_failed = True
     else:
         try:
@@ -3286,7 +3294,8 @@ def main(argv=None):
                           "date opens the digest with a STALE SEASON VALUES "
                           "banner and exits non-zero")
     alr.add_argument("--curves")
-    alr.add_argument("--injuries", help="JSON written by ops/fetch_injuries.sh")
+    alr.add_argument("--injuries", help="JSON written by `sffl injuries-fetch` "
+                     "(or, on the rollback, ops/fetch_injuries.sh)")
     alr.add_argument("--team-url", default=DEFAULT_TEAM_URL,
                      help="CBS roster page (default: bare /teams, which CBS "
                           "resolves to whoever is logged in - do not point "
@@ -3309,7 +3318,8 @@ def main(argv=None):
                      help="also read CBS's own injury designations from the "
                           "pages' icons (same pages, no clicks): they gate "
                           "the will-not-play check and join the injury "
-                          "block. Off until the StatsDeck switch")
+                          "block. ops/run_alert.sh passes it since the "
+                          "StatsDeck switch")
     alr.set_defaults(func=_cmd_alert)
 
     inj = sub.add_parser("injuries-fetch",

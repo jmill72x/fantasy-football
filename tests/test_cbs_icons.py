@@ -245,3 +245,30 @@ def test_a_row_the_script_skipped_is_counted_and_never_attributed(tmp_path):
     path.write_text(json.dumps(side))
     summary = cbs_icons.read_sidecar(str(path))
     assert (summary.rows_scanned, summary.rows_skipped, summary.designations) == (4, 1, 1)
+
+
+# CBS's late-week form, first seen on the live pages of Fri 2026-10-30 (the
+# 10-20 probe was a Tuesday): a practice sentence before the status. Before
+# this was handled, 20 Questionable labels on the RB/WR/TE page came out
+# untagged. Invented body parts and opponents.
+@pytest.mark.parametrize("practice", [
+    "Did Not Practice on Friday", "Limited Practice on Friday",
+    "Full Practice on Thursday"])
+def test_a_practice_sentence_before_the_status_is_read_and_kept(practice):
+    i = _icon("Injury Report: Ankle: %s. Questionable for Week 8 at Denver"
+              % practice)
+    assert (i.kind, i.tag, i.status, i.week, i.opponent) == (
+        "designation", "Q", "Questionable", 8, "at Denver")
+    assert i.practice == practice
+    assert cbs_icons.detail_text(i) == "Ankle; %s; for week 8 at Denver" % practice
+
+
+def test_inactive_for_the_week_gates_like_out():
+    # The Sunday inactives: a player CBS lists as inactive will not play.
+    i = _icon("Injury Report: Knee: Inactive for Week 8 vs. Carolina")
+    assert (i.tag, i.status, i.week) == ("O", "Inactive", 8)
+    assert cbs_icons.applies(i, 8) and not cbs_icons.applies(i, 9)
+
+
+def test_a_label_without_a_practice_sentence_has_no_practice():
+    assert _icon("Injury Report: Knee: Out for Week 7 vs. Dallas").practice is None

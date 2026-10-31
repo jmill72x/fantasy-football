@@ -332,15 +332,41 @@ def test_parse_weeks_and_stats_url():
 
 
 def test_run_alert_collects_after_the_alert_and_never_on_a_dry_run():
-    """Static check of ops/run_alert.sh: there is no seam to run it for real
-    (see ops/lint_run_alert.sh's header for why)."""
+    """Static check of ops/run_alert.sh's order (tests/test_run_alert.py runs
+    the script itself, with every program stubbed)."""
     here = os.path.dirname(os.path.abspath(__file__))
     text = open(os.path.join(here, "..", "ops", "run_alert.sh")).read()
     alert = text.index("-m sffl.cli alert")
     coll = text.index("-m sffl.cli collect")
     assert alert < coll                                  # after the digest
     assert text.index("RUN_START=$(date +%s)") < text.index(
-        "ops/fetch_injuries.sh \"$INJ\"")                # before any capture
+        'rm -f "$INJ" "$INJ.tmp"')                       # before any fetch
     guard = text.rindex('if [ -z "$DRY_RUN_FLAG" ]', 0, coll)
     assert text.index("ALERT_RC=$?") < guard             # alert rc kept
     assert text.rstrip().endswith('exit "$COLLECT_RC"')
+
+
+def test_fresh_icon_sidecars_go_with_their_pages_and_absent_ones_are_not_missing(
+        tmp_path, captures, data_repo, capsys):
+    """`--cbs-designations` writes `<page>.icons.json` beside each page; the
+    collection keeps this run's, skips a stale one, and never lists a sidecar
+    as not refreshed (a run without the flag writes none)."""
+    d, since = captures
+    repo, _bare = data_repo
+    for name in ("roster.icons.json", "RB-WR-TE.icons.json"):
+        (d / name).write_text('{"rows": {}}\n')
+    stale = d / "DST.icons.json"
+    stale.write_text('{"rows": {}}\n')
+    old = since - 3600
+    os.utime(str(stale), (old, old))
+    rc = main(["collect", "--kind", "tuesday", "--week", "6",
+               "--since", str(since), "--date", "2026-10-20",
+               "--captures", str(d), "--archive", str(tmp_path / "a"),
+               "--data-repo", str(repo), "--no-pi"])
+    assert rc == 0, capsys.readouterr().out
+    unit = repo / "2026" / "cbs" / "weekly" / "wk07" / "2026-10-20-tuesday"
+    names = set(os.listdir(str(unit)))
+    assert {"roster.icons.json", "RB-WR-TE.icons.json"} <= names
+    assert "DST.icons.json" not in names
+    note = (unit / col.NOTE).read_text()
+    assert "icons" not in note

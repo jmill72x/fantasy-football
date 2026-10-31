@@ -56,10 +56,13 @@ SIDECAR_SUFFIX = ".icons.json"
 # One parsed icon. `kind` is "designation", "news", "trend" or "unknown".
 # `tag` is the parser's designation tag (see cbs_weekly._STATUS_TAGS), "" when
 # the icon is not a designation or its phrase is unknown. `week` is the week
-# the label names, None when it names none.
+# the label names, None when it names none. `practice` is the practice
+# sentence CBS puts before the status late in the week ("Did Not Practice on
+# Friday"), None when there is none.
 Icon = namedtuple(
     "Icon",
-    "kind tag status body week opponent expected_return label icon_class")
+    "kind tag status body week opponent expected_return label icon_class "
+    "practice", defaults=(None,))
 
 # The designation phrases CBS prints, lowercased, and the tag each maps to.
 # Exact matches only: a prefix match would let a new phrase that merely starts
@@ -78,6 +81,9 @@ _TAGS = {
     "suspended": "SUSP",
     "retired": "O",
     "did not report": "O",
+    # CBS's Sunday form, "Inactive for Week 8 vs. <team>" (first seen live
+    # 2026-10-30): an inactive player will not take the field that week.
+    "inactive": "O",
 }
 
 # Icon classes that mark a designation even when the label is unreadable.
@@ -87,6 +93,10 @@ _DESIGNATION_ICONS = frozenset((
 
 _FOR_WEEK = re.compile(r" for Week (\d+) (at|vs\.?) (.+)$")
 _EXPECTED_RETURN = re.compile(r"\. Expected Return - Week (\d+)$")
+# Late in the week CBS puts the latest practice before the status: "Did Not
+# Practice on Friday. Questionable for Week 8 at <team>" (first seen live on
+# Fri 2026-10-30; the 10-20 probe was a Tuesday).
+_PRACTICE = re.compile(r"^((?:Did Not|Limited|Full) Practice on [A-Z][a-z]+day)\. ")
 
 
 def tag_for(status):
@@ -107,7 +117,11 @@ def parse_icon(icon_class, label):
             body, rest = text.rsplit(": ", 1)
         else:
             body, rest = "", text
-        week = opponent = expected = None
+        week = opponent = expected = practice = None
+        m = _PRACTICE.match(rest)
+        if m:
+            practice = m.group(1)
+            rest = rest[m.end():]
         m = _FOR_WEEK.search(rest)
         if m:
             # "at Chicago" / "vs. Chicago": the home/away word stays with it.
@@ -120,7 +134,7 @@ def parse_icon(icon_class, label):
             rest = rest[:m.start()]
         status = rest.strip()
         return Icon("designation", tag_for(status), status, body.strip(), week,
-                    opponent, expected, label, icon_class)
+                    opponent, expected, label, icon_class, practice)
 
     if label.startswith("Suspension:"):
         text = label[len("Suspension:"):].strip()
@@ -273,6 +287,8 @@ def detail_text(icon):
     bits = []
     if icon.body:
         bits.append(icon.body)
+    if icon.practice:
+        bits.append(icon.practice)
     if icon.week is not None:
         bits.append(("for week %d %s" % (icon.week, icon.opponent)).strip()
                     if icon.opponent else "for week %d" % icon.week)
