@@ -105,8 +105,8 @@ board items (Jeff's go, 10-21):
   rule). January 2027 is the 2026 season; 2027-03-01 starts 2027. A value newer than the
   run's season is flagged too ("AHEAD").
   - Checked: the league profile's `season:` (every command that loads it), the bye file's
-    new `season:` key (render, plan), and `WEEK1` in `ops/run_alert.sh` (line 56; the
-    script passes it as `sffl alert --week1`; `--curves` is now line 99).
+    new `season:` key (render, plan), and `WEEK1` in `ops/run_alert.sh` (its `WEEK1=` line; the
+    script passes it as `sffl alert --week1`).
   - Shown: a `** STALE SEASON VALUE **` banner on the terminal with the fix and the runbook
     step; `render` also puts it atop the Key & Intel sheet; `sffl alert` opens the pushed
     digest with `!! STALE SEASON VALUES` and exits non-zero. Nothing refuses to run. Not yet
@@ -274,16 +274,40 @@ and intel gains four real items. The full result is in the plan, and the files a
   run's pages under the week they project (Tue 10-27, in week 7, files them under wk08),
   with its results unit still under the week just played.
 
-**Next:**
+**The switch is built and waits for Jeff's OK (10-30).** It's the branch
+`switch/direct-injuries` (worktree `~/.local/state/jarvis/worktrees/fantasy-football-switch`,
+staged there, not committed): merging it into `main` is the switch, live at the next fire.
+Plan section 9 has the checklist item by item. In short:
 
-- The switch, on Jeff's OK, by Tue 12-01 (Ultron's vet of steps 1 to 3, plan section 8,
-  is done):
-  - `run_alert.sh` runs `sffl injuries-fetch --allow-live-path` in place of
-    `fetch_injuries.sh` and passes `--cbs-designations`.
-  - `sffl collect` archives the sidecars.
-  - The runbook's StatsDeck sections are rewritten.
-- **`fetch_injuries.sh` rebuilt with no shell and no writes (10-30, staged, not committed;
-  Jeff's option (a)).** Why: Ultron's 10-30 hooks inventory (finding 1) found the fetch's
+- `run_alert.sh` removes `injuries-<kind>.json`, then runs `sffl injuries-fetch --kind
+  <kind> --allow-live-path` under a 300-second perl `alarm` kill (a dry run fetches as
+  `--kind manual`, no ESPN), and passes `--cbs-designations`. The rollback is one line
+  (`INJURY_FEED`, default `direct`; `statsdeck` runs `fetch_injuries.sh` again), and the
+  designations have their own (`SFFL_CBS_DESIGNATIONS`).
+- `sffl collect` files each fresh `<page>.icons.json` with its page.
+- The runbook's injury sections are rewritten, and the runbooks name `run_alert.sh`'s
+  lines by their text, not their number.
+- `tests/test_run_alert.py` runs the real `run_alert.sh` in a scratch tree with stubs: the
+  default path, the dry run, a hung fetch killed, a failed fetch, the rollback line.
+- **Found by the 10-30 dry run and fixed on the branch:** CBS's late-week labels read
+  "Injury Report: <part>: Did Not Practice on Friday. Questionable for Week 8 at <team>",
+  and Sunday's read "Inactive for Week 8". The parser knew only the Tuesday form (the
+  10-20 probe), so 24 of the 208 labels on the 10-30 pages came out untagged (shown, never
+  benching). Now the practice sentence is read and shown, and Inactive gates like Out.
+- Verified 10-30 against scratch output: one real fetch (every source ok, 2.6 s) and one
+  read-only Friday dry run with the designations on, into the scratchpad. The 162 official
+  rows in StatsDeck's 16:45 file are all in the direct file with the same status and
+  practice; the direct file carries nflverse's whole week-8 report (278 rows). Not
+  verifiable before the switch: how fresh Sleeper, ESPN and CBS are at Fri 16:45 and Sun
+  11:45 (inactives), and the scheduled change state across runs.
+
+**Next:** merge on Mon 11-09 (Jeff, 10-31: he's away the week of 11-02), so Tue 11-10 16:45
+is the first switched run; then a clean week, then removal (plan section 10). After the merge, rewrite
+this section as done.
+
+- **`fetch_injuries.sh` rebuilt with no shell and no writes (10-30, committed as
+  `11c9464`; Jeff's option (a)).** The switch retires it; it stays a week as the
+  rollback. Why: Ultron's 10-30 hooks inventory (finding 1) found the fetch's
   `claude -p` inheriting auto mode in this public repo while it reads third-party news, and
   every scheduled fetch since 10-20 had used **Bash** to read the saved result: get_injuries
   returns 85 to 140 KB, which Claude Code saves to a `tool-results/` file instead of
@@ -317,8 +341,8 @@ and intel gains four real items. The full result is in the plan, and the files a
     report and 100 intel rows, arrays and key order identical to the 16:45 Friday file
     (only a trailing newline differs), and the session's one tool call was get_injuries.
     No alert was run and no live file written.
-  - Live already: the jobs run the working tree, so Sunday 11-01 11:45 uses it, committed
-    or not. Rollback is `git checkout 4a9f2d9 -- ops/fetch_injuries.sh`.
+  - Live since 10-30: Friday 10-30 16:45 ran it cleanly (162 report and 100 intel rows).
+    Its own rollback is `git checkout 4a9f2d9 -- ops/fetch_injuries.sh`.
 
 ## DATA ARCHIVE AND THE 2027 RUNBOOK (2026-10-19)
 

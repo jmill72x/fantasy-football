@@ -1,10 +1,12 @@
 # Replace StatsDeck with direct sources, then remove it
 
 **Scoping plan, 2026-10-20, by John Madden. Jeff said go the same evening**, and his
-decisions are in section 11. Done so far: step 0 (StatsDeck's write tools are denied) and
-the CBS probe in step 1 (finding 5). Nothing else is built, and no job, plist or schedule
-has changed. The evidence comes from the alert's own files and logs, a few public requests,
-and one read-only look at the league site (Appendix A).
+decisions are in section 11. **Status, 2026-10-30:** steps 0 to 4 are done and committed
+(`d5643d0`, `d21c19c`; Ultron vetted and re-vetted them). Step 5, the switch, is built on
+the branch `switch/direct-injuries` and waits for Jeff's OK (section 9 has the checklist).
+Until it merges, the alerts still read StatsDeck, through the fetch rebuilt on 10-30 with
+no shell (`11c9464`). The evidence comes from the alert's own files and logs, a few public
+requests, and read-only looks at the league site (Appendix A).
 
 Sections: 1 the ask, 2 what StatsDeck does, 3 what the measurements show, 4 sources job by
 job, 5 what Jeff chose, 6 build order, 7 the replay test, 8 what Ultron vets, 9 keeping the
@@ -220,7 +222,7 @@ REPLACEMENT" section has what each step does.
 | 2 | **Injury fetcher**, a `sffl` subcommand: nflverse, the crosswalk (cached for a week), Sleeper and ESPN, written to the contract above. ESPN is called once per run with an honest User-Agent and no retry loop. A block (403 or 429) turns ESPN off until someone looks, and the digest says so. Standard library only (`urllib`, `csv`, `json`), with no new packages. Tests use constructed fixtures and no network | 1 day |
 | 3 | **Matching by CBS id first** in `for_roster` (then name and team), quarterback lines for TQB units, our own change fields, and the stale docstrings (`injuries.py` still calls the official mapping "provisional", and says the feed has no position field) | Half a day |
 | 4 | **The replay test** (section 7; Jeff confirmed it 10-20; run 10-20), then **Ultron's vet** of steps 1 to 3 (section 8) | Half a day |
-| 5 | **Switch, on Jeff's OK only:** `run_alert.sh` runs the new fetcher instead of `fetch_injuries.sh`, which stays in the tree for a week as a one-line rollback, with a hard timeout around the fetch step (Ultron, 10-20). Never after week 12 (section 9) | 1 hour |
+| 5 | **Switch, on Jeff's OK only:** `run_alert.sh` runs the new fetcher instead of `fetch_injuries.sh`, which stays in the tree for a week as a one-line rollback, with a hard timeout around the fetch step (Ultron, 10-20). Never after week 12 (section 9). **Built 10-30 on the branch `switch/direct-injuries`; merging it is the switch** | 1 hour |
 | 6 | **Yahoo**, once Jeff has created the app and consented: a read-only client (GET only, enforced in code), the refresh token in the Keychain, and `sffl yahoo` roster, matchup, free-agent, standings and scoring commands. Projections only if Jeff misses them | 1.5 days |
 | 7 | **Stats helper** (nflverse cache), whenever it's first needed | Half a day |
 | 8 | **Removal** (section 10), once the switch has run a clean week and Yahoo is live | Half a day |
@@ -289,8 +291,8 @@ was called once that day). Output and comparison: `.superpowers/sdd/2026-10-20-r
    connected apps no longer list StatsDeck.
 
 **Vetted 2026-10-20 (Ultron, on `d5643d0`):** OK to switch on once his findings are fixed:
-0 critical or high, 2 medium, 7 low. Every one was fixed in the next change (staged
-10-20, for his re-vet); NEXT.md's "STATSDECK REPLACEMENT" section says what changed per
+0 critical or high, 2 medium, 7 low. Every one was fixed, re-vetted by him and committed
+10-21 as `d21c19c`; NEXT.md's "STATSDECK REPLACEMENT" section says what changed per
 finding.
 
 ## 9. Keeping the alerts working all season
@@ -308,10 +310,37 @@ finding.
   and the commissioner sets the playoff matchups by hand. No switch inside the playoffs or
   the two weeks before them, so the switch lands by Tue 12-01 (the end of week 12) or waits
   for next season.
-- **Time budget:** each request has a 60-second socket timeout and a 120-second limit
-  overall, with no retries, about 25 MB a run with ESPN's 8.7 MB. A hard timeout around the
-  whole fetch step in `run_alert.sh` comes with the switch.
+- **Time budget:** each request has a 60-second socket timeout and a 120-second limit,
+  with no retries, about 25 MB a run with ESPN's 8.7 MB. The 120 seconds are checked
+  between reads, so a slow trickle can outlast them; the real bound is the switch's hard
+  kill of the whole fetch step after 300 seconds (perl's `alarm`, since the mini has no
+  `timeout`). A real run on 10-30 took under 3 seconds with every source fetched.
 - **A bonus once switched:** `run_alert.sh --dry-run` no longer starts a Claude session.
+
+**The switch checklist** (Ultron's re-vet, 10-20; the board's "Injury-feed switch
+checklist"). Status 10-30, all on the branch `switch/direct-injuries`:
+
+| Item | Status |
+|---|---|
+| A hard timeout that really kills the fetch | Built: `/usr/bin/perl -e 'alarm ...; exec ...'` around `sffl injuries-fetch`, 300 s, exit 142 reported as "killed". `tests/test_run_alert.py` runs the real script in a scratch tree and kills a hung stub after 2 s |
+| The StatsDeck-shaped `injuries-<kind>.json` at the switch (the fetcher refuses to replace a file without `meta.generated_at`, so the first run would exit 2 and the alert would read last week's file) | Built: `run_alert.sh` removes the file before fetching, whichever feed runs, as `fetch_injuries.sh` always did. Tested |
+| Dry runs fetch as `--kind manual` without ESPN | Built and tested |
+| No manual `--espn` run in the 12 hours before a scheduled run | A rule, not code: in the runbook. The 12-hour marker is shared, so such a run makes the scheduled one skip ESPN |
+| `--cbs-designations` on | Built, with its own off switch (`SFFL_CBS_DESIGNATIONS`). Checked live on 10-30 (below) |
+| `sffl collect` archives the sidecars | Built: a fresh `<page>.icons.json` goes with its page; an absent one is never listed as missing. Tested |
+| The runbook's StatsDeck sections | Rewritten (where the news comes from, the rollback, the fetch's failure lines) |
+| The rebuilt StatsDeck fetch (`11c9464`) | Retired by the switch, kept a week as the rollback: `INJURY_FEED` in `run_alert.sh` set to `statsdeck` runs it again. It goes at removal (section 10) |
+
+**Checked 10-30 against scratch output** (nothing live changed): one real fetch (nflverse,
+the crosswalk, Sleeper, ESPN: all ok, 2.6 s), and one read-only dry run of the Friday
+alert with `--cbs-designations` and that file, into a scratch folder. Every official row in
+StatsDeck's 16:45 file (162) is in the direct file with the same status and practice; the
+direct file has nflverse's whole week-8 report (278 rows; 116 more, mostly full
+participants). The dry run found one real gap: **CBS's late-week labels put a practice
+sentence first** ("Did Not Practice on Friday. Questionable for Week 8 ..."), and "Inactive
+for Week N" is a status. 24 labels on the RB/WR/TE page came out untagged (shown, never
+benching). Fixed on the branch: the sentence is read and shown, Inactive gates like Out;
+all 208 labels on the 10-30 pages now parse.
 
 ## 10. Removal, at the end
 
@@ -322,8 +351,11 @@ finding.
 3. If StatsDeck keeps an account with his league data or saved credentials, delete it
    there.
 
-**This repo, in one staged change:** delete `ops/fetch_injuries.sh` and
-`tests/fixtures/statsdeck_injuries.json`. Rewrite the StatsDeck parts of `injuries.py`,
+**This repo, in one staged change:** delete `ops/fetch_injuries.sh`,
+`src/sffl/injury_stream.py` (the 10-30 rebuild's parser), `tests/test_fetch_injuries.py`,
+`tests/test_injury_stream.py`, `tests/fixtures/injury_stream.jsonl` and
+`tests/fixtures/statsdeck_injuries.json`, and the rollback's `INJURY_FEED` branch in
+`run_alert.sh` with its test. Rewrite the StatsDeck parts of `injuries.py`,
 `alert.py`, `cli.py`, `cbs_roster.py`'s comment, `run_alert.sh`'s `CLAUDE_BIN` block, and
 the tests that name StatsDeck. Rewrite the runbook's "INJURY DATA UNAVAILABLE" and "older
 item(s) hidden" sections, NEXT.md (its CBS ↔ StatsDeck matching paragraph and the dry-run
@@ -363,8 +395,11 @@ too.
 
 **Still open:**
 
-9. **When to switch:** after Ultron's re-vet of the fixes and Jeff's OK, and by Tue 12-01
-   at the latest (the playoff freeze in section 9).
+9. **When to switch:** on Jeff's OK, by Tue 12-01 at the latest (the playoff freeze in
+   section 9). The re-vet is done and the checklist is built (section 9). John Madden's
+   recommendation, 10-30: merge the branch on Mon 11-02. Jeff's decision, 10-31: merge on
+   Mon 11-09 instead, since he's away the week of 11-02, so Tue 11-10 16:45 is the first
+   switched run.
 
 ## Appendix A: what was sampled
 
