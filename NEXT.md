@@ -30,6 +30,24 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
+## MISSED FRIDAY 11-06 RUN (diagnosed 2026-11-09): a restart, not a code bug
+
+The Friday job didn't run on 11-06, so `logs/alert-friday.log` stopped at 10-30, about 230
+hours old against the 192-hour limit. **Cause:** the mini rebooted uncleanly on Thu 11-05
+at 16:06 (`last` closes the 10-30 session as `crash`; the reboot's own cause is unknown
+and belongs to Vision). FileVault is on and auto-login is off, so the mini sat at the
+unlock screen with no GUI session and no LaunchAgents loaded until the console login on
+Fri 11-06 at 16:49. That was 4 minutes after the 16:45 fire time, and launchd doesn't
+make up a fire time that passed before the job was loaded. The other jobs show it was
+the restart and not a fantasy bug: Tuesday 11-03 logged before the reboot, Sunday 11-08
+ran clean after the login (`runs = 1`, exit 0, collect pushed `2dcac1c`), and all three
+installed plists match `ops/`. Friday 11-06's report was never sent, and it's too late to
+send it now. **No code fix.** Tue 11-10 runs as long as the session stays logged in. If
+the mini restarts again, someone has to log in before 16:45 or the run is lost. The
+lasting fix (a UPS, or a way to alert when the mini comes back up at the unlock screen)
+is Vision's. Troubleshooting entry: `docs/operations/in-season-alerting.md`, "I got no
+alert".
+
 ## OUTPUT/ IS TRACKED (2026-10-30): the cheatsheets are kept in the repo
 
 **Why:** Jeff, 10-30: "I'd like them published so we have persistent copies of prior work",

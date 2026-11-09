@@ -151,6 +151,17 @@ tail logs/alert-friday.err
 tail logs/alert-sunday.err
 ```
 
+**If a run is simply missing, look for a restart first.** FileVault is on, so after a
+restart (a power cut or crash included: `pmset autorestart` is 1) the mini boots to the
+FileVault unlock screen. There's no GUI session, so no LaunchAgent is loaded and nothing
+fires until Jeff logs in. A fire time that passes before that login is never made up:
+launchd only catches up on runs missed during sleep, not runs missed before the job was
+loaded. Compare `sysctl -n kern.boottime` and `last | grep console` with the fire time.
+After a login, `launchctl print gui/$(id -u)/com.sffl.alert.<kind>` shows `runs = 0` and
+`last exit code = (never exited)` until the job's first fire. That's normal and doesn't
+mean the job is broken. This happened on 2026-11-06: the mini rebooted Thu 11-05 16:06,
+the console login came Fri 11-06 16:49, and the Friday 16:45 run never happened.
+
 ## "The alert says CAPTURE FAILED / session expired"
 
 The stored CBS browser session has gone stale - this is expected to happen every few
