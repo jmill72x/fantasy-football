@@ -268,8 +268,28 @@ def to_repo(unit_path, repo, season, week, unit, runner=subprocess.run):
             # paths on so this run's commit picks them up.
             st = _git(repo, ["status", "--porcelain", "--", rel, MANIFEST],
                       runner)
-            pending = [rel, MANIFEST] if st.stdout.strip() else []
-            return Step(where, unit, EXISTS, dest), pending
+            if not st.stdout.strip():
+                return Step(where, unit, EXISTS, dest), []
+            # A unit already in HEAD is never re-hashed: a hand edit inside it
+            # (its own manifest fixed up to match) would go out in the job's
+            # commit with a matching top-level hash. Only a unit no commit has
+            # yet (a run that died before committing) is handed on.
+            if _git(repo, ["ls-tree", "-r", "--name-only", "HEAD", "--", rel],
+                    runner).stdout.strip():
+                unit_st = _git(repo, ["status", "--porcelain",
+                                      "--untracked-files=all", "--", rel],
+                               runner)
+                if unit_st.stdout.strip():
+                    return Step(where, unit, FAILED,
+                                "%s: files differ from HEAD (%d path(s)); "
+                                "nothing copied or committed. Undo the edit "
+                                "by hand: a collected unit never changes."
+                                % (dest, len(unit_st.stdout.splitlines()))), []
+            # Put the unit's lines back, in case someone reset the manifest
+            # (undoing their own edit) since that run: the unit still needs
+            # them, and commit_and_push checks the file before committing.
+            add_to_repo_manifest(repo, rel)
+            return Step(where, unit, EXISTS, dest), [rel, MANIFEST]
         shutil.copytree(unit_path, dest)
         for name in os.listdir(dest):
             os.chmod(os.path.join(dest, name), 0o644)
@@ -290,26 +310,87 @@ def add_to_repo_manifest(repo, rel):
     whole list stays sorted by path, as `find . | sort` wrote it.
     """
     path = os.path.join(repo, MANIFEST)
-    entries = {}
+    text = ""
     if os.path.isfile(path):
         with open(path) as fh:
-            for line in fh:
-                line = line.rstrip("\n")
-                if line:
-                    entries[line.split("  ", 1)[1]] = line
+            text = fh.read()
+    entries = _manifest_entries(text)
+    entries.update(_unit_entries(repo, rel))
+    with open(path, "w") as fh:
+        fh.write(_manifest_text(entries))
+
+
+def _manifest_entries(text):
+    """{path: line} from a MANIFEST.sha256's text.
+
+    ValueError on a line that isn't `<sha256>  <path>`, naming its number
+    only, so collect refuses cleanly instead of crashing on an IndexError.
+    """
+    entries = {}
+    for n, line in enumerate(text.splitlines(), 1):
+        if not line:
+            continue
+        parts = line.split("  ", 1)
+        if len(parts) != 2 or not parts[1]:
+            raise ValueError("%s line %d is malformed (not '<sha256>  <path>')"
+                             % (MANIFEST, n))
+        entries[parts[1]] = line
+    return entries
+
+
+def _unit_entries(repo, rel):
+    """{path: line} for every file under `rel`, hashed as it is on disk."""
+    entries = {}
     base = os.path.join(repo, rel)
     for name in sorted(os.listdir(base)):
         key = "./%s/%s" % (rel, name)
         entries[key] = "%s  %s" % (sha256_file(os.path.join(base, name)), key)
-    with open(path, "w") as fh:
-        fh.write("".join(entries[k] + "\n" for k in sorted(entries)))
+    return entries
+
+
+def _manifest_text(entries):
+    return "".join(entries[k] + "\n" for k in sorted(entries))
+
+
+def manifest_check(repo, rels, runner=subprocess.run):
+    """None if MANIFEST.sha256 holds only HEAD's lines plus this run's units
+    (`rels`), on disk and in the index; otherwise why not, naming no line.
+
+    `git commit -- MANIFEST.sha256` commits the whole file as it is on disk,
+    so a line someone added or changed by hand, staged or not, would ride
+    along in the job's commit (board b7413110). The job stops instead.
+    """
+    head = _git(repo, ["show", "HEAD:" + MANIFEST], runner)
+    if head.returncode != 0:
+        return "%s is not in HEAD of %s" % (MANIFEST, repo)
+    want = _manifest_entries(head.stdout)
+    for rel in rels:
+        want.update(_unit_entries(repo, rel))
+    want = _manifest_text(want)
+    with open(os.path.join(repo, MANIFEST)) as fh:
+        disk = fh.read()
+    index = _git(repo, ["show", ":" + MANIFEST], runner)
+    staged = index.stdout if index.returncode == 0 else None
+    why = []
+    if disk != want:
+        extra = set(disk.splitlines()) ^ set(want.splitlines())
+        why.append("%d line(s) on disk" % len(extra))
+    if staged not in (head.stdout, disk):
+        why.append("a staged version")
+    if not why:
+        return None
+    return ("%s in %s holds changes this run didn't make (%s); nothing "
+            "committed. Commit or undo them by hand: the next run commits "
+            "this run's units." % (MANIFEST, repo, ", ".join(why)))
 
 
 def commit_and_push(repo, paths, message, push=True, runner=subprocess.run):
     """Commit ONLY `paths`, then push main. Returns a list of Steps.
 
     `git commit -- <paths>` commits those paths alone, so anything else a
-    person has staged in the data repo stays out of the job's commit.
+    person has staged in the data repo stays out of the job's commit. The
+    shared MANIFEST.sha256 is checked first (`manifest_check`): a line the
+    job didn't write stops the commit rather than going out with it.
 
     Push runs even when this run had nothing new to commit, if main is ahead
     of origin: a commit whose push failed last time goes out with the next run.
@@ -318,6 +399,14 @@ def commit_and_push(repo, paths, message, push=True, runner=subprocess.run):
     steps = []
     if paths:
         uniq = sorted(set(paths))
+        if MANIFEST in uniq:
+            try:
+                why = manifest_check(repo, [p for p in uniq if p != MANIFEST],
+                                     runner)
+            except (OSError, ValueError) as exc:
+                why = "%s; nothing committed" % exc
+            if why:
+                return [Step("commit", "-", FAILED, why)]
         add = _git(repo, ["add", "--"] + uniq, runner)
         if add.returncode != 0:
             return [Step("commit", "-", FAILED, add.stderr.strip())]

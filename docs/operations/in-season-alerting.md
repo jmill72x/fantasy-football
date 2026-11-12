@@ -150,6 +150,14 @@ tail logs/alert-tuesday.err
 tail logs/alert-friday.err
 tail logs/alert-sunday.err
 ```
+The logs are append-only and keep every run since August. Since 2026-11-11 each run
+starts and ends with a dated line in both files (`=== run_alert friday (live) started
+2026-11-13 16:45:02 EST ===`, then `... finished, exit 0 <date> ===`, or `... finished,
+killed by SIGTERM <date> ===` when the job was stopped; an EXIT trap writes it since 11-12,
+so an early abort still gets one).
+`grep -n '^=== run_alert' logs/alert-friday.log` lists the runs, and the latest one is
+everything below the last `started`. Blocks from before that date have no such line, so
+a grep hit above the first one (an `UNFILLED`, a `DEGRADED`) is an old run.
 
 **If a run is simply missing, look for a restart first.** FileVault is on, so after a
 restart (a power cut or crash included: `pmset autorestart` is 1) the mini boots to the
@@ -403,8 +411,23 @@ download. you don't need my permission each time for that."
 **If it fails,** the digest has already gone out. The log shows `COLLECT FAILED <where>
 <unit>: <reason>`, the `.err` log says `ERROR: weekly data collection failed`, a short
 "SFFL data collection FAILED" note goes to ntfy and #john-madden, and the job exits
-non-zero. A push that failed goes out with the next run's push. To retry by hand, same
-day, from the repo root:
+non-zero. A push that failed goes out with the next run's push.
+
+**`COLLECT FAILED commit -: MANIFEST.sha256 ... holds changes this run didn't make`**
+means someone edited the data repo's top-level manifest by hand (staged or not). The job
+commits that file whole, so it stops rather than publish the edit: it commits only a
+manifest that is HEAD's plus its own units' lines. Commit your edit yourself, or undo it
+(`git -C ~/Projects/fantasy-football-data checkout HEAD -- MANIFEST.sha256` is fine: the next
+run writes its units' lines back), and the next run commits the waiting units.
+
+**`COLLECT FAILED repo <unit>: ... files differ from HEAD`** means a unit the data repo
+already committed was changed by hand (a file edited, added or removed). A collected unit
+never changes, so the job refuses rather than re-hash it into its commit. Undo it with
+`git -C ~/Projects/fantasy-football-data checkout HEAD -- <the unit's path>` (and delete
+any file you added there). **`MANIFEST.sha256 line <n> is malformed`** means that line of
+the top-level manifest isn't `<sha256>  <path>` (two spaces); fix or remove that line.
+
+To retry by hand, same day, from the repo root:
 ```
 PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect --kind tuesday --week <N> \
   --since <epoch the run started> --results-week <N>

@@ -1,6 +1,6 @@
 # Licensed subscription data — Draft Sharks / Footballguys / FantasyPros
 # exports are paid content. Never commit them to a public repo.
-data/extracts/
+data/extracts
 # league-owned history lives in data/league/ and IS tracked
 raw/
 exports/
@@ -16,9 +16,11 @@ output/sffl-cheatsheet-poc.pdf
 output/~$*
 build/
 
-# Python
-.venv/
-venv/
+# Python. No trailing slash on a private path: `x/` matches directories
+# only, so a symlink named x (a worktree's .venv or data/weekly link) would
+# show as untracked and ride along in a `git add -A` (tests/test_gitignore.py).
+.venv
+venv
 __pycache__/
 *.py[cod]
 
@@ -26,23 +28,23 @@ __pycache__/
 .DS_Store
 
 # Weekly stat lines collected from CBS
-data/weekly/
+data/weekly
 
 # Subagent-driven-development scratch workspace
-.superpowers/
+.superpowers
 
 # Playwright profile holding a live CBS login - a credential, never committed
-data/browser-profile/
+data/browser-profile
 # Pages captured from the CBS league site
-data/captures/
+data/captures
 
 # launchd job output
-logs/
+logs
 
 # The direct injury fetcher's caches and state (sffl injuries-fetch): the
 # id crosswalk, Sleeper's player feed, the ESPN-off marker and the last
 # snapshot it derives status changes from. Third-party data, never committed.
-data/cache/
+data/cache
 # Third-party text the direct injury feed and CBS's icon sidecars carry
 # (ESPN, Sleeper and nflverse rows; CBS labels and news headlines), wherever
 # such a file lands. Never committed.

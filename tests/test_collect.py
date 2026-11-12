@@ -343,7 +343,11 @@ def test_run_alert_collects_after_the_alert_and_never_on_a_dry_run():
         'rm -f "$INJ" "$INJ.tmp"')                       # before any fetch
     guard = text.rindex('if [ -z "$DRY_RUN_FLAG" ]', 0, coll)
     assert text.index("ALERT_RC=$?") < guard             # alert rc kept
-    assert text.rstrip().endswith('exit "$COLLECT_RC"')
+    # The alert's rc wins; collection's counts only when the alert passed
+    # (the last line is `exit "$RC"` since the dated run lines, 11-11).
+    tail = text[text.index('RC="$ALERT_RC"'):]
+    assert 'RC="$COLLECT_RC"' in tail
+    assert text.rstrip().endswith('exit "$RC"')
 
 
 def test_fresh_icon_sidecars_go_with_their_pages_and_absent_ones_are_not_missing(
@@ -370,3 +374,133 @@ def test_fresh_icon_sidecars_go_with_their_pages_and_absent_ones_are_not_missing
     assert "DST.icons.json" not in names
     note = (unit / col.NOTE).read_text()
     assert "icons" not in note
+
+
+# ------------------------------- a hand-made MANIFEST line (board b7413110)
+#
+# `git commit -- MANIFEST.sha256` commits the whole file as it is on disk, so a
+# line someone added by hand (staged or not) would ride along in the job's
+# commit. The job commits the manifest only when it is HEAD's plus this run's
+# own units, and otherwise stops and says so.
+
+def _hand_line(repo):
+    return "%s  ./notes/by-hand.txt" % ("0" * 64)
+
+
+@pytest.mark.parametrize("stage", [True, False])
+def test_a_hand_made_manifest_line_is_never_committed(
+        tmp_path, captures, data_repo, stage):
+    d, since = captures
+    repo, bare = data_repo
+    fresh, _ = col.fresh_files(str(d), _capture_keys("tuesday"), since)
+    head = _git("rev-parse", "HEAD", cwd=repo)
+    man = repo / "MANIFEST.sha256"
+    man.write_text(man.read_text() + _hand_line(repo) + "\n")
+    if stage:
+        _git("add", "MANIFEST.sha256", cwd=repo)
+    steps = col.collect_units(
+        [(6, "2026-10-20-tuesday", fresh, "n\n")], str(tmp_path / "a"), 2026,
+        repo=str(repo))
+    bad = col.failed(steps)
+    assert [s.where for s in bad] == ["commit"]
+    assert "MANIFEST.sha256" in bad[0].detail and "nothing committed" in bad[0].detail
+    assert "0" * 64 not in bad[0].detail          # names no line content
+    assert _git("rev-parse", "HEAD", cwd=repo) == head
+    assert _git("rev-parse", "main", cwd=bare) == head
+    # The hand line is left where it was: on disk, and staged if it was.
+    assert _hand_line(repo) in man.read_text()
+    staged = _git("show", ":MANIFEST.sha256", cwd=repo)
+    assert (_hand_line(repo) in staged) is stage
+
+
+def test_after_the_hand_edit_is_undone_the_next_run_commits_the_unit(
+        tmp_path, captures, data_repo):
+    d, since = captures
+    repo, bare = data_repo
+    fresh, _ = col.fresh_files(str(d), _capture_keys("tuesday"), since)
+    man = repo / "MANIFEST.sha256"
+    man.write_text(man.read_text() + _hand_line(repo) + "\n")
+    _git("add", "MANIFEST.sha256", cwd=repo)
+    unit = [(6, "2026-10-20-tuesday", fresh, "n\n")]
+    steps = col.collect_units(unit, str(tmp_path / "a"), 2026, repo=str(repo))
+    assert [s.where for s in col.failed(steps)] == ["commit"]
+    # The person undoes their edit the blunt way, which also drops the job's
+    # own lines from the working file...
+    # (the runbook's command: docs/operations/in-season-alerting.md)
+    _git("checkout", "HEAD", "--", "MANIFEST.sha256", cwd=repo)
+    # ...and the next run still commits the unit with its manifest lines.
+    steps = col.collect_units(unit, str(tmp_path / "a"), 2026, repo=str(repo))
+    assert not col.failed(steps)
+    committed = _git("show", "--name-only", "--format=", "HEAD", cwd=repo)
+    assert "MANIFEST.sha256" in committed.splitlines()
+    assert any("wk06/2026-10-20-tuesday/" in f for f in committed.splitlines())
+    r = subprocess.run(["shasum", "-a", "256", "-c", "MANIFEST.sha256"],
+                       cwd=str(repo), capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _hand_line(repo) not in man.read_text()
+
+
+# -------------------------------- a committed unit is never re-blessed (11-12)
+#
+# On the EXISTS path a unit already in the data repo was re-hashed from disk,
+# so a hand edit inside it (with its own MANIFEST.sha256 fixed up to match)
+# went into the job's commit with a matching top-level hash. A unit in HEAD
+# whose files differ from HEAD is refused, and nothing is committed.
+
+@pytest.mark.parametrize("edit", ["change", "add"])
+def test_a_hand_edit_inside_a_committed_unit_is_refused(
+        tmp_path, captures, data_repo, edit):
+    d, since = captures
+    repo, bare = data_repo
+    fresh, _ = col.fresh_files(str(d), _capture_keys("tuesday"), since)
+    unit = [(6, "2026-10-20-tuesday", fresh, "n\n")]
+    steps = col.collect_units(unit, str(tmp_path / "a"), 2026, repo=str(repo))
+    assert not col.failed(steps)
+    head = _git("rev-parse", "HEAD", cwd=repo)
+    folder = repo / "2026" / "cbs" / "weekly" / "wk06" / "2026-10-20-tuesday"
+    if edit == "change":
+        (folder / "roster.txt").write_text("HAND-EDITED-ROW\n")
+    else:
+        (folder / "extra.txt").write_text("HAND-EDITED-ROW\n")
+    col.write_manifest(str(folder))          # the unit's own check now passes
+    assert col.verify_manifest(str(folder)) is None
+    steps = col.collect_units(unit, str(tmp_path / "a"), 2026, repo=str(repo))
+    bad = col.failed(steps)
+    assert [s.where for s in bad] == ["repo"]
+    assert "differ from HEAD" in bad[0].detail
+    assert "HAND-EDITED-ROW" not in bad[0].detail  # names no content
+    assert _git("rev-parse", "HEAD", cwd=repo) == head
+    assert _git("rev-parse", "main", cwd=bare) == head
+    # The top-level manifest was not touched.
+    assert _git("status", "--porcelain", "--", "MANIFEST.sha256",
+                cwd=repo) == ""
+
+
+# ------------------------------ a malformed MANIFEST line is a refusal (11-12)
+
+@pytest.mark.parametrize("where", ["disk", "head"])
+def test_a_malformed_manifest_line_is_a_clean_refusal(
+        tmp_path, captures, data_repo, where):
+    d, since = captures
+    repo, bare = data_repo
+    fresh, _ = col.fresh_files(str(d), _capture_keys("tuesday"), since)
+    man = repo / "MANIFEST.sha256"
+    man.write_text(man.read_text() + "not-a-manifest-line\n")
+    if where == "head":
+        _git("commit", "-q", "-am", "bad line", cwd=repo)
+    head = _git("rev-parse", "HEAD", cwd=repo)
+    steps = col.collect_units(
+        [(6, "2026-10-20-tuesday", fresh, "n\n")], str(tmp_path / "a"), 2026,
+        repo=str(repo), push=False)
+    bad = col.failed(steps)
+    assert bad, steps
+    assert all("MANIFEST.sha256" in s.detail and "malformed" in s.detail
+               for s in bad)
+    assert "not-a-manifest-line" not in " ".join(s.detail for s in bad)
+    assert _git("rev-parse", "HEAD", cwd=repo) == head
+
+
+def test_manifest_entries_rejects_a_line_without_the_double_space():
+    with pytest.raises(ValueError) as e:
+        col._manifest_entries("%s  ./a\nno-separator\n" % ("0" * 64))
+    assert "line 2" in str(e.value) and "no-separator" not in str(e.value)

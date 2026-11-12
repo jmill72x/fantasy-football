@@ -22,13 +22,76 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1180` passed
+- full_suite: `1213` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
 `top10_bias` is **+4.1025**, positive. It is not −0.25: that number was fabricated, sat in
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
+
+## CODE HYGIENE (2026-11-11, review lows 11-12): staged on `john/hygiene`, not merged
+
+One overnight session on board b866639b (Jeff's general OK for queued work). Branch
+`john/hygiene` off `90853c6`, in the worktree
+`~/.local/state/jarvis/worktrees/fantasy-football-hygiene`; staged, not committed. Nothing
+here is live until the branch is merged into the main checkout (the jobs run that tree).
+
+- **The rescan uses the guard's weekly rule** (private tool, not in this repo; DATA
+  ARCHIVE below). The data repo's `cbs/weekly/` pages and the live `data/captures/*.txt`
+  are one weekly tier, checked with the guard's own `_numeric_run`, imported from the
+  scanned repo's `tests/test_fixture_guard.py` (so run it with the venv's Python). The
+  vendor exports, the 10-19 snapshot and the old blobs stay strict (any 4-number run).
+  B and D (name plus values) no longer read the weekly tier, as the guard's name+values
+  doesn't. Real ids (C) come from every CBS page. `--why` names each match's reference
+  file, line, tier and player; `--refs DIR` takes the repo-local references from another
+  checkout, for scanning a worktree. Result on this branch's index: **0 findings**
+  (the old rule: 13 on `main`, 12 A and 1 D, all against the live captures). Planted
+  self-test 11-11: a verbatim snapshot row (A, C, D), a vendor row (A, B), a weekly row
+  with its id and name changed (A, LONG_RUN) and a 6-number weekly-only paste under its
+  own name (A, same player) were flagged; the same 6 numbers under another name were not.
+- **collect won't commit a hand-made MANIFEST line** (board b7413110).
+  `commit_and_push` commits `MANIFEST.sha256` only when it is HEAD's plus this run's
+  units' lines, on disk and in the index (`manifest_check`). Otherwise the commit step
+  FAILS with a message that names no line, and the units wait. A unit from an earlier run
+  re-adds its own lines, so `git checkout HEAD -- MANIFEST.sha256` is a safe undo. Runbook:
+  `docs/operations/in-season-alerting.md`, "Weekly data collection".
+- **Ultron's four lows (11-12, board 1eff4ca8; his review of this branch was a GO).** Each
+  has a test that failed before its fix. (1) `.gitignore`: the private paths (`.venv`,
+  `venv`, `data/extracts`, `data/weekly`, `data/captures`, `data/browser-profile`,
+  `data/cache`, `logs`, `.superpowers`) lost their trailing slash, which matched
+  directories only, so a symlink (the worktree's `.venv` link) showed as untracked and a
+  `git add -A` would have committed it. `tests/test_gitignore.py` checks each as a dir and
+  as a symlink. (2) collect's EXISTS path refuses a unit that is in the data repo's HEAD
+  and whose files differ from it (changed, added or removed): FAILED, nothing copied or
+  committed, no content named. A unit no commit has yet is handed on as before. (3) A
+  MANIFEST line without the double space is a `ValueError` naming its line number only,
+  so collect fails that step cleanly instead of crashing (from disk or from HEAD). (4)
+  `ops/run_alert.sh` writes its "finished" line from an EXIT trap, so a `set -u` abort
+  logs `finished, exit 1`; a TERM, INT or HUP logs `finished, killed by SIG<name>` and
+  re-raises the signal, so the exit status launchd sees is unchanged.
+- **Roster id boundary** (board 732f74ba, Ultron 10-21). `_continuation_id` also stops
+  at any line with a row's bullet (`_ROW_BULLET`), even one `_ROW_START` can't read, and
+  `_ID_LOOKAHEAD` is 3 (was 4). Two new tests, including the one Ultron named. Replayed old
+  vs new on all 13 saved real roster pages: identical, 169 of 169 rows with an id. Not
+  done (Ultron's optional idea): the alert reporting a row whose id and name lookups pick
+  different projections.
+- **`output/*.pdf binary`** in a new `.gitattributes` (board 23b5f2cf).
+- **Dated run lines in the alert logs** (board c4dfbfe4). `ops/run_alert.sh` writes
+  `=== run_alert <kind> (live|dry run) started <date> ===` first and `... finished, exit
+  <n> <date> ===` last (from an EXIT trap since 11-12), to both `.log` and `.err`. Exit
+  codes are unchanged (the alert's wins, then collection's). Tests run the script for real.
+- **Same-player chance runs re-measured** (board 0248f241), counts only, weeks 1 to 10 (no
+  classifier block this time). The guard over the 9 constructed CBS fixtures: of 164
+  lines with numbers, 163 share no same-player run with any weekly row and 1 reaches 3
+  independent numbers (flagged at 4); the longest other-player run is 5 raw numbers
+  (flagged at 8; 26 lines reach 4, 4 reach 5). So the margin is wide and a chance red
+  before week 18 is unlikely; that one line is where one would come from. Real rows against
+  the same player's rows in other weeks overstate it: 18.6% of projection rows still match
+  under the new rule (37.1% under the old), 11.2% of results rows, 8.8% of ROS rows. Kicker
+  projection pages are the noisy ones: 136 of 443 real K rows share an 8-number run with
+  another kicker's row. The scripts are `guard_margin.py` and `weekly_same_player.py`
+  beside the rescan (each takes the repo path).
 
 ## MISSED FRIDAY 11-06 RUN (diagnosed 2026-11-09): a restart, not a code bug
 
@@ -93,7 +156,7 @@ board items (Jeff's go, 10-21):
   rows parsed with no id (on 10-20 only bye rows had one) and the roster ↔ projections join
   fell back to name, team and position. `cbs_roster._iter_lines` now gives an id-less row
   line the id of the first id-carrying line below it, and stops at the next line that
-  starts like a row (a bye row's line included), RESERVES, the footer, or 4 lines down, so
+  starts like a row (a bye row's line included), RESERVES, the footer, or 4 lines down (3 since 11-11, which also stops at any row's bullet), so
   an id never crosses rows. Fixed in the parser, not `capture`: every saved roster page
   reads its ids too, and the projection pages' prefixing is untouched.
   - **Why no test saw it:** the capture's first anchor rule (08-30, `060cda0`) put roster
@@ -151,7 +214,7 @@ board items (Jeff's go, 10-21):
   from 3 to 13 (unique, old ids kept), and all 13 rows join the same projection row as
   before, every one by id. The `UNFILLED`/`DEGRADED` lines that a grep finds in
   `logs/alert-*.log` are from August and early-September runs at the top of those
-  append-only logs (no timestamps), not from these runs. The real week-8 hole is a kicker:
+  append-only logs (no timestamps before 11-11's dated run lines), not from these runs. The real week-8 hole is a kicker:
   Dominic Zvada is on bye and is the only K rostered, so the digests since Sunday say so.
 
 ## STATSDECK REPLACEMENT (2026-10-20): Jeff said go
@@ -405,15 +468,18 @@ commits, no history change:
   findings. The same scan found 445 at the pre-rewrite `a4dacd3` (that id exists only in
   the pre-rewrite bundle now). The script, which reads the private data and so stays out
   of this repo, is `~/.local/state/jarvis/reports/fantasy-rewrite-tools/rescan.py` (run it
-  with the repo path; `--tree` scans HEAD). Since the rewrite it reads the old fixture
+  with the repo's venv Python and the repo path; `--tree` scans HEAD, `--why` names what
+  each finding matched, `--refs <main checkout>` when scanning a worktree). Since the rewrite it reads the old fixture
   blobs from the pre-rewrite bundle in the data repo. `history_scan.py` beside it scans
   every blob and commit message. The generator and repair scripts that built the fixtures
   sit beside it too.
-- **Reading a finding:** the reference set includes the live `data/captures/`, which
-  every alert run (and every dry run) refreshes. On 2026-10-19 the scan read 0 against the
-  morning snapshot and 2 after that afternoon's capture: in both, a constructed fixture
-  row's numbers happened to match a *different* player's new CBS row. That's a
-  coincidence, not a leak. Before acting on a finding, check which player it matched.
+- **Reading a finding:** run it again with `--why`, which names the reference file, line,
+  tier and player behind each match (never a value). Since 2026-11-11 the live
+  `data/captures/` and the data repo's weekly pages are read with the fixture guard's
+  weekly rule, so a constructed row's short run with *another* player's new CBS row is no
+  longer a finding (on 10-19 two were, and 13 by 11-11). A strict-tier finding (vendor,
+  snapshot, old blob) is never a coincidence to wave through; a weekly one may be, so
+  check the player and the run's columns first.
 - **The fixture guard runs in the suite (2026-10-19):** `tests/test_fixture_guard.py`
   checks every file in `tests/fixtures/` against the data repo, read at runtime, for real
   CBS ids, number runs from a vendor or CBS row, and a player's name with his real values.
@@ -429,7 +495,7 @@ commits, no history change:
   another player's row. `weekly_sample.csv` is exempt (below). Four self-tests plant, in
   memory, a real CBS row, the same row with its id and name changed, a real row cut to 6
   numbers under its own name, and a Draft Sharks row, and must see each flagged. The
-  rescan above doesn't read `cbs/weekly/` yet; the guard does.
+  rescan above reads them with this same rule since 11-11 (CODE HYGIENE, top).
 - **Same-player rule in independent numbers (fixed 2026-10-30, Jeff's pick (a), board
   8e7e9333).** From the 10-23 Friday collect until this fix the suite was red at
   `cbs_weekly_tab_rbwrte.txt:3` (JSN). His constructed row ran 4 numbers with his own
@@ -448,11 +514,11 @@ commits, no history change:
   a longer run with an average, another player's 8-run and any strict-tier run are
   flagged) and the real 6-number paste above. Mutation-checked 10-30: the old rule
   brings the JSN failure back, and dropping the same-player clause, the order rule,
-  `LONG_RUN` or the repeat rule each fails its own tests. **Not re-measured on 10-30:** how
-  many real same-player cross-week runs the new rule still counts (a counts-only scan
-  of the weekly pages was blocked by the auto-mode classifier). The guard can still go
-  red by chance as the season adds pages; if it does, check the player and the run's
-  columns before touching thresholds.
+  `LONG_RUN` or the repeat rule each fails its own tests. **Re-measured 11-11** (CODE
+  HYGIENE, top): the fixtures' closest same-player run is 3 independent numbers, one
+  line. The guard can still go red by chance as the season adds pages; if it does, run
+  the rescan with `--why` and check the player and the run's columns before touching
+  thresholds.
 - **Not cleaned, by decision:** the 2025 CBS game logs behind the scoring validation
   (`tests/fixtures/weekly_sample.csv`, `tests/test_scoring.py`'s golden lines, the
   `poc/validate_*.py` and `seed_weekly.py` logs). They're Jeff's call (the history-risk
@@ -532,7 +598,7 @@ the 2026 files standing in for 2027:
 | 7, 8. Price the board, plan | OK: `render` and `plan` run as written and print the CROSS-SEASON note. Fixed: `value` takes no `--byes` |
 | 9, 10, 11. Print, sealed bid, league data | Unchanged: needs Jeff (the two-sheet print has still never been verified) |
 | 12. Out-of-sample test, refit | Gap: the out-of-sample price scoring has no command (the 2026 result was measured ad hoc), so it isn't reproducible. `fit-market` runs and reproduces `market/2026.yaml` (only `fitted_on` differs) |
-| 13. In-season switch-over | OK: `WEEK1` and `--curves` at `ops/run_alert.sh` lines 56 and 99 (since 10-21, when the week-1 date became `WEEK1`). `ops/run_alert.sh tuesday --dry-run` ran (injury fetch stubbed, see below) |
+| 13. In-season switch-over | OK: `ops/run_alert.sh`'s `WEEK1=` and `--curves` lines (cited by name since 11-11: line numbers drift with every edit). `ops/run_alert.sh tuesday --dry-run` ran (injury fetch stubbed, see below) |
 | Collect and archive | Built 2026-10-19 after the audit (above) |
 | Removed files | OK: nothing in the runbook, the in-season runbook, README or CLAUDE.md names a file the cleanup or rewrite removed |
 

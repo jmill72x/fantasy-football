@@ -520,8 +520,39 @@ def test_a_game_time_on_two_lines_still_finds_the_stats_lines_id(tmp_path):
 def test_the_search_stops_after_its_lookahead(tmp_path):
     path = _page(tmp_path, [
         "\tWR\tPat Example WR • SEA \t@MIA\t",
-        "a", "b", "c", "d",
+        "a", "b", "c",
         "id=9200008\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "RESERVES",
+    ])
+    starters, _reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", "")]
+
+
+def test_a_bye_row_the_parser_cannot_read_keeps_its_id_four_lines_down(tmp_path):
+    # Ultron 10-21 (board 732f74ba): the next row is a one-line bye row whose
+    # line does not even start like a row (an "IR" slot is no position code),
+    # with its own id, 4 lines below a row whose stats line lost its id.
+    # Before 11-11 the 4-line lookahead reached it and handed its id up.
+    path = _page(tmp_path, [
+        "\tWR\tPat Example WR • SEA \t@MIA\t",
+        "Sun 1:00pm EDT",
+        "\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "",
+        "id=9200010\t\tIR\tLee Sample WR • LAC \tBYE\t\t7\t\t---\t\t50%",
+        "RESERVES",
+    ])
+    starters, _reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", "")]
+
+
+def test_any_line_with_a_row_bullet_ends_the_search(tmp_path):
+    # The same unreadable bye row, 3 lines down (inside the lookahead): its
+    # "NAME POS • TEAM" cell marks it as another row's line.
+    path = _page(tmp_path, [
+        "\tWR\tPat Example WR • SEA \t@MIA\t",
+        "Sun 1:00pm EDT",
+        "\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "id=9200011\t\tIR\tLee Sample WR • LAC \tBYE\t\t7\t\t---\t\t50%",
         "RESERVES",
     ])
     starters, _reserves = parse_lineup_rows(path)

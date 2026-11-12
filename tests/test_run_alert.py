@@ -167,3 +167,98 @@ def test_designations_have_their_own_off_switch(tree):
     r, lines, _ = _run(tree, "friday", SFFL_CBS_DESIGNATIONS="0")
     assert r.returncode == 0, r.stderr
     assert "--cbs-designations" not in _call(lines, "alert")
+
+
+# ------------------------------------------- dated run lines (board c4dfbfe4)
+#
+# launchd appends every run to logs/alert-<kind>.log (stdout) and .err
+# (stderr) with no date of its own, so on 10-30 an August block was read as
+# that day's. Each run now opens and closes with a dated line in both files.
+
+import re  # noqa: E402
+
+STAMP = re.compile(r"^=== run_alert (\w+) \((live|dry run)\) (.+) "
+                   r"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \w+) ===$")
+
+
+def _stamps(text):
+    return [STAMP.match(l).groups() for l in text.splitlines()
+            if STAMP.match(l)]
+
+
+def test_every_run_is_dated_at_start_and_end_in_both_logs(tree):
+    r, _lines, _ = _run(tree, "tuesday")
+    assert r.returncode == 0, r.stderr
+    for stream in (r.stdout, r.stderr):
+        lines = [l for l in stream.splitlines() if l.strip()]
+        assert STAMP.match(lines[0]) and STAMP.match(lines[-1]), stream
+        (k1, m1, what1, _t1), (k2, m2, what2, _t2) = _stamps(stream)
+        assert (k1, m1, what1) == ("tuesday", "live", "started")
+        assert (k2, m2, what2) == ("tuesday", "live", "finished, exit 0")
+
+
+def test_a_dry_run_and_a_failed_alert_say_so_in_their_lines(tree):
+    r, _lines, _ = _run(tree, "friday", "--dry-run")
+    assert [s[:3] for s in _stamps(r.stdout)] == [
+        ("friday", "dry run", "started"), ("friday", "dry run", "finished, exit 0")]
+    py = tree / ".venv" / "bin" / "python"
+    py.write_text(PY_STUB.replace("    exit 0 ;;\n  collect)",
+                                  "    exit 3 ;;\n  collect)"))
+    r, _lines, _ = _run(tree, "sunday")
+    assert r.returncode == 3
+    assert _stamps(r.stderr)[-1][:3] == ("sunday", "live", "finished, exit 3")
+
+
+def test_a_failed_collect_is_the_exit_code_when_the_alert_passed(tree):
+    py = tree / ".venv" / "bin" / "python"
+    py.write_text(PY_STUB.replace("  collect) exit 0 ;;", "  collect) exit 4 ;;"))
+    r, _lines, _ = _run(tree, "tuesday")
+    assert r.returncode == 4
+    assert _stamps(r.stdout)[-1][:3] == ("tuesday", "live", "finished, exit 4")
+
+
+# The "finished" line comes from an EXIT trap (Ultron, 11-12), so a run that
+# dies early still closes its block: a `set -u` abort keeps its exit code, and
+# a TERM still ends the script by that signal (launchd sees the same status).
+
+def test_a_set_u_abort_still_logs_finished_with_its_exit_code(tree):
+    script = tree / "ops" / "run_alert.sh"
+    text = script.read_text()
+    anchor = 'INJURY_FEED="${SFFL_INJURY_FEED:-direct}"\n'
+    assert anchor in text
+    script.write_text(text.replace(anchor, anchor + ': "$NOT_SET_FOR_TEST"\n'))
+    r, lines, _ = _run(tree, "tuesday")
+    assert r.returncode == 1
+    assert "NOT_SET_FOR_TEST" in r.stderr
+    assert not [l for l in lines if " alert " in l + " "]
+    for stream in (r.stdout, r.stderr):
+        assert [s[:3] for s in _stamps(stream)] == [
+            ("tuesday", "live", "started"),
+            ("tuesday", "live", "finished, exit 1")], stream
+
+
+def test_a_killed_run_logs_finished_and_still_dies_by_the_signal(tree):
+    import signal
+    py = tree / ".venv" / "bin" / "python"
+    py.write_text(PY_STUB.replace("  collect) exit 0 ;;",
+                                  "  collect) sleep 2; exit 0 ;;"))
+    log = tree / "stub.log"
+    e = dict(os.environ)
+    for k in ("SFFL_INJURY_FEED", "SFFL_CBS_DESIGNATIONS", "DRY_RUN"):
+        e.pop(k, None)
+    e.update(STUB_LOG=str(log), CLAUDE_BIN="/nonexistent/claude-must-not-run")
+    p = subprocess.Popen(["/bin/bash", str(tree / "ops" / "run_alert.sh"),
+                          "tuesday"], env=e, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True)
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if log.exists() and " collect " in log.read_text():
+            break
+        time.sleep(0.05)
+    p.send_signal(signal.SIGTERM)
+    out, err = p.communicate(timeout=30)
+    assert p.returncode == -signal.SIGTERM
+    for stream in (out, err):
+        assert [s[:3] for s in _stamps(stream)] == [
+            ("tuesday", "live", "started"),
+            ("tuesday", "live", "finished, killed by SIGTERM")], stream

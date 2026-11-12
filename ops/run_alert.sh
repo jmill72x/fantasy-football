@@ -41,6 +41,40 @@ fi
 cd "$(dirname "$0")/.."
 mkdir -p logs data/captures
 
+# A DATED LINE AT EACH END OF EVERY RUN (2026-11-11). launchd appends every
+# run to logs/alert-<kind>.log (stdout) and .err (stderr) with no date of its
+# own, and on 10-30 an August block was read as that day's. Both files now
+# get "=== run_alert <kind> (live|dry run) started <date> ===" first and
+# "... finished, exit <n> <date> ===" last: `grep -n '^=== run_alert'
+# logs/alert-friday.log` lists every run, and today's block is below the
+# last "started". The "finished" line comes from an EXIT trap (2026-11-12),
+# so a `set -u` abort or an early exit still closes the block with its real
+# exit code. A TERM, INT or HUP logs "finished, killed by SIG<name>" and then
+# re-raises the signal, so the script still dies by it and launchd records the
+# same status as before. Bash acts on a signal only once the command in the
+# foreground returns, and nothing can log a SIGKILL.
+if [ -n "$DRY_RUN_FLAG" ]; then RUN_MODE="dry run"; else RUN_MODE="live"; fi
+run_stamp() {
+    local line="=== run_alert $KIND ($RUN_MODE) $1 $(date '+%Y-%m-%d %H:%M:%S %Z') ==="
+    echo "$line"
+    echo "$line" >&2
+}
+on_exit() {
+    local rc=$?
+    run_stamp "finished, exit $rc"
+    exit "$rc"
+}
+on_signal() {
+    trap - EXIT "$1"
+    run_stamp "finished, killed by SIG$1"
+    kill -s "$1" $$
+}
+trap on_exit EXIT
+trap 'on_signal TERM' TERM
+trap 'on_signal INT' INT
+trap 'on_signal HUP' HUP
+run_stamp started
+
 # THE INJURY FEED. Since the StatsDeck switch the alert's injuries come from
 # `sffl injuries-fetch` (nflverse, Sleeper and ESPN's public feed; see
 # docs/plans/2026-10-20-replace-statsdeck.md), and CBS's own designations from
@@ -194,7 +228,11 @@ else
     echo "dry run: weekly data collection skipped"
 fi
 
-if [ "$ALERT_RC" -ne 0 ]; then
-    exit "$ALERT_RC"
+# The alert's own failure wins the exit code; collection's counts only when
+# the alert succeeded.
+RC="$ALERT_RC"
+if [ "$RC" -eq 0 ]; then
+    RC="$COLLECT_RC"
 fi
-exit "$COLLECT_RC"
+# The EXIT trap (top) logs the "finished" line.
+exit "$RC"

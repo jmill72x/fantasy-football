@@ -58,8 +58,8 @@ which on this page is the stats line. `_iter_lines` now gives an id-less row
 line the id of the first id-carrying line below it, and only when that line
 is the same row's own: the search stops at the next line that starts like a
 row (`_ROW_START`, even one `_ROW` cannot read, and a bye row's own id line
-is one), at the RESERVES marker or the table's footer, and after
-`_ID_LOOKAHEAD` lines. So an id can never cross from one row to another; a
+is one), at any line with a row's bullet (since 2026-11-11), at the
+RESERVES marker or the table's footer, and after `_ID_LOOKAHEAD` (3) lines. So an id can never cross from one row to another; a
 row whose stats line carries no id keeps "" and the composite join, as
 before. Fixed here rather than in `capture`, so every roster page already
 saved (the data repo's weekly units) reads its ids too, and the eight
@@ -196,11 +196,18 @@ _ROW_START = re.compile(r"^\t(?:%s)\t" % _POS)
 
 # How many lines below an id-less row line its own id may sit. The live
 # shape needs two (the kickoff time, then the stats line, measured on every
-# saved roster page of 2026-10-19 and 10-20); the rest is room for a game-time
-# cell that renders on more than one line (a game in progress has never been
-# captured). The row-start and end-of-table stops below are what keep an id
-# on its own row; this bound only keeps the search short.
-_ID_LOOKAHEAD = 4
+# saved roster page of 2026-10-19 to 10-24); the third is room for a
+# game-time cell that renders on two lines (a game in progress has never been
+# captured). The row-start, row-bullet and end-of-table stops below are what
+# keep an id on its own row; this bound keeps the search short. 4 until
+# 2026-11-11, when Ultron's review (board 732f74ba) showed it reaching the
+# next row's line across a blank.
+_ID_LOOKAHEAD = 3
+
+# The bullet in a row's "NAME POS • TEAM" cell. Only a row line carries it (a
+# kickoff time or a stats line never does), so a line with it is another
+# row's even when `_ROW_START` cannot read its slot.
+_ROW_BULLET = "\u2022"
 
 # The line under the last reserve's row: "ACTIVE: 8 RESERVE: 5".
 _FOOTER_PREFIX = "ACTIVE:"
@@ -253,21 +260,28 @@ def _ends_table(line):
     return line == _RESERVES_MARKER or line.startswith(_FOOTER_PREFIX)
 
 
+def _starts_another_row(line):
+    """True for a line that belongs to the next row: one that starts like a
+    row, or any line with a row's bullet (a row `_ROW_START` cannot read)."""
+    return bool(_ROW_START.match(line)) or _ROW_BULLET in line
+
+
 def _continuation_id(lines, i):
     """The id `capture` put below the id-less row line `lines[i]`, or "".
 
     `lines` is `_iter_lines`' list of (player_id, prefix-stripped line). The
     first line below `i` that carries an id is this row's stats line - unless
     something that ends this row's text comes first: a line that starts like
-    a row (`_ROW_START`; a bye row's line, id and all, is the NEXT row's, so
-    it stops the search without being taken), the RESERVES marker or the
-    footer. Never more than `_ID_LOOKAHEAD` lines down. A row whose own id
+    a row (`_ROW_START`) or carries a row's bullet (a bye row's line, id and
+    all, is the NEXT row's, so it stops the search without being taken), the
+    RESERVES marker or the footer. Never more than `_ID_LOOKAHEAD` lines
+    down. A row whose own id
     line is missing (`_prefix_ids` could not place it) therefore gets "",
     never a neighbour's id.
     """
     for j in range(i + 1, min(len(lines), i + 1 + _ID_LOOKAHEAD)):
         player_id, line = lines[j]
-        if _ROW_START.match(line) or _ends_table(line):
+        if _starts_another_row(line) or _ends_table(line):
             return ""
         if player_id:
             return player_id
