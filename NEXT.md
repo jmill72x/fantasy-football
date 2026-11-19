@@ -30,12 +30,14 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
-## CODE HYGIENE (2026-11-11, review lows 11-12): staged on `john/hygiene`, not merged
+## CODE HYGIENE (2026-11-11, review lows 11-12): merged into `main` 11-12 as `657ca44`, live
 
 One overnight session on board b866639b (Jeff's general OK for queued work). Branch
-`john/hygiene` off `90853c6`, in the worktree
-`~/.local/state/jarvis/worktrees/fantasy-football-hygiene`; staged, not committed. Nothing
-here is live until the branch is merged into the main checkout (the jobs run that tree).
+`john/hygiene` off `90853c6`, committed as `657ca44` and fast-forwarded into `main` on
+11-12 10:58, so it has been live since the Friday 11-13 run (the alert logs carry dated
+`=== run_alert` lines from then on). The worktree
+`~/.local/state/jarvis/worktrees/fantasy-football-hygiene` is clean and merged; removing it
+waits for Jeff's OK (a deletion).
 
 - **The rescan uses the guard's weekly rule** (private tool, not in this repo; DATA
   ARCHIVE below). The data repo's `cbs/weekly/` pages and the live `data/captures/*.txt`
@@ -355,10 +357,24 @@ and intel gains four real items. The full result is in the plan, and the files a
   run's pages under the week they project (Tue 10-27, in week 7, files them under wk08),
   with its results unit still under the week just played.
 
-**The switch is built and waits for Jeff's OK (10-30).** It's the branch
-`switch/direct-injuries` (worktree `~/.local/state/jarvis/worktrees/fantasy-football-switch`,
-staged there, not committed): merging it into `main` is the switch, live at the next fire.
-Plan section 9 has the checklist item by item. In short:
+**The switch is LIVE: merged into `main` Mon 11-09 08:49 as `154807f`.** The first four
+switched runs were checked from the logs on 11-19 (read-only): Tue 11-10, Fri 11-13, Sun
+11-15 and Tue 11-17 all sent (ntfy and Discord), collect pushed each unit, and every
+source read `ok` each time: nflverse dated that morning, Sleeper `age_hours=0.0`, ESPN 800
+rows, CBS roster and projections 0 hours old, CBS labels in the intel block. Exit 0 for
+11-13, 11-15 and 11-17 (dated log lines); 11-10 predates the dated lines and has no WARN
+or ERROR. No `claude -p` transcript after 11-08, so StatsDeck is no longer called. Sun
+11-15 at 11:45 had game-day news (ESPN: Stevenson active in Munich) and a working change
+block against Friday's state (Questionable -> cleared/Active). **One display wart, not a
+regression** (StatsDeck's file did the same): on Tuesday nflverse's newest report is the
+week just played, and OFFICIAL STATUS shows it as "official as of <today>" with no week
+(11-10 showed week 9's Doubtful for Skattebo, 11-17 week 10's Questionables). The lineup
+gate reads CBS's week-scoped labels, not this, so no lineup advice was wrong. Fix idea:
+print the report's week, or skip official rows for a played week on Tuesday.
+**Still to do:** remove the merged `switch/direct-injuries` worktree
+(`~/.local/state/jarvis/worktrees/fantasy-football-switch`, clean; Jeff's OK, a deletion),
+then removal (plan section 10), which also waits for the Yahoo API for Pick 6s (not built).
+The branch's description, kept for the record:
 
 - `run_alert.sh` removes `injuries-<kind>.json`, then runs `sffl injuries-fetch --kind
   <kind> --allow-live-path` under a 300-second perl `alarm` kill (a dry run fetches as
@@ -382,9 +398,8 @@ Plan section 9 has the checklist item by item. In short:
   verifiable before the switch: how fresh Sleeper, ESPN and CBS are at Fri 16:45 and Sun
   11:45 (inactives), and the scheduled change state across runs.
 
-**Next:** merge on Mon 11-09 (Jeff, 10-31: he's away the week of 11-02), so Tue 11-10 16:45
-is the first switched run; then a clean week, then removal (plan section 10). After the merge, rewrite
-this section as done.
+**Done:** merged Mon 11-09; the first switched runs were clean (above). Next is removal
+(plan section 10).
 
 - **`fetch_injuries.sh` rebuilt with no shell and no writes (10-30, committed as
   `11c9464`; Jeff's option (a)).** The switch retires it; it stays a week as the
@@ -422,8 +437,12 @@ this section as done.
     report and 100 intel rows, arrays and key order identical to the 16:45 Friday file
     (only a trailing newline differs), and the session's one tool call was get_injuries.
     No alert was run and no live file written.
-  - Live since 10-30: Friday 10-30 16:45 ran it cleanly (162 report and 100 intel rows).
-    Its own rollback is `git checkout 4a9f2d9 -- ops/fetch_injuries.sh`.
+  - Live from 10-30 18:40. The Friday 10-30 16:45 run was still the old script (its
+    transcript shows Bash calls); the rebuilt one's first scheduled run was Sun 11-01
+    11:45, clean: 150 report and 100 intel rows, the digest sent, and its transcript's only
+    tool calls were get_injuries (checked 11-19). Tue 11-03 and Sun 11-08 were the same,
+    and the switch retired it after that. Its own rollback is `git checkout 4a9f2d9 --
+    ops/fetch_injuries.sh`.
 
 ## DATA ARCHIVE AND THE 2027 RUNBOOK (2026-10-19)
 
