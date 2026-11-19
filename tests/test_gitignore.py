@@ -17,7 +17,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 GITIGNORE = os.path.join(HERE, "..", ".gitignore")
 
 PRIVATE = [".venv", "venv", "data/extracts", "data/weekly", "data/captures",
-           "data/browser-profile", "data/cache", "logs", ".superpowers"]
+           "data/browser-profile", "data/cache", "logs", ".superpowers",
+           "raw", "exports"]
 
 
 @pytest.fixture

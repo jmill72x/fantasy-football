@@ -1627,8 +1627,9 @@ def _cmd_alert(args):
     from sffl.lineup import best_add_drop, delta
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import IdentityIndex, normalize_team
-    from sffl.injuries import for_roster, fresh_intel, load as load_injuries
-    from sffl.injuries import report_week, rows_to_reports, source_notes
+    from sffl.injuries import for_roster, fresh_intel, read as read_injuries
+    from sffl.injuries import (report_week_from, reports_from,
+                               rows_to_reports, source_notes_from)
     from sffl.league import load_league
     from sffl.lineup import Candidate, best_lineup
     from sffl.notify import send, send_discord, topic_from_keychain
@@ -2300,7 +2301,10 @@ def _cmd_alert(args):
         injury_fetch_failed = True
     else:
         try:
-            loaded = load_injuries(args.injuries)
+            # Parsed once; the rows, the source notes and the report's week
+            # all come from this one payload.
+            payload = read_injuries(args.injuries)
+            loaded = reports_from(payload)
             # The direct feed's rows carry CBS ids, so they are matched by id
             # first (and a TQB unit gets its quarterbacks' lines). StatsDeck's
             # carry none and keep the name match - see injuries.for_roster.
@@ -2309,12 +2313,12 @@ def _cmd_alert(args):
                                      roster_rows=injury_roster_rows)
             else:
                 reports = for_roster(loaded, roster_names)
-            injury_source_notes = source_notes(args.injuries) or None
+            injury_source_notes = source_notes_from(payload) or None
             # The official report's own week, printed in its heading (board
             # c9c9c5ea): on a Tuesday nflverse's newest report is the week
             # just played. Display only - the lineup gate reads CBS's
             # week-scoped labels, never this.
-            official_week = report_week(args.injuries)
+            official_week = report_week_from(payload)
             # Drop intel about games already played - see
             # injuries.INTEL_MAX_AGE_DAYS for the Week-2-note-in-Week-4 bug.
             reports, stale_intel_dropped = fresh_intel(
@@ -2400,7 +2404,13 @@ def _cmd_alert(args):
                    official_week=official_week,
                    official_week_played=(
                        args.kind == "tuesday" and official_week is not None
-                       and official_week <= args.week))
+                       and official_week <= args.week),
+                   # Friday or Sunday reading a report from before this
+                   # week (nflverse not yet updated): say so, so last
+                   # week's Questionable is not read as this week's.
+                   official_week_earlier=(
+                       args.kind != "tuesday" and official_week is not None
+                       and official_week < args.week))
 
     # A PARTIAL capture failure - one to three of the four position-group
     # pages, with the roster and at least one other page still good - must

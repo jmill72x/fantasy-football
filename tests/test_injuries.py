@@ -366,6 +366,11 @@ from sffl.injuries import report_week
     ({"week": True}, None),
     ({"week": 0}, None),
     (None, None),
+    # Capped at the last week a season can have (Ultron, 2026-11-19): a
+    # huge number would otherwise go into the push's heading.
+    ({"week": 22}, 22),
+    ({"week": 23}, None),
+    ({"week": 10 ** 40}, None),
 ])
 def test_report_week_reads_only_a_real_week(tmp_path, meta, expected):
     payload = {"report": [], "intel": []}
@@ -374,3 +379,22 @@ def test_report_week_reads_only_a_real_week(tmp_path, meta, expected):
     path = tmp_path / "injuries.json"
     path.write_text(json.dumps(payload))
     assert report_week(str(path)) == expected
+
+
+def test_the_parsed_payload_gives_what_the_path_gives(tmp_path):
+    # The alert parses the file once and hands the payload to the *_from
+    # functions; they must agree with the path versions (Ultron, 2026-11-19).
+    from sffl.injuries import (read, reports_from, report_week_from,
+                               source_notes_from)
+    payload = {"report": [{"player": "Nick Chubb", "team": "CLE",
+                           "status": "Out"}],
+               "intel": [{"player": "Ja'Marr Chase", "team": "CIN",
+                          "notes": "limited"}],
+               "meta": {"week": 11, "sources": {"espn": {
+                   "ok": False, "error": "blocked"}}}}
+    path = tmp_path / "injuries.json"
+    path.write_text(json.dumps(payload))
+    raw = read(str(path))
+    assert reports_from(raw) == load(str(path))
+    assert source_notes_from(raw) == source_notes(str(path))
+    assert report_week_from(raw) == report_week(str(path)) == 11

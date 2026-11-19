@@ -1282,3 +1282,48 @@ def test_the_report_week_changes_only_the_heading(alert_env, capsys):
     assert diff == [("OFFICIAL STATUS on your roster (week 1 report - those "
                      "games are played):",
                      "OFFICIAL STATUS on your roster:")]
+
+
+# --- report_week lows (board 5ddee12f, Ultron 2026-11-19) -------------------
+
+def test_friday_says_when_the_report_is_from_an_earlier_week(
+        alert_env, capsys):
+    # nflverse not yet updated: a week-1 report on a week-2 Friday.
+    code, out = alert_env.run(capsys, "--week", "2", "--injuries",
+                              str(_direct_file(alert_env.tmp, 1)))
+    assert ("PRACTICE / STATUS on your roster (week 1 report - an earlier "
+            "week):") in out
+    assert "Brock Bowers (LV) Doubtful" in out
+
+
+def test_tuesday_never_calls_the_played_week_earlier(alert_env, capsys):
+    code, out = alert_env.run(capsys, "--kind", "tuesday", "--week", "2",
+                              "--injuries",
+                              str(_direct_file(alert_env.tmp, 1)))
+    assert ("OFFICIAL STATUS on your roster (week 1 report - those games "
+            "are played):") in out
+    assert "an earlier week" not in out
+
+
+def test_a_week_past_the_season_is_not_printed(alert_env, capsys):
+    code, out = alert_env.run(capsys, "--kind", "tuesday", "--injuries",
+                              str(_direct_file(alert_env.tmp, 10 ** 40)))
+    assert "OFFICIAL STATUS on your roster:\n" in out
+    assert "report" not in out.split("OFFICIAL STATUS")[1].splitlines()[0]
+
+
+def test_the_injuries_file_is_parsed_once(alert_env, capsys, monkeypatch):
+    # It used to be opened and parsed three times (load, source_notes,
+    # report_week). Count every json.load of that file during the run.
+    real = json.load
+    parsed = []
+
+    def counting(fh, *a, **k):
+        parsed.append(getattr(fh, "name", None))
+        return real(fh, *a, **k)
+
+    path = str(_direct_file(alert_env.tmp, 1))
+    monkeypatch.setattr(json, "load", counting)
+    code, out = alert_env.run(capsys, "--injuries", path)
+    assert "PRACTICE / STATUS on your roster (week 1 report):" in out
+    assert parsed.count(path) == 1

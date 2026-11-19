@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1226` passed
+- full_suite: `1240` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -30,22 +30,42 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
-## OFFICIAL REPORT WEEK (2026-11-19): staged on `john/official-week`, not merged
+## FIX RUN 2026-11-19: staged on `john/fixrun-1119`, not merged
 
-Board c9c9c5ea. Worktree `~/.local/state/jarvis/worktrees/fantasy-football-official-week`,
-off `9827107`. The official block's heading now names the report's week, from the direct
+Worktree `~/.local/state/jarvis/worktrees/fantasy-football-fixrun-1119`, off `44b1521`.
+
+- **report_week lows (board 5ddee12f, Ultron's review of `john/official-week`).**
+  (1) `meta.week` above 22 (`injuries.MAX_NFL_WEEK`: 18 weeks plus four playoff rounds) is
+  treated as unknown, so a corrupt file can't put a huge number in the push. (2) A Friday or
+  Sunday run whose report is older than `--week` (nflverse not yet updated) says so:
+  `(week 10 report - an earlier week)`. Tuesday keeps "those games are played". (3) The
+  alert parses the injuries file once (`injuries.read`) and passes the payload to
+  `reports_from`, `source_notes_from` and `report_week_from`. `load`, `source_notes` and
+  `report_week` stay as path wrappers. A test counts the `json.load` calls on the file
+  during a run.
+- **`.gitignore` (board f068b603, John's part).** `raw/` and `exports/` lost their trailing
+  slash (`raw`, `exports`), the same fix the 11-12 hygiene lows made for the other private
+  paths, and both joined `tests/test_gitignore.py`'s PRIVATE list. Nothing tracked or
+  untracked is named `raw` or `exports` at any depth. Vision updates `deny-paths.conf` to
+  match.
+- 14 new test cases, each red on the old code (8 for the lows, 2 symlink cases for the
+  gitignore; the other 4 already passed and pin behaviour). Full suite 1240 passed.
+  **Next:** Jeff's C&P, then fast-forward `main` (live at the next fire), then remove this
+  worktree (his OK, a deletion).
+
+## OFFICIAL REPORT WEEK (2026-11-19): merged into `main` as `44b1521`, live
+
+Board c9c9c5ea. The official block's heading names the report's week, from the direct
 fetcher's `meta.week` (`injuries.report_week`): `OFFICIAL STATUS on your roster (week 11
 report):`, and on a Tuesday whose report is the week just played (`meta.week <= --week`)
 `(week 10 report - those games are played):`. Friday's `PRACTICE / STATUS` heading gets
 the same week. **Chosen over skipping the rows:** the official block never withholds
 rows (`alert.py`'s own rule), and last week's Out/Doubtful is still worth seeing on
 Tuesday. Display only: the lineup gate reads CBS's week-scoped labels and is untouched
-(`test_the_report_week_changes_only_the_heading` runs a Tuesday with and without
-`meta.week`, an Out row in both, and the messages differ in that one line). StatsDeck's
-files (no `meta`), a bad `meta.week`, or an unread feed keep the old heading. Checked on
-the real saved files: Tue 11-17 reads week 10 (played), Fri 11-13 week 10 (current). 13
-new tests, each red without the fix; full suite 1226 passed. **Next:** Jeff's C&P, then
-fast-forward `main` (live at the next fire), then remove this worktree (his OK).
+(`test_the_report_week_changes_only_the_heading`). StatsDeck's files (no `meta`), a bad
+`meta.week`, or an unread feed keep the old heading. The worktree
+`~/.local/state/jarvis/worktrees/fantasy-football-official-week` is merged; removing it
+waits for Jeff's OK (a deletion).
 
 ## CODE HYGIENE (2026-11-11, review lows 11-12): merged into `main` 11-12 as `657ca44`, live
 
@@ -386,9 +406,8 @@ block against Friday's state (Questionable -> cleared/Active). **One display war
 regression** (StatsDeck's file did the same): on Tuesday nflverse's newest report is the
 week just played, and OFFICIAL STATUS showed it as "official as of <today>" with no week
 (11-10 showed week 9's Doubtful for Skattebo, 11-17 week 10's Questionables). The lineup
-gate reads CBS's week-scoped labels, not this, so no lineup advice was wrong. **Fixed on
-branch `john/official-week` (11-19, staged, not merged; board c9c9c5ea):** see "OFFICIAL
-REPORT WEEK" above.
+gate reads CBS's week-scoped labels, not this, so no lineup advice was wrong. **Fixed in
+`44b1521` (11-19, live; board c9c9c5ea):** see "OFFICIAL REPORT WEEK" above.
 **Still to do:** remove the merged `switch/direct-injuries` worktree
 (`~/.local/state/jarvis/worktrees/fantasy-football-switch`, clean; Jeff's OK, a deletion),
 then removal (plan section 10), which also waits for the Yahoo API for Pick 6s (not built).

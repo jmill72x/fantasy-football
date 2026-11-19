@@ -1270,6 +1270,17 @@ def test_a_played_week_says_so_and_still_shows_every_row():
     assert "Nick Chubb (CLE) Out" in block
 
 
+@pytest.mark.parametrize("kind, heading", [
+    ("sunday", "OFFICIAL STATUS"), ("friday", "PRACTICE / STATUS")])
+def test_an_earlier_week_says_so_and_still_shows_every_row(kind, heading):
+    msg = compose(kind, 0, [CHUBB_OUT], LINEUP, [], official_week=10,
+                  official_week_earlier=True)
+    block = _block(msg, heading)
+    assert block.startswith(
+        "%s on your roster (week 10 report - an earlier week):" % heading)
+    assert "Nick Chubb (CLE) Out" in block
+
+
 def test_no_week_is_printed_when_nothing_was_read():
     msg = compose("tuesday", 0, [], LINEUP, [], official_week=10,
                   official_week_played=True, injury_error="no file")

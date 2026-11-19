@@ -2,8 +2,8 @@
 # exports are paid content. Never commit them to a public repo.
 data/extracts
 # league-owned history lives in data/league/ and IS tracked
-raw/
-exports/
+raw
+exports
 
 # Generated cheatsheets (Excel + PDF) in output/ ARE tracked since 2026-10-30
 # (Jeff: keep persistent copies of prior work). They carry only model-derived

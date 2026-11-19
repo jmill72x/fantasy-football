@@ -145,8 +145,28 @@ def rows_to_reports(rows, bucket):
     return [_row_to_report(row, bucket) for row in rows]
 
 
+def read(path):
+    """The saved injury payload, parsed once.
+
+    The alert reads one file for three things (its rows, the direct
+    fetcher's source notes and the report's week); it calls this once and
+    hands the result to `reports_from`, `source_notes_from` and
+    `report_week_from` instead of opening and parsing the file three times
+    (Ultron, 2026-11-19). `load`, `source_notes` and `report_week` are the
+    same functions for callers holding only a path.
+    """
+    with open(path) as fh:
+        return json.load(fh)
+
+
 def load(path):
-    """Every row in a saved `get_injuries` payload, as Report tuples.
+    """Every row in a saved injury payload, as Report tuples (see
+    `reports_from`)."""
+    return reports_from(read(path))
+
+
+def reports_from(raw):
+    """Every row in a parsed injury payload, as Report tuples.
 
     Expects the top-level shape `{"report": [...], "intel": [...]}` written
     by `ops/fetch_injuries.sh` - the two arrays StatsDeck itself returns,
@@ -154,8 +174,6 @@ def load(path):
     report is empty in the preseason); neither array's rows are optional
     once present.
     """
-    with open(path) as fh:
-        raw = json.load(fh)
     out = []
     for row in raw.get("report", []):
         out.append(_row_to_report(row, "official"))
@@ -165,6 +183,11 @@ def load(path):
 
 
 def source_notes(path):
+    """`source_notes_from` for a path."""
+    return source_notes_from(read(path))
+
+
+def source_notes_from(raw):
     """Digest lines from the direct fetcher's `meta`, each ready to print.
 
     `sffl injuries-fetch` records each source's outcome under `meta.sources`.
@@ -174,8 +197,6 @@ def source_notes(path):
     since a cached copy can be the previous good one. StatsDeck's files have no
     `meta`, so this returns [] for them.
     """
-    with open(path) as fh:
-        raw = json.load(fh)
     meta = raw.get("meta") if isinstance(raw, dict) else None
     sources = meta.get("sources") if isinstance(meta, dict) else None
     if not isinstance(sources, dict):
@@ -198,20 +219,31 @@ def source_notes(path):
     return notes
 
 
+# The last week an NFL season can have: 18 regular-season weeks and four
+# playoff rounds. A meta.week above it is not a week, and printing it would
+# let a corrupt file put an arbitrarily long number in the push (ntfy's
+# body limit is 4 KB; Ultron, 2026-11-19).
+MAX_NFL_WEEK = 22
+
+
 def report_week(path):
+    """`report_week_from` for a path."""
+    return report_week_from(read(path))
+
+
+def report_week_from(raw):
     """The NFL week of the official report in the file, or None.
 
     `sffl injuries-fetch` records it as `meta.week`: nflverse's newest week,
     which on a Tuesday is the week just played (11-10 and 11-17 printed the
     played week's designations as "official as of <today>", with no week).
-    StatsDeck's files have no `meta`, and anything that is not a positive
-    whole number is treated as unknown rather than guessed.
+    StatsDeck's files have no `meta`, and anything that is not a whole
+    number from 1 to MAX_NFL_WEEK is treated as unknown rather than guessed.
     """
-    with open(path) as fh:
-        raw = json.load(fh)
     meta = raw.get("meta") if isinstance(raw, dict) else None
     week = meta.get("week") if isinstance(meta, dict) else None
-    if isinstance(week, bool) or not isinstance(week, int) or week < 1:
+    if (isinstance(week, bool) or not isinstance(week, int)
+            or not 1 <= week <= MAX_NFL_WEEK):
         return None
     return week
 
