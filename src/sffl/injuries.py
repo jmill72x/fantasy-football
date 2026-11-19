@@ -198,6 +198,24 @@ def source_notes(path):
     return notes
 
 
+def report_week(path):
+    """The NFL week of the official report in the file, or None.
+
+    `sffl injuries-fetch` records it as `meta.week`: nflverse's newest week,
+    which on a Tuesday is the week just played (11-10 and 11-17 printed the
+    played week's designations as "official as of <today>", with no week).
+    StatsDeck's files have no `meta`, and anything that is not a positive
+    whole number is treated as unknown rather than guessed.
+    """
+    with open(path) as fh:
+        raw = json.load(fh)
+    meta = raw.get("meta") if isinstance(raw, dict) else None
+    week = meta.get("week") if isinstance(meta, dict) else None
+    if isinstance(week, bool) or not isinstance(week, int) or week < 1:
+        return None
+    return week
+
+
 def for_roster(reports, roster_names, roster_rows=None):
     """The rows naming a player on the roster, in roster order.
 

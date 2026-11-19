@@ -1250,3 +1250,28 @@ def test_the_direct_feeds_own_notes_are_printed_under_the_age_line():
 def test_no_source_notes_means_no_extra_line():
     msg = compose("tuesday", 0, [], LINEUP, [], injuries_age_minutes=2)
     assert "unavailable this run" not in msg
+
+
+# --- the official report's week (board c9c9c5ea) ----------------------------
+
+def test_the_official_heading_carries_the_report_week():
+    msg = compose("sunday", 0, [CHUBB_OUT], LINEUP, [], official_week=11)
+    assert "OFFICIAL STATUS on your roster (week 11 report):" in msg
+    assert "Nick Chubb (CLE) Out" in _block(msg, "OFFICIAL STATUS")
+
+
+def test_a_played_week_says_so_and_still_shows_every_row():
+    msg = compose("tuesday", 0, [CHUBB_OUT], LINEUP, [], official_week=10,
+                  official_week_played=True)
+    block = _block(msg, "OFFICIAL STATUS")
+    assert block.startswith(
+        "OFFICIAL STATUS on your roster (week 10 report - those games are "
+        "played):")
+    assert "Nick Chubb (CLE) Out" in block
+
+
+def test_no_week_is_printed_when_nothing_was_read():
+    msg = compose("tuesday", 0, [], LINEUP, [], official_week=10,
+                  official_week_played=True, injury_error="no file")
+    assert "OFFICIAL STATUS on your roster:\n" in msg
+    assert "week 10 report" not in msg

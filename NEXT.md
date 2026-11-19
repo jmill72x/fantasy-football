@@ -22,13 +22,30 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1213` passed
+- full_suite: `1226` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
 `top10_bias` is **+4.1025**, positive. It is not −0.25: that number was fabricated, sat in
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
+
+## OFFICIAL REPORT WEEK (2026-11-19): staged on `john/official-week`, not merged
+
+Board c9c9c5ea. Worktree `~/.local/state/jarvis/worktrees/fantasy-football-official-week`,
+off `9827107`. The official block's heading now names the report's week, from the direct
+fetcher's `meta.week` (`injuries.report_week`): `OFFICIAL STATUS on your roster (week 11
+report):`, and on a Tuesday whose report is the week just played (`meta.week <= --week`)
+`(week 10 report - those games are played):`. Friday's `PRACTICE / STATUS` heading gets
+the same week. **Chosen over skipping the rows:** the official block never withholds
+rows (`alert.py`'s own rule), and last week's Out/Doubtful is still worth seeing on
+Tuesday. Display only: the lineup gate reads CBS's week-scoped labels and is untouched
+(`test_the_report_week_changes_only_the_heading` runs a Tuesday with and without
+`meta.week`, an Out row in both, and the messages differ in that one line). StatsDeck's
+files (no `meta`), a bad `meta.week`, or an unread feed keep the old heading. Checked on
+the real saved files: Tue 11-17 reads week 10 (played), Fri 11-13 week 10 (current). 13
+new tests, each red without the fix; full suite 1226 passed. **Next:** Jeff's C&P, then
+fast-forward `main` (live at the next fire), then remove this worktree (his OK).
 
 ## CODE HYGIENE (2026-11-11, review lows 11-12): merged into `main` 11-12 as `657ca44`, live
 
@@ -367,10 +384,11 @@ or ERROR. No `claude -p` transcript after 11-08, so StatsDeck is no longer calle
 11-15 at 11:45 had game-day news (ESPN: Stevenson active in Munich) and a working change
 block against Friday's state (Questionable -> cleared/Active). **One display wart, not a
 regression** (StatsDeck's file did the same): on Tuesday nflverse's newest report is the
-week just played, and OFFICIAL STATUS shows it as "official as of <today>" with no week
+week just played, and OFFICIAL STATUS showed it as "official as of <today>" with no week
 (11-10 showed week 9's Doubtful for Skattebo, 11-17 week 10's Questionables). The lineup
-gate reads CBS's week-scoped labels, not this, so no lineup advice was wrong. Fix idea:
-print the report's week, or skip official rows for a played week on Tuesday.
+gate reads CBS's week-scoped labels, not this, so no lineup advice was wrong. **Fixed on
+branch `john/official-week` (11-19, staged, not merged; board c9c9c5ea):** see "OFFICIAL
+REPORT WEEK" above.
 **Still to do:** remove the merged `switch/direct-injuries` worktree
 (`~/.local/state/jarvis/worktrees/fantasy-football-switch`, clean; Jeff's OK, a deletion),
 then removal (plan section 10), which also waits for the Yahoo API for Pick 6s (not built).

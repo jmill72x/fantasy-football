@@ -1628,7 +1628,7 @@ def _cmd_alert(args):
     from sffl.cbs_weekly import parse as parse_weekly
     from sffl.identity import IdentityIndex, normalize_team
     from sffl.injuries import for_roster, fresh_intel, load as load_injuries
-    from sffl.injuries import rows_to_reports, source_notes
+    from sffl.injuries import report_week, rows_to_reports, source_notes
     from sffl.league import load_league
     from sffl.lineup import Candidate, best_lineup
     from sffl.notify import send, send_discord, topic_from_keychain
@@ -1664,6 +1664,7 @@ def _cmd_alert(args):
     cbs_injury_rows = []
     injury_roster_rows = None
     injury_source_notes = None
+    official_week = None
 
     capture_error = None
     # Distinct from `capture_error` - see `_AllProjectionsFailed`'s
@@ -2309,6 +2310,11 @@ def _cmd_alert(args):
             else:
                 reports = for_roster(loaded, roster_names)
             injury_source_notes = source_notes(args.injuries) or None
+            # The official report's own week, printed in its heading (board
+            # c9c9c5ea): on a Tuesday nflverse's newest report is the week
+            # just played. Display only - the lineup gate reads CBS's
+            # week-scoped labels, never this.
+            official_week = report_week(args.injuries)
             # Drop intel about games already played - see
             # injuries.INTEL_MAX_AGE_DAYS for the Week-2-note-in-Week-4 bug.
             reports, stale_intel_dropped = fresh_intel(
@@ -2343,6 +2349,7 @@ def _cmd_alert(args):
             # from BaseException and are still not caught here.
             reports = []
             injuries_age_minutes = None
+            official_week = None
             injury_error = (
                 "%s could not be parsed (%s: %s). The file EXISTS, so the "
                 "fetch step ran - this is a payload problem, not a failed "
@@ -2389,7 +2396,11 @@ def _cmd_alert(args):
                    stale_intel_dropped=stale_intel_dropped,
                    next_week=args.week + 1, next_bye=next_bye,
                    next_week_holes=next_week_holes,
-                   injury_source_notes=injury_source_notes)
+                   injury_source_notes=injury_source_notes,
+                   official_week=official_week,
+                   official_week_played=(
+                       args.kind == "tuesday" and official_week is not None
+                       and official_week <= args.week))
 
     # A PARTIAL capture failure - one to three of the four position-group
     # pages, with the roster and at least one other page still good - must

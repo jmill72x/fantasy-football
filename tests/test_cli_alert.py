@@ -1219,3 +1219,66 @@ def test_without_week1_only_the_profile_is_checked(alert_env, capsys,
     head = alert_env.sent_calls[0][2].split("\n\n")[0]
     assert code == 1
     assert "league profile" in head and "week-1 date" not in head
+
+
+# --- the official report's week (board c9c9c5ea, 2026-11-19) ---------------
+#
+# On a Tuesday nflverse's newest report is the week just played, and the
+# digest showed it as "official as of <today>" with no week (11-10, 11-17).
+# The heading now carries the report's week, and says when those games are
+# over. Display only: everything else in the message is unchanged.
+
+def _direct_file(tmp, week, status="Doubtful"):
+    path = tmp / ("injuries-direct-%s.json" % week)
+    meta = {"sources": {"nflverse": {"ok": True}}}
+    if week is not None:
+        meta["week"] = week
+    path.write_text(json.dumps({"report": [{
+        "player": "Brock Bowers", "team": "LV", "position": "TE",
+        "status": status, "practice": "", "detail": "Knee",
+        "reported_date": "2026-11-16", "source": "nflverse",
+        "as_of": "2026-11-17 08:41 EST", "cbs_id": BOWERS_ID}],
+        "intel": [], "meta": meta}))
+    return path
+
+
+def test_tuesday_names_the_played_week_of_the_official_report(
+        alert_env, capsys):
+    code, out = alert_env.run(capsys, "--kind", "tuesday", "--injuries",
+                              str(_direct_file(alert_env.tmp, 1)))
+    assert ("OFFICIAL STATUS on your roster (week 1 report - those games "
+            "are played):") in out
+    assert "Brock Bowers (LV) Doubtful" in out
+
+
+def test_friday_names_the_current_week_of_the_official_report(
+        alert_env, capsys):
+    code, out = alert_env.run(capsys, "--injuries",
+                              str(_direct_file(alert_env.tmp, 1)))
+    assert "PRACTICE / STATUS on your roster (week 1 report):" in out
+    assert "games are played" not in out
+
+
+def test_a_file_without_a_week_keeps_the_old_heading(alert_env, capsys):
+    # StatsDeck's files, and anything with no usable meta.week.
+    code, out = alert_env.run(capsys, "--kind", "tuesday", "--injuries",
+                              str(_direct_file(alert_env.tmp, None)))
+    assert "OFFICIAL STATUS on your roster:\n" in out
+    assert "week 1 report" not in out
+
+
+def test_the_report_week_changes_only_the_heading(alert_env, capsys):
+    # Lineup gating, the best lineup, waivers and every row are untouched:
+    # the same run with and without meta.week differs in one line only.
+    # `Out` is used so a gate reading this file would show up in the diff.
+    _, with_week = alert_env.run(capsys, "--kind", "tuesday", "--injuries",
+                                 str(_direct_file(alert_env.tmp, 1, "Out")))
+    _, without = alert_env.run(capsys, "--kind", "tuesday", "--injuries",
+                               str(_direct_file(alert_env.tmp, None, "Out")))
+    a = [l for l in with_week.splitlines() if "minute" not in l]
+    b = [l for l in without.splitlines() if "minute" not in l]
+    diff = [(x, y) for x, y in zip(a, b) if x != y]
+    assert len(a) == len(b)
+    assert diff == [("OFFICIAL STATUS on your roster (week 1 report - those "
+                     "games are played):",
+                     "OFFICIAL STATUS on your roster:")]

@@ -352,3 +352,25 @@ def test_a_roster_row_whose_id_was_not_captured_matches_by_name_and_team():
     other_team = _row("Pat Example", "MIA", cbs_id="9000099")
     assert for_roster([with_id, other_team], ["Pat Example"],
                       roster_rows=roster) == [with_id]
+
+
+# --- report_week (board c9c9c5ea) -------------------------------------------
+
+from sffl.injuries import report_week
+
+
+@pytest.mark.parametrize("meta, expected", [
+    ({"week": 10}, 10),
+    ({}, None),
+    ({"week": "10"}, None),
+    ({"week": True}, None),
+    ({"week": 0}, None),
+    (None, None),
+])
+def test_report_week_reads_only_a_real_week(tmp_path, meta, expected):
+    payload = {"report": [], "intel": []}
+    if meta is not None:
+        payload["meta"] = meta
+    path = tmp_path / "injuries.json"
+    path.write_text(json.dumps(payload))
+    assert report_week(str(path)) == expected

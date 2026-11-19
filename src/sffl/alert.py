@@ -248,6 +248,21 @@ def _provenance(r):
     return "[%s]" % ", ".join(bits)
 
 
+def _official_week_note(week, played, injury_error):
+    """The official block heading's week, e.g. " (week 11 report)".
+
+    Empty when the week is unknown (StatsDeck's file) or nothing was read,
+    so those headings are exactly what they always were. A played week
+    says so: on Tuesday nflverse's newest report is the week just played,
+    and its rows' "official as of <today>" otherwise read as current.
+    """
+    if week is None or injury_error:
+        return ""
+    if played:
+        return " (week %d report - those games are played)" % week
+    return " (week %d report)" % week
+
+
 def _report_line(r):
     """One feed row. `source` and `reported_date` always travel with it."""
     bits = []
@@ -517,7 +532,8 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             projections_age_hours=None, trade_targets=None, trade_error=None,
             starters_on_bye=None, next_week=None, next_bye=None,
             next_week_holes=None, waiver_targets=None, waiver_error=None,
-            stale_intel_dropped=0, injury_source_notes=None):
+            stale_intel_dropped=0, injury_source_notes=None,
+            official_week=None, official_week_played=False):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -549,6 +565,14 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     fetcher's `meta` (a source that failed or was switched off, the Sleeper
     statuses' age), each printed under the age line; `None` for StatsDeck's
     file, which has none.
+
+    `official_week` is the NFL week of the official report (the direct
+    fetcher's `meta.week`; `None` for StatsDeck's file) and goes into the
+    official block's heading. `official_week_played` says those games are
+    over - a Tuesday run, whose newest nflverse report is the week just
+    played - and the heading says so, so last week's Doubtful is not read
+    as this week's. Display only: the rows are still all shown (the record
+    is never withheld), and the lineup gate never reads this block.
 
     `capture_error` and `projections_capture_error` are BOTH "nothing here
     can be trusted, short-circuit the whole digest" states, and are
@@ -788,7 +812,9 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     intel = [r for r in reports if r.source != "official"]
 
     if kind == "friday":
-        lines.append("PRACTICE / STATUS on your roster:")
+        lines.append("PRACTICE / STATUS on your roster%s:"
+                     % _official_week_note(official_week, official_week_played,
+                                           injury_error))
         # `practice` comes only from rows that carry it (the official report)
         # and is never inferred from prose. A blank field printed as "no practice
         # data" is a stated absence; printed silently it would read as "this
@@ -797,7 +823,9 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             lines.append("  (feed carried no practice data for your roster "
                          "today - status only below.)")
     else:
-        lines.append("OFFICIAL STATUS on your roster:")
+        lines.append("OFFICIAL STATUS on your roster%s:"
+                     % _official_week_note(official_week, official_week_played,
+                                           injury_error))
     if official:
         lines.extend(_report_line(r) for r in official)
     else:
