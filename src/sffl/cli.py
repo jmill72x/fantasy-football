@@ -1092,6 +1092,77 @@ def cmd_fit_market(args):
     return 0
 
 
+def cmd_score_auction(args):
+    """Score an auction's real prices against a model fitted before it.
+
+    Runbook step 12.1: the new season's prices against LAST season's
+    `market/<year-1>.yaml`, before `fit-market` sees them. The board is
+    valued exactly as `value --market` values it (`_value_pool`, same
+    curves, same persisted policy); only then are the prices loaded and
+    joined, through the same season guards `fit-market` uses. `value` refuses
+    `--market` with `--prices` because a board is either priced by a model or
+    fitted to prices; scoring is the third thing, so it gets its own command.
+    The arithmetic is `sffl.holdout`.
+    """
+    from sffl import holdout
+
+    path_season = projections_season_from_path(args.file)
+    if path_season is not None and path_season != args.year:
+        raise SystemExit(
+            "refusing to score: --year %d, but the projections file is %s, "
+            "whose path names season %d. The prices are scored against a "
+            "board valued from these projections, so the two seasons must "
+            "match. Correct --year or point --file at the %d extract."
+            % (args.year, args.file, path_season, args.year))
+
+    lg = load_league(args.league)
+    _season_mismatches(lg, args, year=args.year)
+
+    board = argparse.Namespace(**vars(args))
+    board.prices = None       # the board is priced by the model alone
+    board.policy = "starter"  # unused: --market's persisted policy wins
+    result = _value_pool(lg, board)
+    if result is None:
+        return 1
+    pool, _curve, _prices, market = result
+
+    evidence_prices = (market.evidence or {}).get("prices_file")
+    if market.season >= args.year or (
+            evidence_prices and os.path.normpath(evidence_prices)
+            == os.path.normpath(args.prices)):
+        _banner(
+            "NOT OUT OF SAMPLE",
+            "the %d model (fitted on %s) is being scored against %d prices "
+            "(%s). A model scored on prices it was fitted on, or on its own "
+            "season, measures in-sample fit, not how it predicts the next "
+            "auction. Step 12.1 scores the new season's prices against LAST "
+            "season's model." % (market.season, evidence_prices or "?",
+                                 args.year, args.prices))
+
+    try:
+        prices = _load_prices_announcing(args.prices, args.tqb_starters,
+                                         args.year)
+    except SeasonMismatchError as exc:
+        raise SystemExit(str(exc))
+
+    rows, unmatched = holdout.join(pool, prices)
+    print("score-auction: %d prices from %s against the %d model (%s)"
+          % (prices.total_rows, args.prices, market.season, args.market))
+    print("  %d of %d priced players join the board" % (len(rows), len(prices)))
+    if unmatched:
+        print("  UNMATCHED (add an alias or a Team QB map entry, then rerun): "
+              + ", ".join(unmatched))
+    if not rows:
+        print("error: no priced player joined the board; nothing to score")
+        return 1
+    print("  error = model minus paid: a negative bias means the room paid "
+          "more than the model said")
+    print("  K/DST are included at their flat price, as in the 2026 table\n")
+    for line in holdout.format_report(holdout.score(rows)):
+        print(line)
+    return 0
+
+
 def _avail_classifier(path, owner_codes):
     """Pick cbs_weekly's tab-path or space-path `classify_avail*` for `path`.
 
@@ -3183,6 +3254,26 @@ def main(argv=None):
     fm.add_argument("--force", action="store_true",
                     help="overwrite an existing model")
     fm.set_defaults(func=cmd_fit_market)
+
+    sa = sub.add_parser("score-auction",
+                        help="score an auction's real prices against a market "
+                             "model fitted before it (runbook step 12.1)")
+    sa.add_argument("--source", required=True)
+    sa.add_argument("--file", required=True)
+    sa.add_argument("--year", type=int, required=True,
+                    help="the auction's season: the prices' and projections'")
+    sa.add_argument("--set", default=None)
+    sa.add_argument("--league", default=DEFAULT_LEAGUE)
+    sa.add_argument("--curves", default=None,
+                    help="calibration curves YAML, as the board was priced")
+    sa.add_argument("--market", required=True,
+                    help="the model under test: LAST season's, e.g. "
+                         "market/2026.yaml for the 2027 auction")
+    sa.add_argument("--prices", required=True,
+                    help="the auction's real prices, season --year")
+    sa.add_argument("--tqb-starters", default=DEFAULT_TQB_STARTERS,
+                    help="Team QB starter map for --year")
+    sa.set_defaults(func=cmd_score_auction)
 
     wk = sub.add_parser("week", help="weekly waiver and start/sit decisions")
     wk.add_argument("--projections", required=True,

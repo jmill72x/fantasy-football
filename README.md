@@ -33,7 +33,7 @@ the current count is in NEXT.md's machine-checked block.
 | | |
 |---|---|
 | Scoring engine + ingest | ✅ working |
-| Value engine (VORP → dollars), plus a market model of what the room pays | ✅ working |
+| Value engine (VORP → dollars), plus a market model of what the room pays, scored against each new auction before it is refit (`sffl score-auction`) | ✅ working |
 | Excel + PDF renderers | ✅ working, used for the 2026 auction |
 | Silent auction planner | ✅ working |
 | In season: waivers and start/sit (`sffl week`), trade valuation (`sffl trade`), scheduled phone digests (`sffl alert`), each followed by the weekly private data collection (`sffl collect`) | ✅ working, running every week of the 2026 season |

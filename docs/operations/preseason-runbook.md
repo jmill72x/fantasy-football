@@ -251,11 +251,27 @@ Submit by the league's deadline. NEXT.md's 2026 sealed-bid entries hold the reas
 ### 12. After the auction: test, then refit
 
 1. **First, score the 2027 prices against `market/2026.yaml`** before any refit. It's the
-   one clean out-of-sample test of last year's model. **No command does this yet:** the
-   2026 result (NEXT.md, "2026 PRICES — THE HOLDOUT RESULT") was measured ad hoc, and
-   `value` refuses `--market` with `--prices`. A board item covers adding one; until
-   then, reproduce NEXT.md's tables (EST$ and MY$ mae, rmse and bias, overall and by
-   price band) against the joined prices before running step 3.
+   one clean out-of-sample test of last year's model, and step 3 spends it:
+
+   ```bash
+   PYTHONPATH=src ./.venv/bin/python -m sffl.cli score-auction \
+     --source sources/draftsharks.yaml \
+     --file "data/extracts/Draft Sharks/2027/<the board's file>" --year 2027 \
+     --curves calibration/2025.yaml --league leagues/sffl/2027.yaml \
+     --market market/2026.yaml \
+     --prices data/league/auction-rosters-2027.csv \
+     --tqb-starters identity/tqb-2027-starters.yaml
+   ```
+
+   Use the same `--file` and `--curves` the board was priced with (step 7). It values the
+   board exactly as `value --market` does, joins every price (K/DST included at their
+   flat price), and prints EST$ and MY$ mae, rmse and bias, overall and by price paid
+   ($26+, $10-25, $4-9, $1-3). Error is model minus paid, so a negative bias means the
+   room paid more. Fix every `UNMATCHED` name (step 11) and rerun until it says 156 of
+   156. It prints `CROSS-SEASON` (expected) and refuses prices or projections from another
+   season; `NOT OUT OF SAMPLE` means the wrong model was passed. Record both tables in
+   NEXT.md beside the 2026 result. Checked 2026-11-21: with the 2026 holdout's model it
+   reproduces that result to the cent (NEXT.md, "SCORE-AUCTION").
 2. Run the pre-registered RB/FLEX replacement test (NEXT.md, "The RB positional gap"). It
    needs 2026 season results (step 6 and "Collect and archive").
 3. Then fit the 2027 model:

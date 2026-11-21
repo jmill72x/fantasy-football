@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1240` passed
+- full_suite: `1255` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -30,7 +30,40 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
-## FIX RUN 2026-11-19: staged on `john/fixrun-1119`, not merged
+## SCORE-AUCTION (2026-11-21): staged on `john/auction-score`, not merged
+
+Board 17d056ec. Worktree `~/Projects/.worktrees/ff-auction-score`, off `ee3ba33`.
+**Runbook step 12.1 is now a command:** `sffl score-auction` scores an auction's real
+prices against a market model fitted before it (the command is in the runbook). It values
+the board through `_value_pool` exactly as `value --market` does, then loads `--prices`
+with `fit-market`'s season guards, joins every price (K/DST included at their flat price,
+the 2026 table's population) and prints EST$ and MY$ mae, rmse and bias, overall and by
+price paid ($26+, $10-25, $4-9, $1-3; error = model minus paid). The arithmetic is
+`src/sffl/holdout.py`. It names every unmatched price, refuses prices or projections from
+another season, and banners `NOT OUT OF SAMPLE` when the model is from `--year` or later
+or was fitted on these prices. 15 new tests on invented data (`tests/test_holdout.py`,
+`tests/test_cli_score_auction.py`), one of which checks its table against the CSV
+`value --market --out` writes.
+
+**It reproduces the 2026 holdout result to the cent** (the two tables under "2026 PRICES
+— THE HOLDOUT RESULT", every cell, rmse by band included). That needs the 08-27 model and
+curves, neither of which is a committed file today:
+- the model: `a = 2.2734002660002504`, `b = 0.5555893993003777`, policy `starter`,
+  fitted in-process on 129 non-flat 2025 prices against the 2026 extract (the
+  artifact-era, season-mismatched fit `fit-market` now refuses). Reconstructed
+  2026-11-21 by running the 08-27 code (`git archive fb387f6`) on the 08-23 extract;
+  that code also reproduces the recorded tables. Save it as a scratch `MarketModel`
+  (season 2025), never in `market/`.
+- the curves: `git show fb387f6:calibration/2025.yaml` (pre-isotonic). With today's
+  curves the same model gives EST$ mae $4.06 and $26+ EST$ bias -$9.38 instead.
+
+The band rmse the 2026 table left out, from that run: EST$ $9.67 / $6.50 / $4.67 / $4.46
+and MY$ $11.41 / $9.83 / $5.48 / $4.81 ($26+ down to $1-3).
+In-sample reference only (labelled so by the command): `market/2026.yaml` on the 2026
+prices gives EST$ mae $3.95, rmse $5.90, bias +$0.03, and $26+ EST$ bias -$7.51.
+**Next:** Jeff's C&P, then fast-forward `main`. August 2027: run it as step 12.1 says.
+
+## FIX RUN 2026-11-19: merged into `main` as `ee3ba33`, live
 
 Worktree `~/.local/state/jarvis/worktrees/fantasy-football-fixrun-1119`, off `44b1521`.
 
@@ -50,8 +83,7 @@ Worktree `~/.local/state/jarvis/worktrees/fantasy-football-fixrun-1119`, off `44
   match.
 - 14 new test cases, each red on the old code (8 for the lows, 2 symlink cases for the
   gitignore; the other 4 already passed and pin behaviour). Full suite 1240 passed.
-  **Next:** Jeff's C&P, then fast-forward `main` (live at the next fire), then remove this
-  worktree (his OK, a deletion).
+  Merged into `main` 11-19. Removing the worktree waits for Jeff's OK (a deletion).
 
 ## OFFICIAL REPORT WEEK (2026-11-19): merged into `main` as `44b1521`, live
 
@@ -653,7 +685,7 @@ the 2026 files standing in for 2027:
 | 6. Curves | OK as documented: `poc/build_calibration.py` reads `data/weekly/2025` and reproduces `calibration/2025.yaml` byte for byte |
 | 7, 8. Price the board, plan | OK: `render` and `plan` run as written and print the CROSS-SEASON note. Fixed: `value` takes no `--byes` |
 | 9, 10, 11. Print, sealed bid, league data | Unchanged: needs Jeff (the two-sheet print has still never been verified) |
-| 12. Out-of-sample test, refit | Gap: the out-of-sample price scoring has no command (the 2026 result was measured ad hoc), so it isn't reproducible. `fit-market` runs and reproduces `market/2026.yaml` (only `fitted_on` differs) |
+| 12. Out-of-sample test, refit | Gap closed 2026-11-21: `sffl score-auction` (SCORE-AUCTION above) does the out-of-sample price scoring and reproduces the 2026 result. `fit-market` runs and reproduces `market/2026.yaml` (only `fitted_on` differs) |
 | 13. In-season switch-over | OK: `ops/run_alert.sh`'s `WEEK1=` and `--curves` lines (cited by name since 11-11: line numbers drift with every edit). `ops/run_alert.sh tuesday --dry-run` ran (injury fetch stubbed, see below) |
 | Collect and archive | Built 2026-10-19 after the audit (above) |
 | Removed files | OK: nothing in the runbook, the in-season runbook, README or CLAUDE.md names a file the cleanup or rewrite removed |
