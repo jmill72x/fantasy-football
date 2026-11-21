@@ -176,7 +176,7 @@ def test_the_alert_scripts_week1_is_a_wednesday_and_reaches_the_alert():
     text, week1 = _week1_in_script()
     assert week1.weekday() == 2          # weeks run Wednesday to Tuesday
     assert '" "$WEEK1")' in text         # the week number is computed from it
-    alert = text[text.index("-m sffl.cli alert"):text.index("ALERT_RC=$?")]
+    alert = text[text.index("run_module.py sffl.cli alert"):text.index("ALERT_RC=$?")]
     assert '--week1 "$WEEK1"' in alert   # and the alert checks it
 
 

@@ -22,13 +22,60 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1281` passed
+- full_suite: `1300` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
 `top10_bias` is **+4.1025**, positive. It is not −0.25: that number was fabricated, sat in
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
+
+## ALERT IMPORT PATH 2026-11-21: staged on `john/alert-import-path` (board 1d0ce259)
+
+Ultron's 11-11 low: `run_alert.sh` cds to the repo root and ran `-m sffl.cli` / `-c`,
+which put the root first on `sys.path`, ahead of `src` and the standard library, so a
+stray `json.py`, `datetime.py`, `runpy.py` or `sffl.py` there would have been imported by
+the scheduled job (checked on the venv's 3.9.6: a planted `json.py` is imported by both).
+Worktree `~/Projects/.worktrees/ff-import-path`, off `af7900b`.
+- **The fix:** every Python call in `run_alert.sh` and `fetch_injuries.sh` runs with `-I`,
+  and sffl modules start through the new `ops/run_module.py` (`python -I ops/run_module.py
+  sffl.cli alert ...`): it inserts the absolute `src/` beside its own `ops/`, then calls
+  `runpy.run_module(..., run_name="__main__", alter_sys=True)`, which is what `-m` does, so
+  argv[0], `__main__` and the exit code are unchanged. It runs only `sffl.*` modules.
+  `PYTHONPATH=src` is gone from both scripts (`-I` ignores it).
+- **Ultron's GO, 4 lows folded in (11-21):** (1) `src` goes AFTER the stdlib, just before
+  the first site-packages entry (not first), and the launcher refuses to run, naming the
+  entry, when `src/` holds anything at its top level but `sffl` (dotfiles and `__pycache__`
+  ignored: the live tree's `src/` has a `.DS_Store`), since a `src/yaml.py` would still
+  shadow the installed yaml; (2) the `-I` check runs first with only `sys` imported, since
+  without `-I` ops/ is on the path and `import runpy` could load `ops/runpy.py`; (3) the
+  static test now fails on ANY python mention in the two scripts that isn't one of the
+  approved forms (`PY=`, `"$PY" -I -c`, `-I ops/run_module.py sffl.*`), with nine bad
+  lines as negatives; (4) the runbook's by-hand commands use the launcher form.
+- **Why this way:** `-P` / `PYTHONSAFEPATH` are 3.11+. `-I` (3.4+) drops both the cwd and
+  the script's folder from `sys.path`, and implies `-E` and `-s`; the venv's site-packages
+  still load (checked: playwright, yaml). The cwd has to stay the repo root (sffl's default
+  paths are repo-relative), so "cd somewhere safe" was out, and a pip install of sffl into
+  the venv would be an install (Ultron first). No `PYTHON*` variable was set by launchd,
+  so `-E` changes nothing live.
+- **Tests** (`tests/test_run_alert.py`, 19 new cases; the stub now rejects any python call without
+  `-I` or outside `run_module.py`): a real run of the script with the real venv python on a
+  scratch root planted with `json`, `datetime`, `runpy`, `argparse`, `re` and `sffl` modules
+  in both the root and `ops/` (and `PYTHONPATH` pointed at the root) imports none of them,
+  with `src` between the stdlib and site-packages; a stray `json.py`, `yaml.py`, `yaml/` or
+  `sffl.py` in `src/` is refused before any import; a control
+  shows the old `-m` call does import the plant; `run_module.py` refuses without `-I`,
+  keeps `-m`'s argv and exit code; a static check that no python line in the two scripts
+  is unapproved. The real-run test fails on `af7900b`'s script, and the real-run, no-`-I`
+  and stray tests fail on the first staged launcher. Two static anchors in
+  `test_collect.py` / `test_season.py` moved to the new command. Full suite 1300 collected,
+  1297 passed and 3 skipped in the worktree (no `data/weekly`), lint clean.
+- **Live from the next fire time once merged** (the jobs run the working tree). The real CLI
+  answered `alert`, `collect` and `injuries-fetch --help` through the launcher under `-I`;
+  no live run or dry run was made.
+- Runbook: `docs/operations/in-season-alerting.md`, after the plist list, and its collect
+  retry now uses the launcher. Older plans and the preseason runbook still show
+  `PYTHONPATH=src ... -m sffl.cli` for one-off commands run by hand.
 
 ## LOWS 2026-11-21: in `main` as `2ae0008`; Ultron's run_alert lows staged
 

@@ -76,7 +76,9 @@ DONE." \
 # The parser writes OUT only from a get_injuries result it found, with both
 # arrays present, via a temp file and a rename, so a partial file is never
 # left at OUT. On any failure, make sure nothing is there.
-if ! PYTHONPATH="$REPO/src" "$REPO/.venv/bin/python" -m sffl.injury_stream \
+# -I and ops/run_module.py: nothing is imported from the working directory
+# (see run_alert.sh, "NOTHING IS IMPORTED FROM THE REPO ROOT").
+if ! "$REPO/.venv/bin/python" -I "$REPO/ops/run_module.py" sffl.injury_stream \
         "$STREAM" "$OUT"; then
     rm -f "$OUT" "$OUT.tmp"
     exit 1

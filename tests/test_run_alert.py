@@ -28,8 +28,14 @@ SCRIPT = os.path.join(HERE, "..", "ops", "run_alert.sh")
 PY_STUB = r"""#!/bin/bash
 # argv log: one line per call, words separated by a space.
 echo "python $*" >> "$STUB_LOG"
-if [ "$1" = "-c" ]; then echo 8; exit 0; fi
-case "$3" in
+# Every call is isolated (-I) and every sffl call goes through
+# ops/run_module.py: nothing may import from the repo root (board 1d0ce259).
+if [ "$1" != "-I" ]; then echo "python call without -I" >> "$STUB_LOG"; exit 99; fi
+if [ "$2" = "-c" ]; then echo 8; exit 0; fi
+if [ "$2" != "ops/run_module.py" ] || [ "$3" != "sffl.cli" ]; then
+  echo "python call not through run_module" >> "$STUB_LOG"; exit 98
+fi
+case "$4" in
   injuries-fetch)
     out=""
     prev=""
@@ -518,3 +524,217 @@ def test_a_lost_first_term_is_sent_again_about_1s_in(tree):
     assert p.returncode == -signal.SIGTERM, err
     assert "did not exit" not in err
     assert _stamps(out)[-1][2] == "finished, killed by SIGTERM"
+
+
+# ------------------------------- nothing imported from the repo root (1d0ce259)
+#
+# `python -m` and `python -c` put the current directory first on sys.path, and
+# the job runs from the repo root, so a stray json.py there would have been
+# imported (Ultron 11-11). Python 3.9 has no -P, so every call runs with -I
+# and sffl starts through ops/run_module.py. These run the REAL venv python
+# (this test's own interpreter) on a scratch tree whose repo root and ops/
+# are full of planted modules, each of which writes to a log if it is ever
+# imported. src/ must hold only sffl (run_module.py refuses otherwise) and
+# goes after the stdlib, before site-packages (Ultron's review, 11-21).
+
+import sys  # noqa: E402
+
+RUN_MODULE = os.path.join(HERE, "..", "ops", "run_module.py")
+PLANTED = ("json", "datetime", "runpy", "argparse", "re", "sffl")
+PLANTED_IN = ("", "ops")      # the repo root, and run_module.py's own folder
+
+PLANT = """import os
+with open(os.environ["PLANT_LOG"], "a") as fh:
+    fh.write("planted %s imported\\n")
+"""
+
+# A stand-in sffl.cli in the scratch tree's src/: it imports what the real
+# one would, records where they came from, and answers each subcommand.
+FAKE_CLI = r"""import argparse, json, datetime, os, re, sys
+src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+stdlib = os.path.dirname(os.__file__)
+site = [i for i, p in enumerate(sys.path) if p.endswith("site-packages")]
+with open(os.environ["STUB_LOG"], "a") as fh:
+    fh.write("cli %s json=%s datetime=%s argparse=%s src_at=%d stdlib_at=%d "
+             "site_at=%d\n" % (
+        sys.argv[1], json.__file__, datetime.__file__, argparse.__file__,
+        sys.path.index(src), sys.path.index(stdlib), site[0]))
+if sys.argv[1] == "injuries-fetch":
+    out = sys.argv[sys.argv.index("--out") + 1]
+    with open(out, "w") as fh:
+        json.dump({"report": [], "intel": [], "meta": {}}, fh)
+sys.exit(0)
+"""
+
+
+def _plant(root):
+    for where in PLANTED_IN:
+        for name in PLANTED:
+            (root / where / ("%s.py" % name)).write_text(PLANT % name)
+
+
+@pytest.fixture
+def real_tree(tmp_path):
+    root = tmp_path / "repo"
+    (root / "ops").mkdir(parents=True)
+    (root / ".venv" / "bin").mkdir(parents=True)
+    (root / "src" / "sffl").mkdir(parents=True)
+    (root / "data" / "captures").mkdir(parents=True)
+    shutil.copy(SCRIPT, str(root / "ops" / "run_alert.sh"))
+    shutil.copy(RUN_MODULE, str(root / "ops" / "run_module.py"))
+    # The real interpreter, by its venv path (pyvenv.cfg is found from it).
+    _exe(str(root / ".venv" / "bin" / "python"),
+         '#!/bin/bash\nexec "%s" "$@"\n' % sys.executable)
+    (root / "src" / "sffl" / "__init__.py").write_text("")
+    (root / "src" / "sffl" / "cli.py").write_text(FAKE_CLI)
+    _plant(root)
+    return root
+
+
+def test_a_real_run_imports_nothing_from_the_repo_root(real_tree):
+    log = real_tree / "stub.log"
+    plant_log = real_tree / "plant.log"
+    e = dict(os.environ)
+    for k in ("SFFL_INJURY_FEED", "SFFL_CBS_DESIGNATIONS", "DRY_RUN",
+              "PYTHONPATH"):
+        e.pop(k, None)
+    # A PYTHONPATH pointing at the planted root is ignored too (-I implies -E).
+    e.update(STUB_LOG=str(log), PLANT_LOG=str(plant_log),
+             PYTHONPATH=str(real_tree),
+             CLAUDE_BIN="/nonexistent/claude-must-not-run")
+    r = subprocess.run(["/bin/bash", str(real_tree / "ops" / "run_alert.sh"),
+                        "friday"], env=e, capture_output=True, text=True,
+                       timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert not plant_log.exists(), (plant_log.read_text(), r.stderr)
+    lines = log.read_text().splitlines()
+    assert [l.split()[1] for l in lines] == [
+        "injuries-fetch", "alert", "collect"], (lines, r.stderr)
+    for l in lines:
+        fields = dict(f.split("=", 1) for f in l.split()[2:])
+        # src after the stdlib, before the venv's site-packages.
+        assert (int(fields["stdlib_at"]) < int(fields["src_at"])
+                < int(fields["site_at"])), l
+        for mod in ("json", "datetime", "argparse"):
+            assert not fields[mod].startswith(str(real_tree) + os.sep), l
+
+
+def test_the_old_command_did_import_the_planted_module(real_tree):
+    """The control: the pre-fix call really is fooled by this tree."""
+    plant_log = real_tree / "plant.log"
+    e = dict(os.environ, PLANT_LOG=str(plant_log), STUB_LOG=os.devnull,
+             PYTHONPATH="src")
+    subprocess.run([sys.executable, "-m", "sffl.cli", "alert"],
+                   cwd=str(real_tree), env=e, capture_output=True, timeout=60)
+    assert "planted" in plant_log.read_text()
+
+
+def test_run_module_refuses_to_run_without_dash_i(real_tree):
+    plant_log = real_tree / "plant.log"
+    e = dict(os.environ, PLANT_LOG=str(plant_log), STUB_LOG=os.devnull)
+    e.pop("PYTHONPATH", None)
+    r = subprocess.run([sys.executable, "ops/run_module.py", "sffl.cli",
+                        "alert"], cwd=str(real_tree), env=e,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2 and "python -I" in r.stderr, r.stderr
+    r = subprocess.run([sys.executable, "-I", "ops/run_module.py", "json"],
+                       cwd=str(real_tree), env=e, capture_output=True,
+                       text=True, timeout=60)
+    assert r.returncode == 2 and "usage" in r.stderr, r.stderr
+    assert not plant_log.exists()
+
+
+@pytest.mark.parametrize("stray", ["json.py", "yaml.py", "yaml", "sffl.py"])
+def test_run_module_refuses_a_stray_module_in_src(real_tree, stray):
+    """A stray src/json.py could not shadow the stdlib (src goes after it),
+    but a src/yaml.py would shadow the installed yaml: anything at src/'s top
+    level but the sffl package stops the run before any import."""
+    plant_log = real_tree / "plant.log"
+    log = real_tree / "stub.log"
+    target = real_tree / "src" / stray
+    if stray.endswith(".py"):
+        target.write_text(PLANT % stray)
+    else:
+        target.mkdir()
+        (target / "__init__.py").write_text(PLANT % stray)
+    e = dict(os.environ, PLANT_LOG=str(plant_log), STUB_LOG=str(log))
+    r = subprocess.run([sys.executable, "-I", "ops/run_module.py", "sffl.cli",
+                        "alert"], cwd=str(real_tree), env=e,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2, r.stderr
+    assert "refusing to run" in r.stderr and stray in r.stderr, r.stderr
+    assert not plant_log.exists() and not log.exists(), r.stderr
+
+
+def test_run_module_ignores_dotfiles_and_pycache_in_src(real_tree):
+    (real_tree / "src" / ".DS_Store").write_text("")
+    (real_tree / "src" / "__pycache__").mkdir()
+    log = real_tree / "stub.log"
+    e = dict(os.environ, PLANT_LOG=str(real_tree / "plant.log"),
+             STUB_LOG=str(log))
+    r = subprocess.run([sys.executable, "-I", "ops/run_module.py", "sffl.cli",
+                        "alert"], cwd=str(real_tree), env=e,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert log.read_text().startswith("cli alert ")
+
+
+def test_run_module_keeps_the_exit_code_and_argv_of_dash_m(real_tree):
+    cli = real_tree / "src" / "sffl" / "cli.py"
+    cli.write_text("import sys\nprint(repr(sys.argv))\nsys.exit(7)\n")
+    r = subprocess.run([sys.executable, "-I", "ops/run_module.py", "sffl.cli",
+                        "alert", "--kind", "friday"], cwd=str(real_tree),
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 7, r.stderr
+    assert r.stdout.strip() == repr([str(cli), "alert", "--kind", "friday"])
+
+
+# The only python calls the job's scripts may make: the venv's python with
+# -I, either running a -c snippet or starting an sffl module through
+# ops/run_module.py. Anything else that names python fails.
+APPROVED_PY = [
+    re.compile(r'^PY=\./\.venv/bin/python$'),
+    re.compile(r'"\$PY" -I -c "'),
+    re.compile(r'"\$PY" -I ops/run_module\.py sffl\.[a-z_.]+( |$)'),
+    re.compile(r'"\$REPO/\.venv/bin/python" -I "\$REPO/ops/run_module\.py" '
+               r'sffl\.[a-z_.]+( |$)'),
+]
+PY_MENTION = re.compile(r'python|\$\{?PY\b', re.I)
+
+
+def _unapproved_python(code):
+    """What is left of a line once its one approved python call is cut out,
+    if any python is left there."""
+    code = code.strip()
+    for pat in APPROVED_PY:
+        code = pat.sub(" ", code, count=1)
+    return code if PY_MENTION.search(code) else None
+
+
+def test_the_live_scripts_make_only_approved_python_calls():
+    """Every python call in the job's two scripts is one of the approved
+    forms (Ultron's review, 11-21: not only bin/python and "$PY")."""
+    seen = 0
+    for name in ("run_alert.sh", "fetch_injuries.sh"):
+        path = os.path.join(HERE, "..", "ops", name)
+        for n, line in enumerate(open(path), 1):
+            code = line.split("#", 1)[0]
+            if PY_MENTION.search(code):
+                seen += 1
+                assert _unapproved_python(code) is None, (name, n, line)
+    assert seen == 6      # PY=, the week, fetch, alert, collect, the stream
+
+
+@pytest.mark.parametrize("line", [
+    './.venv/bin/python -m sffl.cli alert',
+    '"$PY" -c "print(1)"',
+    '"$PY" -m sffl.cli alert',
+    'env PYTHONPATH=src "$PY" -I ops/run_module.py sffl.cli alert',
+    'python3 -I ops/run_module.py sffl.cli alert',
+    '/usr/bin/env python -c 1',
+    '"$PY" -I ops/other.py',
+    '"$PY" -I ops/run_module.py sffl.cli alert; python x.py',
+    'PY=python3',
+])
+def test_the_static_check_catches_other_python_calls(line):
+    assert _unapproved_python(line) is not None

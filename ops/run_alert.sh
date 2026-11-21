@@ -41,6 +41,18 @@ fi
 cd "$(dirname "$0")/.."
 mkdir -p logs data/captures
 
+# NOTHING IS IMPORTED FROM THE REPO ROOT (2026-11-21, Ultron's 11-11 low,
+# board 1d0ce259). `python -m` and `python -c` put the current directory -
+# here the repo root - first on sys.path, ahead of src and the standard
+# library, so a stray json.py, datetime.py or sffl.py left at the root would
+# have run inside the scheduled job. Every Python call below runs with -I
+# (isolated: neither the current directory nor the script's folder goes on
+# sys.path, and PYTHON* variables are ignored), and sffl modules start
+# through ops/run_module.py, which puts the absolute src/ first and then does
+# what -m does. Python 3.9 has no -P / PYTHONSAFEPATH (3.11+), and the cwd
+# must stay the repo root for sffl's repo-relative paths, hence this way.
+PY=./.venv/bin/python
+
 # A DATED LINE AT EACH END OF EVERY RUN (2026-11-11). launchd appends every
 # run to logs/alert-<kind>.log (stdout) and .err (stderr) with no date of its
 # own, and on 10-30 an August block was read as that day's. Both files now
@@ -193,7 +205,7 @@ export PATH="$(dirname "$CLAUDE_BIN"):$PATH"
 # with a STALE SEASON VALUES banner and makes the run exit non-zero.
 WEEK1="2026-09-09"
 
-WEEK=$(./.venv/bin/python -c "
+WEEK=$("$PY" -I -c "
 import datetime, sys
 # Weeks run Wednesday to Tuesday from WEEK1. Clamp to a minimum
 # of 1 so a run before the season starts (a pre-season dry-run, or a job
@@ -241,7 +253,7 @@ else
     fi
     run_child /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' \
         "$FETCH_TIMEOUT_S" \
-        env PYTHONPATH=src ./.venv/bin/python -m sffl.cli injuries-fetch \
+        "$PY" -I ops/run_module.py sffl.cli injuries-fetch \
         --kind "$FETCH_KIND" \
         --out "$INJ" \
         --allow-live-path
@@ -261,7 +273,7 @@ fi
 # logged in) and builds --projections-url from --week itself. Passing
 # either here would duplicate URL construction that already lives in
 # src/sffl/cli.py, with the two copies free to drift apart.
-run_child env PYTHONPATH=src ./.venv/bin/python -m sffl.cli alert \
+run_child "$PY" -I ops/run_module.py sffl.cli alert \
   --kind "$KIND" \
   --week "$WEEK" \
   --week1 "$WEEK1" \
@@ -294,7 +306,7 @@ if [ -z "$DRY_RUN_FLAG" ]; then
         friday)  RESULTS_WEEK=$((WEEK - 1)) ;;
         *)       RESULTS_WEEK=0 ;;
     esac
-    run_child env PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect \
+    run_child "$PY" -I ops/run_module.py sffl.cli collect \
       --kind "$KIND" \
       --week "$WEEK" \
       --since "$RUN_START" \

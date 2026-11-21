@@ -21,6 +21,18 @@ stays useful once the window shuts; the shopping list moved to Tuesday.
 All three are `launchd` **LaunchAgent**s (`ops/com.sffl.alert.<kind>.plist`), each
 running `ops/run_alert.sh <tuesday|friday|sunday>`.
 
+The script runs from the repo root, but **nothing it runs imports from there**
+(2026-11-21, board 1d0ce259). Every Python call is `./.venv/bin/python -I`, and each
+sffl step starts as `-I ops/run_module.py sffl.cli <command>` (the injury fetch's
+rollback script likewise for `sffl.injury_stream`), which puts the absolute `src/` first
+and then does what `-m` does. Before, `-m`/`-c` put the repo root first on `sys.path`,
+so a stray `json.py` there would have run in the job. `-I` also ignores `PYTHONPATH`
+and every other `PYTHON*` variable; Python 3.9 has no `-P`. To run a step by hand
+exactly as the job does, use the same form: `./.venv/bin/python -I ops/run_module.py
+sffl.cli alert ...`. It refuses to run without `-I`, and when `src/` holds anything at
+its top level but the `sffl` package (it names the entry: remove it); `src/` goes on
+the path after the standard library and before the venv's site-packages.
+
 `StartCalendarInterval`'s `Hour`/`Minute` are the **machine's local time**. This Mac's
 local time is already Eastern, which is the league's timezone, so 16:45/11:45 fire at
 4:45pm/11:45am ET exactly as intended and this needs **no timezone handling anywhere in
@@ -448,7 +460,7 @@ nothing), then remove the stale lock with
 
 To retry by hand, same day, from the repo root:
 ```
-PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect --kind tuesday --week <N> \
+./.venv/bin/python -I ops/run_module.py sffl.cli collect --kind tuesday --week <N> \
   --since <epoch the run started> --results-week <N>
 ```
 `<N>` is the run's own week, as `run_alert.sh` computed it: a Tuesday run's pages land

@@ -336,8 +336,8 @@ def test_run_alert_collects_after_the_alert_and_never_on_a_dry_run():
     the script itself, with every program stubbed)."""
     here = os.path.dirname(os.path.abspath(__file__))
     text = open(os.path.join(here, "..", "ops", "run_alert.sh")).read()
-    alert = text.index("-m sffl.cli alert")
-    coll = text.index("-m sffl.cli collect")
+    alert = text.index("run_module.py sffl.cli alert")
+    coll = text.index("run_module.py sffl.cli collect")
     assert alert < coll                                  # after the digest
     assert text.index("RUN_START=$(date +%s)") < text.index(
         'rm -f "$INJ" "$INJ.tmp"')                       # before any fetch
