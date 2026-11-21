@@ -139,6 +139,11 @@ def resolve_key(player_id, name, team, pos):
 _AMBIGUOUS = object()
 
 
+def _person(name, team):
+    """`(name, team)`, normalized as `player_key` normalizes them."""
+    return normalize_name(name), normalize_team(team)
+
+
 class IdentityIndex(object):
     """A CBS ↔ CBS lookup table for an ASYMMETRIC cross-source join:
     id-first, with a genuine TWO-STEP fallback to the (name, team, pos)
@@ -179,16 +184,22 @@ class IdentityIndex(object):
     def __init__(self):
         self._by_id = {}
         self._by_composite = {}
+        # For `disagreement` only: each id's (name, team) and whether each
+        # composite's row carried an id, both normalized as `player_key` is.
+        self._id_person = {}
+        self._composite_has_id = {}
 
     def add(self, player_id, name, team, pos, value):
         """Index `value`, identified by `(player_id, name, team, pos)`."""
         if player_id and player_id not in self._by_id:
             self._by_id[player_id] = value
+            self._id_person[player_id] = _person(name, team)
         composite = player_key(name, team, pos)
         if composite in self._by_composite:
             self._by_composite[composite] = _AMBIGUOUS
         else:
             self._by_composite[composite] = value
+            self._composite_has_id[composite] = bool(player_id)
 
     def get(self, player_id, name, team, pos):
         """The matching value, or `None` - id first, composite fallback.
@@ -202,6 +213,35 @@ class IdentityIndex(object):
         composite = player_key(name, team, pos)
         found = self._by_composite.get(composite)
         return found if found is not _AMBIGUOUS else None
+
+    def disagreement(self, player_id, name, team, pos):
+        """`(by_id, by_name)` when the id and the composite each find a row
+        and they are DIFFERENT rows; otherwise `None`.
+
+        `get` trusts the id, so a roster row whose id belongs to another
+        player (an id read off the wrong line, board 732f74ba) would be
+        scored as that player in silence. When both keys find something and
+        disagree, one of them is wrong and only a human can tell which; the
+        caller reports it. Neither key alone finding a row (a name spelled
+        differently on another page, an ambiguous composite) is no
+        disagreement: that is the fallback doing its job. Nor is a name
+        match on a row that lost its id and is the id's own player by name
+        and team: the same player listed on two position pages, one of them
+        without his id (Ultron, review of john/lows-1121).
+        """
+        if not player_id:
+            return None
+        by_id = self._by_id.get(player_id)
+        composite = player_key(name, team, pos)
+        by_name = self._by_composite.get(composite)
+        if by_id is None or by_name is None or by_name is _AMBIGUOUS:
+            return None
+        if by_id is by_name:
+            return None
+        if (not self._composite_has_id.get(composite)
+                and self._id_person[player_id] == _person(name, team)):
+            return None
+        return by_id, by_name
 
 
 FUZZY_ACCEPT = 92.0   # rapidfuzz WRatio; below this we ask rather than guess

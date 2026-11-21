@@ -504,3 +504,50 @@ def test_manifest_entries_rejects_a_line_without_the_double_space():
     with pytest.raises(ValueError) as e:
         col._manifest_entries("%s  ./a\nno-separator\n" % ("0" * 64))
     assert "line 2" in str(e.value) and "no-separator" not in str(e.value)
+
+
+# ------------------------ a git call that fails on the EXISTS path (11-21)
+#
+# Board 6ef63374 (Ultron 11-12): the EXISTS path read only stdout, so a failed
+# `ls-tree` (no output) counted a committed unit as never committed and handed
+# a hand edit on to the commit. Each git call there that decides what gets
+# committed now refuses on a non-zero exit.
+
+def _failing_runner(subcommand, nth=1):
+    """Real git, except the `nth` call to `git <subcommand>` exits 128."""
+    seen = {"n": 0}
+
+    def run(argv, **kw):
+        if argv[0] == "git" and argv[3] == subcommand:
+            seen["n"] += 1
+            if seen["n"] == nth:
+                return subprocess.CompletedProcess(argv, 128, "",
+                                                   "fatal: HAND-EDITED-ROW")
+        return subprocess.run(argv, **kw)
+    return run
+
+
+@pytest.mark.parametrize("subcommand,nth", [("ls-tree", 1), ("status", 1),
+                                            ("status", 2)])
+def test_a_failed_git_call_on_the_exists_path_is_a_refusal(
+        tmp_path, captures, data_repo, subcommand, nth):
+    d, since = captures
+    repo, bare = data_repo
+    fresh, _ = col.fresh_files(str(d), _capture_keys("tuesday"), since)
+    unit = [(6, "2026-10-20-tuesday", fresh, "n\n")]
+    steps = col.collect_units(unit, str(tmp_path / "a"), 2026, repo=str(repo))
+    assert not col.failed(steps)
+    head = _git("rev-parse", "HEAD", cwd=repo)
+    folder = repo / "2026" / "cbs" / "weekly" / "wk06" / "2026-10-20-tuesday"
+    (folder / "roster.txt").write_text("HAND-EDITED-ROW\n")
+    col.write_manifest(str(folder))
+    steps = col.collect_units(unit, str(tmp_path / "a"), 2026, repo=str(repo),
+                              runner=_failing_runner(subcommand, nth))
+    bad = col.failed(steps)
+    assert [s.where for s in bad] == ["repo"]
+    assert "git %s failed (exit 128)" % subcommand in bad[0].detail
+    assert "HAND-EDITED-ROW" not in bad[0].detail  # git's stderr is not quoted
+    assert _git("rev-parse", "HEAD", cwd=repo) == head
+    assert _git("rev-parse", "main", cwd=bare) == head
+    assert _git("status", "--porcelain", "--", "MANIFEST.sha256",
+                cwd=repo) == ""

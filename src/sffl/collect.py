@@ -245,6 +245,17 @@ def _git(repo, args, runner, timeout=60, env=None):
                   timeout=timeout, env=env)
 
 
+def _git_refusal(where, unit, what, result):
+    """A FAILED step for a git call that did not answer (non-zero exit).
+
+    Names the call and its exit code only: git's stderr can quote a path or
+    a line from the unit, and collect never prints the data it copies.
+    """
+    return Step(where, unit, FAILED,
+                "git %s failed (exit %d); nothing copied or committed"
+                % (what, result.returncode))
+
+
 def to_repo(unit_path, repo, season, week, unit, runner=subprocess.run):
     """Copy the archived unit into the data repo and add it to MANIFEST.sha256.
 
@@ -266,19 +277,30 @@ def to_repo(unit_path, repo, season, week, unit, runner=subprocess.run):
                 return Step(where, unit, FAILED, why), []
             # Copied by an earlier run that died before its commit: hand the
             # paths on so this run's commit picks them up.
+            # Every git answer on this path decides what gets committed, so
+            # a failed call is a refusal, never read as "nothing there"
+            # (Ultron 11-12, board 6ef63374: a failed ls-tree used to count
+            # the unit as never committed and hand a hand edit on).
             st = _git(repo, ["status", "--porcelain", "--", rel, MANIFEST],
                       runner)
+            if st.returncode != 0:
+                return _git_refusal(where, unit, "status", st), []
             if not st.stdout.strip():
                 return Step(where, unit, EXISTS, dest), []
             # A unit already in HEAD is never re-hashed: a hand edit inside it
             # (its own manifest fixed up to match) would go out in the job's
             # commit with a matching top-level hash. Only a unit no commit has
             # yet (a run that died before committing) is handed on.
-            if _git(repo, ["ls-tree", "-r", "--name-only", "HEAD", "--", rel],
-                    runner).stdout.strip():
+            tree = _git(repo, ["ls-tree", "-r", "--name-only", "HEAD", "--",
+                               rel], runner)
+            if tree.returncode != 0:
+                return _git_refusal(where, unit, "ls-tree", tree), []
+            if tree.stdout.strip():
                 unit_st = _git(repo, ["status", "--porcelain",
                                       "--untracked-files=all", "--", rel],
                                runner)
+                if unit_st.returncode != 0:
+                    return _git_refusal(where, unit, "status", unit_st), []
                 if unit_st.stdout.strip():
                     return Step(where, unit, FAILED,
                                 "%s: files differ from HEAD (%d path(s)); "

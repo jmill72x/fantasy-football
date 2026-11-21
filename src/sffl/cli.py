@@ -1815,6 +1815,9 @@ def _cmd_alert(args):
     # coverage across the four groups - occasional single misses are
     # normal, wholesale loss is not).
     id_coverage_losses = []
+    # Roster rows whose CBS id and (name, team, pos) find different
+    # projections: (RosterRow, by_id, by_name). See IdentityIndex.disagreement.
+    id_name_disagreements = []
 
     try:
         # ROSTER FIRST, its own capture() call, and any failure here still
@@ -2068,6 +2071,13 @@ def _cmd_alert(args):
             match = lookup_index.get(r.player_id, r.name, r.team, r.slot)
             if match is not None:
                 resolved[r] = match
+            # The id wins (above), but a row whose id and name each find a
+            # DIFFERENT projection is scored as someone it may not be: say
+            # so (board 2d495828, Ultron's idea from 732f74ba).
+            both = lookup_index.disagreement(r.player_id, r.name, r.team,
+                                             r.slot)
+            if both is not None:
+                id_name_disagreements.append((r, both[0], both[1]))
 
         # Which positions had NO usable data this run because their OWN
         # page failed to capture or parse - as opposed to a position no
@@ -2604,6 +2614,23 @@ def _cmd_alert(args):
             residual_banner.append("  - %s (%s, %s)" % (name, pos, team))
         body = body + "\n\n" + "\n".join(residual_banner)
 
+    # A roster row whose id and name point at different projections (see
+    # `id_name_disagreements`). The lineup above scored it by the id; this
+    # names both candidates, so the wrong one can be checked on CBS, and it
+    # counts toward the exit code like every other data problem here.
+    if (id_name_disagreements and not capture_error
+            and not projections_capture_error):
+        dis_banner = [
+            "!! ROSTER ID AND NAME DISAGREE on %d row(s): the row's CBS id "
+            "finds one projection and its name another. Scored by the id; "
+            "check the player on CBS:" % len(id_name_disagreements)]
+        for r, by_id, by_name in id_name_disagreements:
+            dis_banner.append(
+                "  - %s (%s): id -> %s (%s, %s), name -> %s (%s, %s)"
+                % (r.name, r.slot or "?", by_id.name, by_id.pos, by_id.team,
+                   by_name.name, by_name.pos, by_name.team))
+        body = body + "\n\n" + "\n".join(dis_banner)
+
     # At the TOP, unlike the banners above, and on every path (a capture
     # failure included): every number in the digest rests on these values,
     # and the first lines are what the phone's notification shows.
@@ -2688,7 +2715,9 @@ def _cmd_alert(args):
     # found, or a page's id coverage silently dropped to zero across every
     # row - `id_coverage_losses`, Task 3b review round 1 - or a residual
     # (name, pos, team) collision survived even the full composite key -
-    # see `residual_projection_duplicates`), or the projections failing a
+    # see `residual_projection_duplicates` - or a roster row whose id and
+    # name find different projections - `id_name_disagreements`), or the
+    # projections failing a
     # week/freshness check - `week_mismatch`, `stale_projections`: a lineup
     # built on the wrong week's or days-old numbers is wrong in a way no
     # other signal in this run reveals - or a delivery failure on either
@@ -2706,7 +2735,7 @@ def _cmd_alert(args):
                 or injury_fetch_failed or delivery_error or discord_error
                 or group_failures or designation_failures
                 or cross_group_duplicates or id_coverage_losses
-                or residual_projection_duplicates
+                or residual_projection_duplicates or id_name_disagreements
                 or week_mismatch or stale_projections
                 or season_mismatches) else 0
 

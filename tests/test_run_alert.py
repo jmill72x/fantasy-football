@@ -262,3 +262,148 @@ def test_a_killed_run_logs_finished_and_still_dies_by_the_signal(tree):
         assert [s[:3] for s in _stamps(stream)] == [
             ("tuesday", "live", "started"),
             ("tuesday", "live", "finished, killed by SIGTERM")], stream
+
+
+# launchd stops a job with SIGTERM and SIGKILLs it after ExitTimeOut (20 s by
+# default). Bash runs a trap only when the FOREGROUND command returns, so a
+# TERM during a long alert or collect used to wait for it and lose the race
+# to the SIGKILL (Ultron 11-12, board 6ef63374). The long steps now run as a
+# waited-on child: the trap runs at once, stops the child and logs.
+
+@pytest.mark.parametrize("step", ["alert", "collect", "injuries-fetch"])
+def test_a_term_during_a_long_step_stops_it_and_logs_at_once(tree, step):
+    import signal
+    py = tree / ".venv" / "bin" / "python"
+    text = PY_STUB
+    if step == "injuries-fetch":
+        env_mode = {"FETCH_MODE": "hang"}
+    else:
+        env_mode = {}
+        anchor = {"alert": "  alert)\n", "collect": "  collect) exit 0 ;;"}[step]
+        repl = {"alert": "  alert)\n    exec sleep 60 ;;\n  alert-unused)\n",
+                "collect": "  collect) exec sleep 60 ;;"}[step]
+        assert anchor in text
+        text = text.replace(anchor, repl)
+    py.write_text(text)
+    log = tree / "stub.log"
+    e = dict(os.environ)
+    for k in ("SFFL_INJURY_FEED", "SFFL_CBS_DESIGNATIONS",
+              "SFFL_INJURY_FETCH_TIMEOUT_S", "DRY_RUN", "FETCH_MODE"):
+        e.pop(k, None)
+    e.update(STUB_LOG=str(log), CLAUDE_BIN="/nonexistent/claude-must-not-run")
+    e.update(env_mode)
+    p = subprocess.Popen(["/bin/bash", str(tree / "ops" / "run_alert.sh"),
+                          "tuesday"], env=e, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True)
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if log.exists() and " %s " % step in log.read_text():
+            break
+        time.sleep(0.05)
+    time.sleep(0.3)                 # the stub has exec'd its sleep by now
+    t0 = time.time()
+    p.send_signal(signal.SIGTERM)
+    # communicate() returns only once the sleep, which holds the pipes, is
+    # gone: the child was stopped, not left behind.
+    out, err = p.communicate(timeout=30)
+    took = time.time() - t0
+    assert took < 5, took           # well inside launchd's 20 s
+    assert p.returncode == -signal.SIGTERM
+    for stream in (out, err):
+        assert [s[:3] for s in _stamps(stream)] == [
+            ("tuesday", "live", "started"),
+            ("tuesday", "live", "finished, killed by SIGTERM")], stream
+    if step != "collect":           # nothing after the stopped step ran
+        assert " collect " not in log.read_text()
+
+
+# Ultron's review of john/lows-1121 (L2): after the TERM the script waits for
+# the step (up to SFFL_STOP_WAIT_S, 10 s by default) so it can clean up - a
+# git inside collect releasing its index.lock - and only then logs and dies.
+
+def _start_and_stop(tree, collect_body, **env):
+    import signal
+    py = tree / ".venv" / "bin" / "python"
+    py.write_text(PY_STUB.replace("  collect) exit 0 ;;",
+                                  "  collect)\n%s ;;" % collect_body))
+    log = tree / "stub.log"
+    e = dict(os.environ)
+    for k in ("SFFL_INJURY_FEED", "SFFL_CBS_DESIGNATIONS", "SFFL_STOP_WAIT_S",
+              "SFFL_INJURY_FETCH_TIMEOUT_S", "DRY_RUN", "FETCH_MODE"):
+        e.pop(k, None)
+    e.update(STUB_LOG=str(log), CLAUDE_BIN="/nonexistent/claude-must-not-run")
+    e.update(env)
+    p = subprocess.Popen(["/bin/bash", str(tree / "ops" / "run_alert.sh"),
+                          "tuesday"], env=e, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE, text=True)
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if log.exists() and "collect ready" in log.read_text():
+            break
+        time.sleep(0.05)
+    t0 = time.time()
+    p.send_signal(signal.SIGTERM)
+    out, err = p.communicate(timeout=30)
+    return p, out, err, time.time() - t0, log.read_text()
+
+
+def test_a_stop_waits_for_the_step_to_clean_up_before_logging(tree):
+    import signal
+    body = ("    trap 'sleep 1; echo \"collect cleaned up\"; "
+            "echo \"collect cleaned up\" >> \"$STUB_LOG\"; exit 0' TERM\n"
+            "    echo \"collect ready\" >> \"$STUB_LOG\"\n"
+            "    while :; do sleep 0.1; done")
+    p, out, err, took, log = _start_and_stop(tree, body)
+    assert "collect cleaned up" in log      # the step finished its cleanup
+    # ...before the script logged and died, not after it, orphaned.
+    assert out.index("collect cleaned up") < out.index("killed by SIGTERM")
+    assert 1 <= took < 5, took
+    assert p.returncode == -signal.SIGTERM
+    assert _stamps(out)[-1][2] == "finished, killed by SIGTERM"
+    assert "did not exit" not in err
+
+
+def test_a_step_that_ignores_the_stop_is_waited_for_only_so_long(tree):
+    import signal
+    # Its own output goes elsewhere, so the test's pipes close when the
+    # script dies, not when the stuck step finally does.
+    body = ("    exec >/dev/null 2>&1\n"
+            "    trap '' TERM\n"
+            "    echo \"collect ready\" >> \"$STUB_LOG\"\n"
+            "    sleep 6")
+    p, out, err, took, _log = _start_and_stop(tree, body, SFFL_STOP_WAIT_S="1")
+    assert 1 <= took < 4, took
+    assert p.returncode == -signal.SIGTERM
+    assert "did not exit within 1s of SIGTERM" in err
+    assert _stamps(out)[-1][2] == "finished, killed by SIGTERM"
+
+
+def test_a_signal_during_the_fork_still_stops_the_child(tree):
+    """L1 (Ultron, john/lows-1121): a TERM between `... &` and `CHILD=$!`
+    used to find no child to stop, which then ran on, orphaned. Forced here
+    by a copy of the script that signals itself in exactly that gap."""
+    import signal
+    script = tree / "ops" / "run_alert.sh"
+    text = script.read_text()
+    anchor = '    ( trap - TERM INT HUP; exec "$@" ) &\n'
+    assert text.count(anchor) == 1
+    script.write_text(text.replace(anchor, anchor + "    kill -s TERM $$\n"))
+    log = tree / "stub.log"
+    e = dict(os.environ)
+    for k in ("SFFL_INJURY_FEED", "SFFL_CBS_DESIGNATIONS", "SFFL_STOP_WAIT_S",
+              "SFFL_INJURY_FETCH_TIMEOUT_S", "DRY_RUN"):
+        e.pop(k, None)
+    e.update(STUB_LOG=str(log), CLAUDE_BIN="/nonexistent/claude-must-not-run",
+             FETCH_MODE="hang")
+    p = subprocess.Popen(["/bin/bash", str(script), "tuesday"], env=e,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True)
+    try:
+        # The hung fetch holds the pipes for 30 s unless it was stopped.
+        out, _err = p.communicate(timeout=15)
+    finally:
+        if p.poll() is None:
+            p.kill()
+    assert p.returncode == -signal.SIGTERM
+    assert _stamps(out)[-1][2] == "finished, killed by SIGTERM"
+    assert " alert " not in log.read_text() + " "

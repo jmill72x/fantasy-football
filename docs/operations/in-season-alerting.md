@@ -154,7 +154,10 @@ The logs are append-only and keep every run since August. Since 2026-11-11 each 
 starts and ends with a dated line in both files (`=== run_alert friday (live) started
 2026-11-13 16:45:02 EST ===`, then `... finished, exit 0 <date> ===`, or `... finished,
 killed by SIGTERM <date> ===` when the job was stopped; an EXIT trap writes it since 11-12,
-so an early abort still gets one).
+so an early abort still gets one). Since 11-21 a stop during the fetch, the alert or
+collect ends that step at once and logs this line, well inside launchd's 20 s before its
+SIGKILL; a block with no "finished" line at all means a SIGKILL (or a crash of the shell
+itself).
 `grep -n '^=== run_alert' logs/alert-friday.log` lists the runs, and the latest one is
 everything below the last `started`. Blocks from before that date have no such line, so
 a grep hit above the first one (an `UNFILLED`, a `DEGRADED`) is an old run.
@@ -426,6 +429,18 @@ never changes, so the job refuses rather than re-hash it into its commit. Undo i
 `git -C ~/Projects/fantasy-football-data checkout HEAD -- <the unit's path>` (and delete
 any file you added there). **`MANIFEST.sha256 line <n> is malformed`** means that line of
 the top-level manifest isn't `<sha256>  <path>` (two spaces); fix or remove that line.
+**`COLLECT FAILED repo <unit>: git ls-tree failed (exit <n>)`** (or `git status`) means
+git didn't answer while the job checked a unit that is already on disk, so it couldn't
+tell whether that unit was committed; nothing is copied or committed. Run
+`git -C ~/Projects/fantasy-football-data status` to see why (a lock file, a broken
+index), fix that, and the next run carries on.
+**`fatal: Unable to create '.../fantasy-football-data/.git/index.lock': File exists`**
+(in a collect line) means a git in an earlier run was killed mid-write, most likely a
+job stopped harder than run_alert.sh's 10 s wait for its running step. First make sure
+no git is still running there (`pgrep -fl 'git -C .*fantasy-football-data'` prints
+nothing), then remove the stale lock with
+`rm ~/Projects/fantasy-football-data/.git/index.lock` and check
+`git -C ~/Projects/fantasy-football-data status`; the next run carries on.
 
 To retry by hand, same day, from the repo root:
 ```

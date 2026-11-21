@@ -51,8 +51,23 @@ mkdir -p logs data/captures
 # so a `set -u` abort or an early exit still closes the block with its real
 # exit code. A TERM, INT or HUP logs "finished, killed by SIG<name>" and then
 # re-raises the signal, so the script still dies by it and launchd records the
-# same status as before. Bash acts on a signal only once the command in the
-# foreground returns, and nothing can log a SIGKILL.
+# same status as before.
+#
+# THE LONG STEPS RUN AS A WAITED-ON CHILD (`run_child`, 2026-11-21). Bash runs
+# a trap only once the command in the FOREGROUND returns, and launchd, when it
+# stops a job, sends SIGTERM and then SIGKILL after the job's ExitTimeOut (20 s
+# by default). A foreground alert or collect can run for minutes, so before
+# this the trap usually never ran: the SIGKILL came first and the block had
+# no "finished" line. `wait` is interrupted by a trapped signal at once, so
+# `on_signal` runs straight away, sends SIGTERM to the child (a background
+# child ignores SIGINT, so TERM whatever arrived), waits up to
+# SFFL_STOP_WAIT_S (10 s, well under launchd's 20) for it to exit, so a git
+# inside collect can finish and release its index.lock, then logs and
+# re-raises. A signal that lands between the fork and `CHILD=$!` is held
+# (`PENDING`) and acted on once the child's pid is known, so it can never
+# miss the child. The short `$(...)` week computation stays in the
+# foreground. A SIGKILL itself can never be logged, and neither can a stop
+# that outlasts ExitTimeOut.
 if [ -n "$DRY_RUN_FLAG" ]; then RUN_MODE="dry run"; else RUN_MODE="live"; fi
 run_stamp() {
     local line="=== run_alert $KIND ($RUN_MODE) $1 $(date '+%Y-%m-%d %H:%M:%S %Z') ==="
@@ -64,15 +79,56 @@ on_exit() {
     run_stamp "finished, exit $rc"
     exit "$rc"
 }
+CHILD=""
+PENDING=""
+STOP_WAIT_S="${SFFL_STOP_WAIT_S:-10}"
+set_signal_traps() {
+    trap 'on_signal TERM' TERM
+    trap 'on_signal INT' INT
+    trap 'on_signal HUP' HUP
+}
+run_child() {
+    # Hold any signal across the fork: before `CHILD=$!` the handler could
+    # not know whom to stop. Not `trap ''`: an ignored signal is lost, and
+    # the child would inherit the ignore.
+    trap 'PENDING=TERM' TERM
+    trap 'PENDING=INT' INT
+    trap 'PENDING=HUP' HUP
+    # The child starts with every signal at its default (`trap -`), and its
+    # stdin is /dev/null, as for any background command (none reads stdin).
+    ( trap - TERM INT HUP; exec "$@" ) &
+    CHILD=$!
+    set_signal_traps
+    if [ -n "$PENDING" ]; then
+        on_signal "$PENDING"
+    fi
+    wait "$CHILD"
+    local rc=$?
+    CHILD=""
+    return "$rc"
+}
 on_signal() {
-    trap - EXIT "$1"
+    # No second signal interrupts the stop; the real one is re-raised below.
+    trap '' TERM INT HUP
+    trap - EXIT
+    if [ -n "$CHILD" ]; then
+        kill -s TERM "$CHILD" 2>/dev/null
+        local waited=0
+        while kill -0 "$CHILD" 2>/dev/null \
+                && [ "$waited" -lt $((STOP_WAIT_S * 10)) ]; do
+            sleep 0.1
+            waited=$((waited + 1))
+        done
+        if kill -0 "$CHILD" 2>/dev/null; then
+            echo "WARN: the running step did not exit within ${STOP_WAIT_S}s of SIGTERM" >&2
+        fi
+    fi
     run_stamp "finished, killed by SIG$1"
+    trap - "$1"
     kill -s "$1" $$
 }
 trap on_exit EXIT
-trap 'on_signal TERM' TERM
-trap 'on_signal INT' INT
-trap 'on_signal HUP' HUP
+set_signal_traps
 run_stamp started
 
 # THE INJURY FEED. Since the StatsDeck switch the alert's injuries come from
@@ -149,7 +205,7 @@ INJ="data/captures/injuries-${KIND}.json"
 # replace (it only replaces its own earlier output).
 rm -f "$INJ" "$INJ.tmp"
 if [ "$INJURY_FEED" = "statsdeck" ]; then
-    ops/fetch_injuries.sh "$INJ" || echo "WARN: injury fetch failed; continuing" >&2
+    run_child ops/fetch_injuries.sh "$INJ" || echo "WARN: injury fetch failed; continuing" >&2
 else
     # A dry run fetches as `--kind manual`: it never reads or writes the
     # scheduled change state, caches on its own, and leaves ESPN out (its
@@ -159,7 +215,7 @@ else
     else
         FETCH_KIND="$KIND"
     fi
-    /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' \
+    run_child /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV or die "exec: $!\n"' \
         "$FETCH_TIMEOUT_S" \
         env PYTHONPATH=src ./.venv/bin/python -m sffl.cli injuries-fetch \
         --kind "$FETCH_KIND" \
@@ -181,7 +237,7 @@ fi
 # logged in) and builds --projections-url from --week itself. Passing
 # either here would duplicate URL construction that already lives in
 # src/sffl/cli.py, with the two copies free to drift apart.
-PYTHONPATH=src ./.venv/bin/python -m sffl.cli alert \
+run_child env PYTHONPATH=src ./.venv/bin/python -m sffl.cli alert \
   --kind "$KIND" \
   --week "$WEEK" \
   --week1 "$WEEK1" \
@@ -214,7 +270,7 @@ if [ -z "$DRY_RUN_FLAG" ]; then
         friday)  RESULTS_WEEK=$((WEEK - 1)) ;;
         *)       RESULTS_WEEK=0 ;;
     esac
-    PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect \
+    run_child env PYTHONPATH=src ./.venv/bin/python -m sffl.cli collect \
       --kind "$KIND" \
       --week "$WEEK" \
       --since "$RUN_START" \

@@ -994,3 +994,40 @@ def test_a_single_missed_row_is_not_reported_as_id_coverage_lost(
     code, out = alert_env.run(capsys)
     assert code == 0
     assert "ID COVERAGE LOST" not in out
+
+
+def test_a_roster_row_whose_id_and_name_find_different_projections_is_reported(
+        alert_env, capsys, tmp_path):
+    """Board 2d495828 (Ultron's idea from 732f74ba): an id read off the
+    wrong roster line scores the row as another player in silence. Here the
+    roster page's ids for Ja'Marr Chase and Ladd McConkey are swapped: each
+    row's id finds the other's projection, its name its own. The lineup
+    still scores by the id (unchanged); the digest names both rows and both
+    candidates, and the run counts as degraded."""
+    with open(ROSTER_FIXTURE) as fh:
+        roster_text = fh.read()
+    assert roster_text.count("\nid=9845591\t") == 1
+    assert roster_text.count("\nid=9233899\t") == 1
+    roster_text = (roster_text.replace("\nid=9845591\t", "\nid=SWAP\t")
+                   .replace("\nid=9233899\t", "\nid=9845591\t")
+                   .replace("\nid=SWAP\t", "\nid=9233899\t"))
+    roster = tmp_path / "roster_swapped_ids.txt"
+    roster.write_text(roster_text)
+    alert_env.set_path("roster", roster)
+
+    code, out = alert_env.run(capsys)
+    assert code == 1
+    assert "BEST LINEUP" in out
+    assert "!! ROSTER ID AND NAME DISAGREE on 2 row(s)" in out
+    assert ("  - Ja'Marr Chase (WR): id -> Ladd McConkey (WR, LAC), "
+            "name -> Ja'Marr Chase (WR, CIN)") in out
+    assert ("  - Ladd McConkey (WR): id -> Ja'Marr Chase (WR, CIN), "
+            "name -> Ladd McConkey (WR, LAC)") in out
+    assert len(alert_env.sent_calls) == 1
+    assert "ROSTER ID AND NAME DISAGREE" in alert_env.sent_calls[0][2]
+
+
+def test_the_unmodified_fixtures_report_no_id_name_disagreement(
+        alert_env, capsys):
+    code, out = alert_env.run(capsys)
+    assert "ROSTER ID AND NAME DISAGREE" not in out

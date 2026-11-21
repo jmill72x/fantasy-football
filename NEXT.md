@@ -22,13 +22,53 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1255` passed
+- full_suite: `1270` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
 `top10_bias` is **+4.1025**, positive. It is not −0.25: that number was fabricated, sat in
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
+
+## LOWS 2026-11-21: staged on `john/lows-1121`, not merged
+
+Worktree `~/Projects/.worktrees/ff-lows-1121`, off `5ceb8f5`. Three small fixes, each
+with tests that failed on the old code (15 new cases; full suite 1270 passed). Ultron's
+review was a GO (0 critical/high/medium); his lows L1 to L4 are folded in (below).
+- **collect refuses a git call that fails** (board 6ef63374, Ultron 11-12). On the EXISTS
+  path (a unit already on disk) the `status` and `ls-tree` answers decide what gets
+  committed, and only their stdout was read, so a failed `ls-tree` counted a committed
+  unit as never committed and handed a hand edit on to the commit. Each now FAILS that
+  unit on a non-zero exit (`git <call> failed (exit n); nothing copied or committed`,
+  git's stderr not quoted). Runbook: "Weekly data collection".
+- **`run_alert.sh` handles a stop properly** (same item). Bash runs a trap only when
+  the foreground command returns, and launchd SIGKILLs 20 s (ExitTimeOut) after its
+  SIGTERM, so a stop during a long alert or collect never logged its "finished" line.
+  The fetch, the alert and collect now run through `run_child` (background, then
+  `wait`), so the trap runs at once, sends the child SIGTERM, logs `finished, killed by
+  SIGTERM` and re-raises. Exit codes, argv and the perl timeout (142) are unchanged; a
+  background child ignores SIGINT, so the trap always forwards TERM. Tested for real
+  with a 60 s stub at each step: the run ends in under 5 s. From Ultron's lows: a signal
+  between the fork and `CHILD=$!` is held (`PENDING`) and acted on once the pid is known
+  (L1; not `trap ''`, which would lose the signal and pass the ignore to the child, so
+  the child starts with `trap -`); after the TERM the script waits up to
+  `SFFL_STOP_WAIT_S` (10 s) for the step to exit, so a git in collect can release its
+  `index.lock`, and warns if it didn't (L2; runbook has the stale-lock recovery); the
+  child's stdin is /dev/null, as for any background command (L3, a comment).
+- **The alert reports a roster row whose id and name find different projections** (board
+  2d495828, Ultron's idea from 732f74ba). `IdentityIndex.disagreement` returns both rows
+  when the id and the (name, team, pos) key each find one and they differ (one key alone
+  finding a row, or an ambiguous composite, is no disagreement; nor, from Ultron's L4, is
+  a name match on a row without an id that is the id's own player by name and team: one
+  player on two position pages, his id lost on one). The lineup still scores
+  by the id; the digest gets `!! ROSTER ID AND NAME DISAGREE on N row(s)`, each row with
+  both candidates, and the run exits 1 like the other data banners. Replayed on all 14
+  archived units (10-19 to 11-20, 182 roster rows): both keys found the same projection
+  for every row, so no real run would have shown it.
+- **Board 1eff4ca8 checked:** all four 11-12 lows are in `main` (657ca44 is an ancestor;
+  the unslashed private paths, the "differ from HEAD" refusal, the malformed-line
+  `ValueError` and the EXIT trap, each with its tests, green in this suite).
+**Next:** Jeff's C&P, then fast-forward `main`; live at the next fire.
 
 ## SCORE-AUCTION (2026-11-21): staged on `john/auction-score`, not merged
 
@@ -144,9 +184,9 @@ waits for Jeff's OK (a deletion).
 - **Roster id boundary** (board 732f74ba, Ultron 10-21). `_continuation_id` also stops
   at any line with a row's bullet (`_ROW_BULLET`), even one `_ROW_START` can't read, and
   `_ID_LOOKAHEAD` is 3 (was 4). Two new tests, including the one Ultron named. Replayed old
-  vs new on all 13 saved real roster pages: identical, 169 of 169 rows with an id. Not
-  done (Ultron's optional idea): the alert reporting a row whose id and name lookups pick
-  different projections.
+  vs new on all 13 saved real roster pages: identical, 169 of 169 rows with an id. Ultron's
+  optional idea (report a row whose id and name pick different projections) is LOWS
+  2026-11-21, top.
 - **`output/*.pdf binary`** in a new `.gitattributes` (board 23b5f2cf).
 - **Dated run lines in the alert logs** (board c4dfbfe4). `ops/run_alert.sh` writes
   `=== run_alert <kind> (live|dry run) started <date> ===` first and `... finished, exit

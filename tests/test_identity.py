@@ -166,3 +166,66 @@ def test_identity_index_unknown_key_resolves_to_none():
     idx = IdentityIndex()
     idx.add("111", "Someone", "LAC", "WR", "row")
     assert idx.get("222", "Nobody", "XX", "K") is None
+
+
+# IdentityIndex.disagreement (board 2d495828): a row whose id and composite
+# each find a DIFFERENT stored row. Invented players.
+
+def _index():
+    from sffl.identity import IdentityIndex
+    idx = IdentityIndex()
+    a, b = object(), object()
+    idx.add("111", "Avery Example", "AAA", "WR", a)
+    idx.add("222", "Blake Sample", "BBB", "WR", b)
+    return idx, a, b
+
+
+def test_disagreement_names_both_rows_when_id_and_name_differ():
+    idx, a, b = _index()
+    # Blake's name and team with Avery's id: get trusts the id...
+    assert idx.get("111", "Blake Sample", "BBB", "WR") is a
+    # ...and disagreement names both.
+    assert idx.disagreement("111", "Blake Sample", "BBB", "WR") == (a, b)
+
+
+def test_no_disagreement_when_they_agree_or_one_key_finds_nothing():
+    idx, a, _b = _index()
+    assert idx.disagreement("111", "Avery Example", "AAA", "WR") is None
+    # Another page's spelling: only the id finds him.
+    assert idx.disagreement("111", "A. Example", "AAA", "WR") is None
+    # No id, or an id nothing has: only the name finds him.
+    assert idx.disagreement(None, "Avery Example", "AAA", "WR") is None
+    assert idx.disagreement("999", "Avery Example", "AAA", "WR") is None
+
+
+def test_an_ambiguous_composite_is_no_disagreement():
+    from sffl.identity import IdentityIndex
+    idx = IdentityIndex()
+    a, b, c = object(), object(), object()
+    idx.add("111", "Casey Twin", "CCC", "RB", a)
+    idx.add("222", "Casey Twin", "CCC", "RB", b)
+    idx.add("333", "Drew Other", "DDD", "RB", c)
+    assert idx.disagreement("333", "Casey Twin", "CCC", "RB") is None
+
+
+def test_the_same_player_on_two_pages_one_without_his_id_is_no_disagreement():
+    # Ultron's L4: listed under two positions, his id kept on one page and
+    # lost on the other. The id and the name find two rows, but they are one
+    # player (same name and team, the name row has no id).
+    from sffl.identity import IdentityIndex
+    idx = IdentityIndex()
+    on_te_page, on_wr_page = object(), object()
+    idx.add("444", "Evan Dual", "EEE", "TE", on_te_page)
+    idx.add(None, "Evan Dual", "EEE", "WR", on_wr_page)
+    assert idx.disagreement("444", "Evan Dual", "EEE", "WR") is None
+    # The name row carrying an id of its own, or another team, still counts.
+    idx2 = IdentityIndex()
+    idx2.add("444", "Evan Dual", "EEE", "TE", on_te_page)
+    idx2.add(None, "Evan Dual", "FFF", "WR", on_wr_page)
+    assert idx2.disagreement("444", "Evan Dual", "FFF", "WR") == (
+        on_te_page, on_wr_page)
+    idx3 = IdentityIndex()
+    idx3.add("444", "Evan Dual", "EEE", "TE", on_te_page)
+    idx3.add("555", "Evan Dual", "EEE", "WR", on_wr_page)
+    assert idx3.disagreement("444", "Evan Dual", "EEE", "WR") == (
+        on_te_page, on_wr_page)
