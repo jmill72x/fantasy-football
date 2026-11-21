@@ -157,7 +157,11 @@ killed by SIGTERM <date> ===` when the job was stopped; an EXIT trap writes it s
 so an early abort still gets one). Since 11-21 a stop during the fetch, the alert or
 collect ends that step at once and logs this line, well inside launchd's 20 s before its
 SIGKILL; a block with no "finished" line at all means a SIGKILL (or a crash of the shell
-itself).
+itself). After its SIGTERM the script gives the step `SFFL_STOP_WAIT_S` seconds to exit
+(launchd sets nothing, so 10; a test may set 0 to 15, and any other value logs a WARN and
+uses 10), and sends it a second SIGTERM about 1 s in if it is still running, in case the
+first was lost. The signal logged and re-raised is the first one bash handles; if two land
+at once, the lower-numbered (bash 3.2 runs pending traps in signal-number order).
 `grep -n '^=== run_alert' logs/alert-friday.log` lists the runs, and the latest one is
 everything below the last `started`. Blocks from before that date have no such line, so
 a grep hit above the first one (an `UNFILLED`, a `DEGRADED`) is an old run.

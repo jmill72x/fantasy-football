@@ -61,10 +61,11 @@ mkdir -p logs data/captures
 # no "finished" line. `wait` is interrupted by a trapped signal at once, so
 # `on_signal` runs straight away, sends SIGTERM to the child (a background
 # child ignores SIGINT, so TERM whatever arrived), waits up to
-# SFFL_STOP_WAIT_S (10 s, well under launchd's 20) for it to exit, so a git
-# inside collect can finish and release its index.lock, then logs and
-# re-raises. A signal that lands between the fork and `CHILD=$!` is held
-# (`PENDING`) and acted on once the child's pid is known, so it can never
+# SFFL_STOP_WAIT_S (10 s, well under launchd's 20; a whole number from 0 to
+# 15, anything else means 10) for it to exit, so a git inside collect can
+# finish and release its index.lock, then logs and re-raises. A signal that
+# lands between the fork and `CHILD=$!` is held (`PENDING`, the first one
+# bash handles) and acted on once the child's pid is known, so it can never
 # miss the child. The short `$(...)` week computation stays in the
 # foreground. A SIGKILL itself can never be logged, and neither can a stop
 # that outlasts ExitTimeOut.
@@ -81,7 +82,10 @@ on_exit() {
 }
 CHILD=""
 PENDING=""
-STOP_WAIT_S="${SFFL_STOP_WAIT_S:-10}"
+# Checked after the "started" line (so its warning lands in this run's block);
+# 10 until then. Unchecked, a value like "5s" made the trap's arithmetic fail,
+# so the stop died with exit 127 and no "finished" line (Ultron 11-21, L-a).
+STOP_WAIT_S=10
 set_signal_traps() {
     trap 'on_signal TERM' TERM
     trap 'on_signal INT' INT
@@ -90,11 +94,19 @@ set_signal_traps() {
 run_child() {
     # Hold any signal across the fork: before `CHILD=$!` the handler could
     # not know whom to stop. Not `trap ''`: an ignored signal is lost, and
-    # the child would inherit the ignore.
-    trap 'PENDING=TERM' TERM
-    trap 'PENDING=INT' INT
-    trap 'PENDING=HUP' HUP
-    # The child starts with every signal at its default (`trap -`), and its
+    # the child would inherit the ignore. The held signal acted on and
+    # re-raised is the first one bash handles (Ultron 11-21, L-c): a later
+    # one must not rewrite which signal the script dies by. If two land at
+    # once, the lower-numbered wins: bash 3.2 runs pending traps in
+    # signal-number order (HUP 1, INT 2, TERM 15), not arrival order.
+    trap '[ -n "$PENDING" ] || PENDING=TERM' TERM
+    trap '[ -n "$PENDING" ] || PENDING=INT' INT
+    trap '[ -n "$PENDING" ] || PENDING=HUP' HUP
+    # `trap -` puts SIGTERM and SIGHUP back to their defaults in the child.
+    # SIGINT stays IGNORED: non-interactive bash ignores it in every
+    # background command, and `trap -` cannot undo that (checked on /bin/bash
+    # 3.2.57, 2026-11-21: a Python child sees SIG_IGN for INT, SIG_DFL for
+    # TERM and HUP). That is why on_signal always sends TERM. The child's
     # stdin is /dev/null, as for any background command (none reads stdin).
     ( trap - TERM INT HUP; exec "$@" ) &
     CHILD=$!
@@ -118,6 +130,14 @@ on_signal() {
                 && [ "$waited" -lt $((STOP_WAIT_S * 10)) ]; do
             sleep 0.1
             waited=$((waited + 1))
+            # One more TERM about 1 s in, should the first have been lost: a
+            # TERM that reaches the child inside bash's fork path, before its
+            # `trap -`, can meet the inherited hold trap (Ultron 11-21). No
+            # step here handles TERM (src/sffl sets no signal handler), so a
+            # second one never cuts a cleanup short.
+            if [ "$waited" -eq 10 ] && kill -0 "$CHILD" 2>/dev/null; then
+                kill -s TERM "$CHILD" 2>/dev/null
+            fi
         done
         if kill -0 "$CHILD" 2>/dev/null; then
             echo "WARN: the running step did not exit within ${STOP_WAIT_S}s of SIGTERM" >&2
@@ -130,6 +150,10 @@ on_signal() {
 trap on_exit EXIT
 set_signal_traps
 run_stamp started
+case "${SFFL_STOP_WAIT_S:-10}" in
+    [0-9]|1[0-5]) STOP_WAIT_S="${SFFL_STOP_WAIT_S:-10}" ;;
+    *) echo "WARN: SFFL_STOP_WAIT_S is not a whole number of seconds from 0 to 15; using 10" >&2 ;;
+esac
 
 # THE INJURY FEED. Since the StatsDeck switch the alert's injuries come from
 # `sffl injuries-fetch` (nflverse, Sleeper and ESPN's public feed; see

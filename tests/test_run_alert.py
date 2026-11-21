@@ -398,12 +398,123 @@ def test_a_signal_during_the_fork_still_stops_the_child(tree):
     p = subprocess.Popen(["/bin/bash", str(script), "tuesday"], env=e,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          text=True)
+    # The hung fetch holds the pipes for 30 s unless it was stopped.
+    out, err = _communicate_or_fail(p, 15)
+    assert p.returncode == -signal.SIGTERM, err
+    assert _stamps(out)[-1][2] == "finished, killed by SIGTERM", err
+    assert " alert " not in log.read_text() + " ", err
+
+
+def _text(b):
+    if b is None:
+        return ""
+    return b.decode("utf-8", "replace") if isinstance(b, bytes) else b
+
+
+def _communicate_or_fail(p, timeout):
+    """communicate(), but a timeout fails the test with the stderr captured
+    so far (Ultron 11-21: a flaky fork-test failure showed no stderr)."""
     try:
-        # The hung fetch holds the pipes for 30 s unless it was stopped.
-        out, _err = p.communicate(timeout=15)
-    finally:
-        if p.poll() is None:
-            p.kill()
+        return p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        partial = _text(exc.stderr)
+        p.kill()
+        try:
+            _out, rest = p.communicate(timeout=5)
+            partial += _text(rest)
+        except subprocess.TimeoutExpired:
+            pass                    # an orphaned step still holds the pipes
+        pytest.fail("run_alert.sh still running after %ss; stderr so far:\n%s"
+                    % (timeout, partial))
+
+
+# Ultron's lows on run_alert.sh (11-21, board 9aad4392).
+
+CLEANUP_BODY = ("    trap 'sleep 1; echo \"collect cleaned up\"; "
+                "echo \"collect cleaned up\" >> \"$STUB_LOG\"; exit 0' TERM\n"
+                "    echo \"collect ready\" >> \"$STUB_LOG\"\n"
+                "    while :; do sleep 0.1; done")
+
+
+@pytest.mark.parametrize("value", ["abc", "5s", "1.5", "-1", "16", "08", " 3"])
+def test_a_bad_stop_wait_falls_back_to_10_and_the_stop_still_works(tree, value):
+    """L-a: a non-integer SFFL_STOP_WAIT_S made the trap's arithmetic fail,
+    so the stop died with exit 127 and logged no "finished" line."""
+    import signal
+    p, out, err, took, log = _start_and_stop(tree, CLEANUP_BODY,
+                                             SFFL_STOP_WAIT_S=value)
+    assert "SFFL_STOP_WAIT_S is not a whole number of seconds from 0 to 15; "\
+           "using 10" in err
+    assert "collect cleaned up" in log      # waited (10 s), not cut short
+    assert p.returncode == -signal.SIGTERM, (p.returncode, err)
+    assert _stamps(out)[-1][2] == "finished, killed by SIGTERM"
+    assert "did not exit" not in err
+    assert took < 5, took
+
+
+@pytest.mark.parametrize("value", ["0", "15"])
+def test_the_stop_wait_accepts_0_to_15(tree, value):
+    import signal
+    body = ("    exec >/dev/null 2>&1\n"
+            "    trap '' TERM\n"
+            "    echo \"collect ready\" >> \"$STUB_LOG\"\n"
+            "    sleep 3")
+    if value == "15":
+        body = CLEANUP_BODY
+    p, out, err, took, log = _start_and_stop(tree, body,
+                                             SFFL_STOP_WAIT_S=value)
+    assert "SFFL_STOP_WAIT_S" not in err
     assert p.returncode == -signal.SIGTERM
     assert _stamps(out)[-1][2] == "finished, killed by SIGTERM"
-    assert " alert " not in log.read_text() + " "
+    if value == "0":                # no wait at all for a stuck step
+        assert took < 1, took
+        assert "did not exit within 0s of SIGTERM" in err
+    else:
+        assert "collect cleaned up" in log and took < 5, took
+
+
+def test_the_first_held_signal_is_the_one_acted_on(tree):
+    """L-c: two signals in the fork gap, TERM then HUP, each its own kill
+    builtin, so bash handles TERM first (a command boundary runs pending
+    traps). The script dies by TERM, not the later HUP. Sent the other way
+    round this would not test "first wins": HUP is lower-numbered, and bash
+    3.2 runs traps that are pending together in signal-number order."""
+    import signal
+    script = tree / "ops" / "run_alert.sh"
+    text = script.read_text()
+    anchor = '    ( trap - TERM INT HUP; exec "$@" ) &\n'
+    assert text.count(anchor) == 1
+    script.write_text(text.replace(
+        anchor, anchor + "    kill -s TERM $$\n    kill -s HUP $$\n"))
+    log = tree / "stub.log"
+    e = dict(os.environ)
+    for k in ("SFFL_INJURY_FEED", "SFFL_CBS_DESIGNATIONS", "SFFL_STOP_WAIT_S",
+              "SFFL_INJURY_FETCH_TIMEOUT_S", "DRY_RUN"):
+        e.pop(k, None)
+    e.update(STUB_LOG=str(log), CLAUDE_BIN="/nonexistent/claude-must-not-run",
+             FETCH_MODE="hang")
+    p = subprocess.Popen(["/bin/bash", str(script), "tuesday"], env=e,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                         text=True)
+    out, err = _communicate_or_fail(p, 15)
+    assert p.returncode == -signal.SIGTERM, err
+    assert _stamps(out)[-1][2] == "finished, killed by SIGTERM", err
+    assert " alert " not in log.read_text() + " ", err
+
+
+def test_a_lost_first_term_is_sent_again_about_1s_in(tree):
+    """Ultron 11-21: a TERM that reaches the child inside bash's fork path,
+    before its `trap -`, can be swallowed. That window is microseconds wide
+    and can't be hit on purpose, so this step loses its FIRST TERM by design
+    (its trap swallows it once, then restores the default) and the second
+    TERM, about 1 s in, must stop it well before the 10 s wait runs out."""
+    import signal
+    body = ("    exec >/dev/null 2>&1\n"
+            "    trap 'trap - TERM' TERM\n"
+            "    echo \"collect ready\" >> \"$STUB_LOG\"\n"
+            "    while :; do sleep 0.1; done")
+    p, out, err, took, _log = _start_and_stop(tree, body)
+    assert 0.9 <= took < 4, (took, err)
+    assert p.returncode == -signal.SIGTERM, err
+    assert "did not exit" not in err
+    assert _stamps(out)[-1][2] == "finished, killed by SIGTERM"

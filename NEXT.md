@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1270` passed
+- full_suite: `1281` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -30,11 +30,34 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
-## LOWS 2026-11-21: staged on `john/lows-1121`, not merged
+## LOWS 2026-11-21: in `main` as `2ae0008`; Ultron's run_alert lows staged
 
-Worktree `~/Projects/.worktrees/ff-lows-1121`, off `5ceb8f5`. Three small fixes, each
-with tests that failed on the old code (15 new cases; full suite 1270 passed). Ultron's
-review was a GO (0 critical/high/medium); his lows L1 to L4 are folded in (below).
+Three small fixes, each with tests that failed on the old code. Ultron's review was a GO
+(0 critical/high/medium); his lows L1 to L4 are folded in (below), and his three later
+lows on `run_alert.sh` (L-a to L-c, board 9aad4392) are staged on `john/runalert-lows`
+(worktree `~/Projects/.worktrees/ff-runalert-lows`, off `2ae0008`; 11 new cases, each
+failing on `main`; full suite 1281 passed). Ultron reviewed it as a GO with four more lows,
+folded in as the last two bullets:
+- **L-a:** `SFFL_STOP_WAIT_S` is checked after the "started" line: a whole number 0 to 15
+  is used, anything else (`5s`, `1.5`, `08`, `16`, ` 3`) logs a WARN and uses 10. Before,
+  a non-integer broke the trap's arithmetic, so a stop died with exit 127 and no
+  "finished" line. launchd sets nothing, so live runs were never affected.
+- **L-b (comment):** the child does NOT start with SIGINT at its default. `trap -` resets
+  TERM and HUP, but non-interactive bash keeps INT ignored in every background command
+  (checked on /bin/bash 3.2.57: a Python child sees SIG_IGN for INT). Hence TERM only.
+- **L-c:** the hold keeps the first signal bash handles in the fork gap (`[ -n
+  "$PENDING" ] || PENDING=...`); before, a second one overwrote it. Signals that land
+  together are handled in signal-number order on bash 3.2 (HUP 1, INT 2, TERM 15), so the
+  test sends TERM, then HUP from a separate `kill` after a command boundary, and expects TERM.
+- **Second TERM about 1 s in** (Ultron's review): if the step is still alive 1 s after
+  the stop, `on_signal` sends TERM once more. A TERM inside bash's fork path, before the
+  child's `trap -`, could meet the inherited hold trap. A TERM sent to the subshell
+  after the fork is NOT swallowed (checked on bash 3.2: it resets the trap and re-sends),
+  so the window is microseconds wide. The test therefore uses a step that loses its first
+  TERM on purpose. No src/sffl step handles TERM, so the repeat never cuts a cleanup short.
+- **Test hygiene:** the fork-gap tests put stderr in every assertion, and a timeout fails
+  with the stderr captured so far (`_communicate_or_fail`). Jarvis's one ~40 s
+  fork-test failure had shown none. One comment line had run to 130 characters; it's reflowed.
 - **collect refuses a git call that fails** (board 6ef63374, Ultron 11-12). On the EXISTS
   path (a unit already on disk) the `status` and `ls-tree` answers decide what gets
   committed, and only their stdout was read, so a failed `ls-tree` counted a committed
@@ -68,9 +91,10 @@ review was a GO (0 critical/high/medium); his lows L1 to L4 are folded in (below
 - **Board 1eff4ca8 checked:** all four 11-12 lows are in `main` (657ca44 is an ancestor;
   the unslashed private paths, the "differ from HEAD" refusal, the malformed-line
   `ValueError` and the EXIT trap, each with its tests, green in this suite).
-**Next:** Jeff's C&P, then fast-forward `main`; live at the next fire.
+**Next:** Jeff's C&P of `john/runalert-lows`, then fast-forward `main`; live at the next
+fire (the working tree runs).
 
-## SCORE-AUCTION (2026-11-21): staged on `john/auction-score`, not merged
+## SCORE-AUCTION (2026-11-21): in `main` as `5ceb8f5`
 
 Board 17d056ec. Worktree `~/Projects/.worktrees/ff-auction-score`, off `ee3ba33`.
 **Runbook step 12.1 is now a command:** `sffl score-auction` scores an auction's real
