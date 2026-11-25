@@ -150,6 +150,12 @@ import re
 from collections import namedtuple
 
 _POS = r"TQB|QB|RB|WR|TE|K|DST"
+# A position cell may list two codes, comma-joined and primary first
+# ("RB,WR", first seen 2026-11-24). Before this such a row silently fell out
+# of every roster parser. The FIRST code is the slot a dual-eligible player
+# is kept under, the same rule as `cbs_weekly._POS_GROUP` (its comment says
+# why), so the (name, slot, team) fallback key still joins the two pages.
+_POS_LIST = r"(?:%s)(?:,(?:%s))*" % (_POS, _POS)
 
 # "\tWR\tJa'Marr Chase WR . CIN \tTB\t" - the position column, then
 # "NAME POS . TEAM" (TEAM may carry a trailing space where an injury glyph
@@ -164,13 +170,13 @@ _POS = r"TQB|QB|RB|WR|TE|K|DST"
 # see the module docstring's "TWO ROW SHAPES". Before 2026-10-20 this ended
 # `\t?$`, which dropped every player on bye.
 _ROW = re.compile(
-    r"^\t(?P<slot>%s)\t"
+    r"^\t(?P<slot>%s)(?:,(?:%s))*\t"
     r"(?P<name>[A-Za-z0-9.'\- ]+?)\s+"
-    r"(?:%s)"
+    r"%s"
     r"\s*[•-]\s*"
     r"(?P<team>[A-Z]{2,3})"
     r" ?\t"
-    r"@?[A-Z]{2,3}(?:\t.*)?$" % (_POS, _POS)
+    r"@?[A-Z]{2,3}(?:\t.*)?$" % (_POS, _POS, _POS_LIST)
 )
 
 _RESERVES_MARKER = "RESERVES"
@@ -192,7 +198,7 @@ _ID_PREFIX = re.compile(r"^id=(?P<id>\d+)\t")
 # allow) must still stop `_continuation_id` from handing that row's id to the
 # row above it. A stats line (`\t8\t43.5\t...`) never matches: a number, not
 # a position code, follows its first tab.
-_ROW_START = re.compile(r"^\t(?:%s)\t" % _POS)
+_ROW_START = re.compile(r"^\t%s\t" % _POS_LIST)
 
 # How many lines below an id-less row line its own id may sit. The live
 # shape needs two (the kickoff time, then the stats line, measured on every

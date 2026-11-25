@@ -222,6 +222,15 @@ Add the missing code to `owner_codes` and re-run. Do not loosen the matching pat
 itself to "fix" this - the parser refusing a shape it doesn't recognize, instead of
 guessing, is deliberate (see the comments in `src/sffl/cbs_weekly.py`).
 
+The other known cause was a player CBS lists at two positions (`Name RB,WR • PIT`): it
+refused the whole RB-WR-TE page on Tuesday 2026-11-24, so every RB, WR and TE went
+unscored and the waiver block printed `KeyError: 'RB-WR-TE'`. Since
+`john/multi-position-rows` a bare comma-joined list of known codes is read, and the player
+counts under the FIRST listed code (scoring is the same for RB, WR and TE; every lineup
+stays legal). Any other spelling (`RB, WR`, `RB/WR`, `RB,`) is still refused, as is a
+name that ends in a position code. When the RB-WR-TE page fails, the waiver block now
+says so by name instead of printing a `KeyError`.
+
 A code that looks like a number (`12`) is YAML-parsed as an integer rather than a string.
 That is handled - the loader coerces every code with `str()` - so it neither crashes the
 command nor silently fails to match. Quoting it (`"12"`) is still clearer.

@@ -159,6 +159,35 @@ def _strip_id_prefix(line):
         return "", line
     return m.group("id"), line[m.end():]
 
+# The position cell. CBS lists a player eligible at two positions as a
+# comma-joined list with no space, primary first: "RB,WR" (first seen
+# 2026-11-24, when one such row made the RB-WR-TE page refuse and left every
+# RB, WR and TE unscored). Only known codes, joined only by a bare comma: a
+# list in any other spelling ("RB, WR", "RB/WR", "RB,") fails to match and
+# is refused under F4 like any other unreadable row.
+#
+# `pos` captures the FIRST listed code and the rest is matched and dropped.
+# That code is the one a dual-eligible player counts under everywhere
+# downstream (scoring, lineups, the roster join):
+#   - scoring cannot change with it: score_game gates only DST, and
+#     calibrate.STAT_POSITIONS treats RB, WR and TE alike;
+#   - every lineup built from it is legal, since CBS lists him at that
+#     position; what is lost is only the extra option of starting an RB,WR
+#     player in the WR/TE slot, which can understate him, never place him
+#     where CBS would refuse him;
+#   - cbs_roster reads the same list the same way, so the (name, team, pos)
+#     fallback key still joins the two pages when an id is missing.
+_POS_CODES = r"TQB|QB|RB|WR|TE|K|DST"
+_POS_GROUP = r"(?P<pos>%s)(?:,(?:%s))*" % (_POS_CODES, _POS_CODES)
+
+# A matched name whose LAST word is a position code, a comma-joined list of
+# them, or anything ending in a comma ("Pat Example RB" or "Pat Example RB,"
+# out of "Pat Example RB WR" / "Pat Example RB, WR"): the name has swallowed
+# part of the position cell, and the row would be filed under a wrong name
+# and position. No real name ends that way, so `_parse_row` refuses it (F4).
+_NAME_SWALLOWED_POSITION = re.compile(
+    r"(?:(?:^|\s)(?:%s)(?:,(?:%s))*,?|,)$" % (_POS_CODES, _POS_CODES))
+
 # The "Name POS • TEAM" cell, split out from the rest of the tab row.
 # Same status-tag handling as build_line_re's per-line pattern (captured in
 # both observed positions, optional either way) - the mechanism the two
@@ -167,7 +196,7 @@ def _strip_id_prefix(line):
 _TAB_NAME = re.compile(
     r"^(?P<name>.+?)\s+"
     r"(?:(?P<status1>" + "|".join(_STATUS_TAGS) + r")\s+)?"
-    r"(?P<pos>TQB|QB|RB|WR|TE|K|DST)\s+"
+    + _POS_GROUP + r"\s+"
     r"(?:(?P<status2>" + "|".join(_STATUS_TAGS) + r")\s+)?"
     r"[•\-]\s*(?P<team>[A-Z]{2,3})\s*$")
 
@@ -209,7 +238,7 @@ def build_line_re(owner_codes):
         r"^\s*(?P<avail>" + "|".join(alternatives) + r")\s+"
         r"(?P<name>.+?)\s+"
         r"(?:(?P<status1>" + tags + r")\s+)?"
-        r"(?P<pos>TQB|QB|RB|WR|TE|K|DST)\s+"
+        + _POS_GROUP + r"\s+"
         r"(?:(?P<status2>" + tags + r")\s+)?"
         r"[•\-]\s+"
         r"(?P<team>[A-Z]{2,3})\s+"
@@ -345,12 +374,16 @@ def _parse_row(line, line_re):
         # would quietly remove a genuine free agent from the waiver board.
         # Stripped, it becomes "" and classifies as None: refused loudly,
         # which is the documented behavior for an indeterminate cell.
+        if _NAME_SWALLOWED_POSITION.search(name_m.group("name").strip()):
+            return None
         return (m.group("avail").strip(), name_m.group("name").strip(),
                 name_m.group("pos"), name_m.group("team"),
                 name_m.group("status1"), name_m.group("status2"),
                 m.group("rest").split("\t"), player_id)
     m = line_re.match(line)
     if not m:
+        return None
+    if _NAME_SWALLOWED_POSITION.search(m.group("name").strip()):
         return None
     return (m.group("avail").strip(), m.group("name").strip(),
             m.group("pos"), m.group("team"),

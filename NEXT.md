@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1300` passed
+- full_suite: `1314` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -30,7 +30,46 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
-## ALERT IMPORT PATH 2026-11-21: staged on `john/alert-import-path` (board 1d0ce259)
+## MULTI-POSITION ROWS 2026-11-24: staged on `john/multi-position-rows`
+
+**The failure.** Tuesday 11-24 (`com.sffl.alert.tuesday`, exit 1 at 16:46): CBS listed one
+waiver-wire player as `Name RB,WR • PIT`. The position group in `cbs_weekly` took one code,
+so that row matched neither row shape and F4 refused the whole RB-WR-TE page, weekly and
+rest-of-season. Every RB, WR and TE showed "not scored", the lineup had 5 slots UNFILLED,
+and both target blocks were unavailable. The digest still posted (3 Discord messages) and
+the collect pushed (`2c95656` in the data repo). It is the first multi-position row in all
+109 archived projection pages (wk01 to wk12); the wk11 results page has it too (archived
+only, nothing parses it).
+- **The fix** (worktree `~/Projects/.worktrees/ff-multipos`, off `5178e7d`): `_POS_GROUP`
+  reads a bare comma-joined list of known codes (`RB,WR`) on both row paths; `cbs_roster`
+  reads the same list in the slot column and the name cell (before, such a row silently
+  fell out of the roster). **The player counts under the FIRST listed code** (CBS's
+  primary): scoring can't change with it (`score_game` gates only DST,
+  `calibrate.STAT_POSITIONS` treats RB, WR and TE alike), every lineup built from it is
+  legal, and roster and projections read it the same way, so the composite fallback key
+  still joins. The cost: the optimizer won't put an RB,WR player in the WR/TE slot, which
+  can understate him but never places him where CBS would refuse. Full eligibility would
+  need a field on `PlayerProjection` and `Candidate` (follow-up, not needed for Friday).
+- **Strictness kept, and tightened:** any other spelling (`RB,XX`, `RB,`, `,RB`, `RB/WR`)
+  is still refused, and `_NAME_SWALLOWED_POSITION` now refuses a name ending in a position
+  code or a comma. Before, `Name RB, WR • PIT` or `Name RB WR • PIT` parsed silently as a WR
+  named "Name RB," / "Name RB". The guard refuses nothing real: old-vs-new replay over every
+  archived page (main's parser loaded by path) gave 107 projection pages identical row for
+  row, the 2 from 11-24 now read (1714 rows each, none refused), and all 16 roster pages
+  identical.
+- **The `KeyError: 'RB-WR-TE'` was a knock-on, not a second fault:** the waiver block looks
+  up `written_paths["RB-WR-TE"]` to build its availability classifier, and a refused page
+  never gets a path. It now says "the RB-WR-TE projections page failed this run (see
+  PROJECTIONS DEGRADED)". It doesn't rank claims without that page, since every add would
+  be measured against a lineup with its flex slots empty.
+- **Verified:** 14 new test cases; the 9 that need the fix failed on main's code (8 parser cases, and the waiver test
+  reproduced the KeyError); suite 1314 passed. A read-only dry run of the new parser
+  against today's live `data/captures/` (no capture, nothing sent) read all four weekly
+  pages and the RB-WR-TE ROS page, scored all 13 rostered players, and filled all 8 slots
+  (55.70 pts; TQB, K and DST match the digest's 14.31, 7.90 and 6.25).
+- **Go-live:** on merge; the working tree runs it, so Friday 11-27 16:45 uses it.
+
+## ALERT IMPORT PATH 2026-11-21: in `main` as `5178e7d` (board 1d0ce259)
 
 Ultron's 11-11 low: `run_alert.sh` cds to the repo root and ran `-m sffl.cli` / `-c`,
 which put the root first on `sys.path`, ahead of `src` and the standard library, so a

@@ -2166,7 +2166,15 @@ def _cmd_alert(args):
         # targets mostly carry their own waiver-clear date (W (10/3)), so
         # each one is tagged with its CBS availability token below rather
         # than borrowing Tuesday's "claims process ~2am Wednesday" line.
-        if args.kind in ("tuesday", "friday"):
+        if args.kind in ("tuesday", "friday") and "RB-WR-TE" not in written_paths:
+            # The page the classifier below is built from was refused or not
+            # captured (PROJECTIONS DEGRADED says why). Ranking claims without
+            # Jeff's RB, WR and TE scored would measure every add against a
+            # lineup with its flex slots empty, so say so instead of the bare
+            # KeyError the 11-24 Tuesday digest printed.
+            waiver_error = ("the RB-WR-TE projections page failed this run "
+                            "(see PROJECTIONS DEGRADED)")
+        elif args.kind in ("tuesday", "friday"):
             try:
                 my_cands = [
                     Candidate(name=resolved[r].name, pos=resolved[r].pos,

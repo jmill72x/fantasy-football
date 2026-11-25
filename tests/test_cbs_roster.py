@@ -612,3 +612,26 @@ def test_a_row_ending_after_its_opponent_matches_exactly_as_before():
         m = _ROW.match(line)
         assert m is not None
         assert (m.group("slot"), m.group("team")) in (("WR", "SEA"), ("TQB", "SEA"))
+
+
+def test_a_dual_position_roster_row_is_kept_under_its_first_position(tmp_path):
+    """2026-11-24: CBS lists some players as "RB,WR". The roster row's name
+    cell carries the same list; before this the row silently fell out of
+    the roster. Constructed row, made-up name and id."""
+    p = tmp_path / "dual.txt"
+    p.write_text(
+        "id=7000002\t\tRB\tRex Dualton RB,WR • PIT \tDEN\t\n"
+        "id=7000003\t\tWR,RB\tSam Twoway WR,RB • SEA\t@MIA\t\n"
+        "RESERVES\n")
+    starters, _reserves = parse_lineup_rows(str(p))
+    assert starters == [RosterRow("Rex Dualton", "RB", "PIT", "7000002"),
+                        RosterRow("Sam Twoway", "WR", "SEA", "7000003")]
+    assert parse_positions(str(p)) == {"Rex Dualton": "RB",
+                                       "Sam Twoway": "WR"}
+
+
+def test_a_roster_row_with_an_unreadable_position_list_does_not_match():
+    for line in ("\tRB\tRex Dualton RB,XX • PIT\tDEN\t",
+                 "\tRB\tRex Dualton RB, • PIT\tDEN\t",
+                 "\tRB,\tRex Dualton RB • PIT\tDEN\t"):
+        assert _ROW.match(line) is None, line

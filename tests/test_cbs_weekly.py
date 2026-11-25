@@ -674,3 +674,84 @@ def test_an_exact_tie_in_the_mode_is_deterministic():
     first = week_conflicts(pages)
     for _ in range(5):
         assert week_conflicts(pages) == first
+
+
+# --- A player CBS lists under two positions ("RB,WR"), 2026-11-24 ----------
+#
+# The Tuesday 11-24 run refused the whole RB-WR-TE page (weekly and
+# rest-of-season) over ONE row whose name cell read "<name> RB,WR • PIT": the
+# position group took a single code, so every RB, WR and TE went unscored.
+# The rows below are constructed: the name is made up, and so are the id and
+# every number.
+
+_DUAL_STATS = "\t".join(["1"] * 16)
+
+
+def _dual_page(tmp_path, namecell, avail="W (11/25)", extra=""):
+    page = tmp_path / "dual.txt"
+    page.write_text(
+        "id=7000001\t\tFA\tPat Example WR • SEA\t@MIA\t%s\n"
+        "id=7000002\t\t%s\t%s\tDEN\t%s\n%s"
+        % (_DUAL_STATS, avail, namecell, _DUAL_STATS, extra))
+    return str(page)
+
+
+def test_a_dual_position_tab_row_parses_under_its_first_listed_position(
+        tmp_path):
+    rows = parse(_dual_page(tmp_path, "Rex Dualton RB,WR • PIT "),
+                 group="RB-WR-TE", week=12)
+    r = by_name(rows)["Rex Dualton"]
+    assert (r.pos, r.team, r.player_id, r.avail) == (
+        "RB", "PIT", "7000002", "W (11/25)")
+    assert r.opp == "DEN"
+    assert len(rows) == 2
+
+
+def test_the_first_listed_position_wins_in_either_order(tmp_path):
+    rows = parse(_dual_page(tmp_path, "Rex Dualton WR,RB • PIT"),
+                 group="RB-WR-TE", week=12)
+    assert by_name(rows)["Rex Dualton"].pos == "WR"
+
+
+def test_a_dual_position_row_keeps_its_injury_tag(tmp_path):
+    rows = parse(_dual_page(tmp_path, "Rex Dualton RB,TE Q • PIT"),
+                 group="RB-WR-TE", week=12)
+    r = by_name(rows)["Rex Dualton"]
+    assert (r.pos, r.status) == ("RB", "Q")
+
+
+def test_a_dual_position_space_row_parses(tmp_path):
+    page = tmp_path / "dual_space.txt"
+    page.write_text(
+        "FA Rex Dualton RB,WR • PIT DEN 21 11 80 74 11 "
+        "0.3 0.7 2.3 0.1 8.3 5.8 44.1 7.6 0.5 0.2 4.77\n")
+    rows = parse(str(page), group="RB-WR-TE", week=12)
+    assert [(r.name, r.pos, r.team) for r in rows] == [
+        ("Rex Dualton", "RB", "PIT")]
+
+
+@pytest.mark.parametrize("namecell", [
+    "Rex Dualton RB,XX • PIT",     # a code that is not a position
+    "Rex Dualton RB, • PIT",       # a dangling comma
+    "Rex Dualton ,RB • PIT",       # a leading comma
+    "Rex Dualton RB/WR • PIT",     # another separator
+    "Rex Dualton RB, WR • PIT",    # the list split by a space: name would
+                                   # swallow "RB," and file him as a WR
+    "Rex Dualton RB WR • PIT",     # the same without the comma
+])
+def test_an_unreadable_position_list_still_refuses_the_page(tmp_path,
+                                                            namecell):
+    """F4 still holds: a row shape we cannot read with certainty refuses the
+    page and names the count, rather than being dropped or read under a
+    name that has swallowed part of the position cell."""
+    with pytest.raises(ValueError, match="1 line"):
+        parse(_dual_page(tmp_path, namecell), group="RB-WR-TE", week=12)
+
+
+def test_an_unreadable_space_row_position_list_still_refuses(tmp_path):
+    page = tmp_path / "dual_space_bad.txt"
+    page.write_text(
+        "FA Rex Dualton RB, WR • PIT DEN 21 11 80 74 11 "
+        "0.3 0.7 2.3 0.1 8.3 5.8 44.1 7.6 0.5 0.2 4.77\n")
+    with pytest.raises(ValueError, match="1 line"):
+        parse(str(page), group="RB-WR-TE", week=12)

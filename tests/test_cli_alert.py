@@ -1327,3 +1327,19 @@ def test_the_injuries_file_is_parsed_once(alert_env, capsys, monkeypatch):
     code, out = alert_env.run(capsys, "--injuries", path)
     assert "PRACTICE / STATUS on your roster (week 1 report):" in out
     assert parsed.count(path) == 1
+
+
+# --- 2026-11-24: the waiver block when the RB-WR-TE page failed -------------
+
+def test_a_failed_flex_page_names_itself_in_the_waiver_block(alert_env, capsys):
+    """The 11-24 Tuesday digest said "WAIVER TARGETS unavailable: KeyError:
+    'RB-WR-TE'": the block looked up that page's path after the page had
+    already been refused. A knock-on of the refusal, not a second fault in
+    the ranking, but the line has to say what happened."""
+    alert_env.fail_group("RB-WR-TE", ValueError("unreadable flex page"))
+    code, out = alert_env.run(capsys, "--kind", "tuesday", "--no-trade")
+    assert code == 1
+    assert "PROJECTIONS DEGRADED" in out
+    assert "KeyError" not in out
+    assert ("WAIVER TARGETS unavailable: the RB-WR-TE projections page "
+            "failed this run" in out)
