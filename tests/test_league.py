@@ -67,11 +67,13 @@ def test_flat_priced_pools_rejects_a_non_dollar_price():
 
 
 def test_the_lineup_slots_are_explicit_and_ordered():
+    # The floor slot is WR, not WR/TE: CBS's own lineup check allows TE 0
+    # to 4 but requires WR 1 to 4 (board da76847f).
     lg = load_league(PROFILE)
     assert lg.lineup == [
         ("TQB", ("TQB",)),
         ("RB", ("RB",)),
-        ("WR/TE", ("WR", "TE")),
+        ("WR", ("WR",)),
         ("FLEX1", ("RB", "WR", "TE")),
         ("FLEX2", ("RB", "WR", "TE")),
         ("FLEX3", ("RB", "WR", "TE")),

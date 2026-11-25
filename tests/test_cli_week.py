@@ -98,7 +98,8 @@ def test_waivers_names_the_slot_a_claim_would_fill(tmp_path, capsys):
     out = capsys.readouterr().out
 
     by_name = dict((name, slot) for _pts, slot, name, _pos, _drop in waiver_rows(out))
-    assert by_name["Harold Fannin Jr."] == "WR/TE"
+    # Ayomanor holds the WR floor slot, so the TE comes in at a FLEX.
+    assert by_name["Harold Fannin Jr."] == "FLEX1"
     assert by_name["Harold Fannin Jr."] != "bench"
     assert by_name["Tyrone Tracy Jr."] == "bench"
 
@@ -165,8 +166,11 @@ def test_a_zero_row_parse_raises_rather_than_exiting_0(tmp_path):
               "--week", "1", "--roster", r, "--waivers"])
 
 
+# The best five under the RB and WR floors: the one RB and the one WR are
+# forced, then the three best TEs. (Kyle Pitts, 2.5, is left out: the WR
+# floor takes Ayomanor at the same 2.5.)
 OPTIMAL_FIVE = ["Harold Fannin Jr.", "Isaiah Likely", "Sam LaPorta",
-                "Kyle Pitts", "Braelon Allen"]
+                "Elic Ayomanor", "Braelon Allen"]
 SIX = OPTIMAL_FIVE + ["Tyrone Tracy Jr."]
 
 
@@ -214,7 +218,7 @@ def test_start_sit_normalizes_current_lineup_names(tmp_path, capsys):
     cur = tmp_path / "current.txt"
     # Write names with "Harold Fannin" (no Jr.) to test normalization
     normalized_optimal = ["Harold Fannin", "Isaiah Likely", "Sam LaPorta",
-                          "Kyle Pitts", "Braelon Allen"]
+                          "Elic Ayomanor", "Braelon Allen"]
     cur.write_text("\n".join(normalized_optimal) + "\n")
     main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
           "--roster", r, "--current", str(cur), "--start-sit"])
@@ -431,13 +435,17 @@ def test_curves_flag_changes_a_named_number_in_the_output(tmp_path, capsys):
     hardcode curves = None (silently disabling calibration) passed all 398
     tests with no signal. Run the identical command with and without
     --curves and check two specific, named things actually change: the
-    best-legal-lineup total, and which player fills FLEX3. (Both owned
-    rostered players are scored through score_week, so calibration reaches
-    them even with zero free agents in play.)"""
+    best-legal-lineup total, and one named free agent's +PTS. (Every
+    player, owned or not, is scored through score_week, so calibration
+    reaches all of them.)
+
+    Until 2026-11-24 the second check was who fills FLEX3. Since the floor
+    slot became WR (board da76847f) the fixture's one WR is forced into it
+    and the FLEX order is the same both ways, so the named number is now
+    Sam LaPorta's gain: 3.00 - 1.60 naive, 4.29 - 2.37 curved."""
     r = roster_file(tmp_path, ["Harold Fannin Jr.", "Isaiah Likely",
                                "Elic Ayomanor", "Braelon Allen",
-                               "Tyrone Tracy Jr.", "Sam LaPorta",
-                               "Kyle Pitts", "Woody Marks"])
+                               "Tyrone Tracy Jr.", "Woody Marks"])
 
     main(["week", "--projections", PROJ, "--group", "RB-WR-TE", "--week", "1",
           "--roster", r, "--waivers"])
@@ -447,18 +455,18 @@ def test_curves_flag_changes_a_named_number_in_the_output(tmp_path, capsys):
           "--roster", r, "--curves", "calibration/2025.yaml", "--waivers"])
     out_curved = capsys.readouterr().out
 
-    def flex3(out):
-        for line in out.splitlines():
-            if line.strip().startswith("FLEX3"):
-                return line.split(None, 1)[1].strip()
-        raise AssertionError("no FLEX3 line in output:\n%s" % out)
+    def gain(out, who):
+        for pts, _slot, name, _pos, _drop in waiver_rows(out):
+            if name == who:
+                return pts
+        raise AssertionError("%s is not a waiver row:\n%s" % (who, out))
 
     assert lineup_total(out_naive) != lineup_total(out_curved), (
         "--curves must change the best-legal-lineup total: naive %.2f, "
         "curved %.2f" % (lineup_total(out_naive), lineup_total(out_curved)))
-    assert flex3(out_naive) != flex3(out_curved), (
-        "--curves must change who fills FLEX3: naive picked %r, curved "
-        "picked %r" % (flex3(out_naive), flex3(out_curved)))
+    assert gain(out_naive, "Sam LaPorta") == pytest.approx(1.40)
+    assert gain(out_curved, "Sam LaPorta") != pytest.approx(1.40), (
+        "--curves must change Sam LaPorta's +PTS")
 
 
 def test_a_ruled_out_player_does_not_start_and_is_named_in_output(tmp_path, capsys):

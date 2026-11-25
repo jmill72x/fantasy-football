@@ -1688,8 +1688,7 @@ def _cmd_alert(args):
     from sffl.trade import games_remaining, rank_targets
     from sffl.cbs_weekly import (WEEK_MISMATCH_RATIO, read_report_stamp,
                                  shared_team_count, week_conflicts)
-    from sffl.cbs_roster import (RosterUnreadable, parse_empty_slots,
-                                 parse_lineup_rows)
+    from sffl.cbs_roster import RosterUnreadable, parse_lineup_rows
     from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
     from sffl.cbs_weekly import is_out
     # `delta`/`best_add_drop` power the waiver block below. Imported HERE,
@@ -1744,9 +1743,11 @@ def _cmd_alert(args):
     # True when `capture_error` is the roster page refusing to parse
     # (`cbs_roster.RosterUnreadable`), not a failed capture.
     roster_unreadable = False
-    # EMPTY starting slots on the team page (["TE"] on 11-24): each heads
-    # the digest, since nobody in a slot scores zero (board c44b2d8b).
-    empty_slots = []
+    # (players starting on the team page, lg.starters): a short lineup heads
+    # the digest, since nobody in a slot scores zero (board c44b2d8b). A
+    # count, not the page's EMPTY rows: CBS shows one beside a full lineup
+    # for a position nobody starts at (board da76847f, 11-24).
+    starters_set = None
     # Distinct from `capture_error` - see `_AllProjectionsFailed`'s
     # docstring and `compose`'s. Set ONLY when the roster was read fine but
     # every one of the four projection pages failed.
@@ -1845,7 +1846,7 @@ def _cmd_alert(args):
         # silently lose the second row's slot entirely, rendering that
         # slot `-- UNFILLED` at exit 0 with no mention anywhere.
         starter_rows, reserve_rows = parse_lineup_rows(roster_path)
-        empty_slots = parse_empty_slots(roster_path)
+        starters_set = (len(starter_rows), lg.starters)
         roster_rows = starter_rows + [r for r in reserve_rows
                                       if r not in starter_rows]
         # `current_starters` is (name, pos, team) triples, not bare names -
@@ -2168,7 +2169,7 @@ def _cmd_alert(args):
         #
         # Ranked by marginal lineup gain, not by projection, for the same
         # reason the trade block is (see sffl.trade): a fourth receiver's
-        # points are mostly unreachable in a lineup that starts one WR/TE and
+        # points are mostly unreachable in a lineup that starts one WR and
         # three FLEX, so raw projection overvalues depth you already have.
         # Each target carries the DROP that pays for it - the roster is
         # capped at 13, so an add with no named release cannot be submitted.
@@ -2492,7 +2493,7 @@ def _cmd_alert(args):
     body = compose(args.kind, age_days, reports, result, sidelined,
                    capture_error=capture_error,
                    roster_unreadable=roster_unreadable,
-                   empty_slots=empty_slots,
+                   starters_set=starters_set,
                    current_starters=current_starters,
                    unevaluated_starters=unevaluated_starters,
                    injury_error=injury_error,
@@ -3011,7 +3012,7 @@ def _cmd_trade(args):
               % (cand.name[:24], cand.pos, cand.points, gain, owner))
     print("\n  +YOUR LU is what he would add to YOUR optimal lineup, not his")
     print("  projection. A fourth receiver's points are mostly unreachable in")
-    print("  a lineup that starts one WR/TE and three FLEX.")
+    print("  a lineup that starts one WR and three FLEX.")
     return 0
 
 

@@ -176,22 +176,30 @@ _KINDS = {
 }
 
 
-def _empty_slot_lines(empty_slots):
-    """The warning for EMPTY starting slots on the CBS team page.
+def _open_slot_lines(starters_set):
+    """The warning for a short starting lineup on the CBS team page.
 
-    A starting slot with nobody in it scores zero however good the bench
-    is, and the 11-24 page had one (a TE slot) that the digest read as
-    nobody without saying so (board c44b2d8b). One line per slot, then what
-    to do. [] or None renders nothing.
+    `starters_set` is (players starting on CBS, the league's `starters`).
+    A slot nobody fills scores zero however good the bench is. CBS counts
+    positions, not slots (board da76847f): its page allows 5 to 8 active
+    players, so a short lineup is legal there and nothing else warns about
+    it. An EMPTY row on the page is NOT this: it marks a position with no
+    active player, and on 11-24 it sat beside a full lineup of eight (see
+    `cbs_roster._EMPTY_SLOT`). None, or a full lineup, renders nothing.
     """
-    if not empty_slots:
+    if not starters_set:
         return []
-    lines = ["!! EMPTY %s SLOT ON CBS: nobody is starting there, so it "
-             "scores 0. Fill it." % slot for slot in empty_slots]
-    lines.append("   Set the lineup on CBS before kickoff; the lineup below "
-                 "says who should start.")
-    lines.append("")
-    return lines
+    have, want = starters_set
+    if have >= want:
+        return []
+    short = want - have
+    return ["!! %d STARTING SLOT%s OPEN ON CBS: only %d of %d starters are "
+            "set, and an open slot scores 0. Fill %s."
+            % (short, "" if short == 1 else "S", have, want,
+               "it" if short == 1 else "them"),
+            "   Set the lineup on CBS before kickoff; the lineup below "
+            "says who should start.",
+            ""]
 
 
 def _roster_age_line(days):
@@ -557,7 +565,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             stale_intel_dropped=0, injury_source_notes=None,
             official_week=None, official_week_played=False,
             official_week_earlier=False, roster_unreadable=False,
-            empty_slots=None):
+            starters_set=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -620,11 +628,13 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     than none), but the heading and the fix say the page could not be read
     reliably, not that the login failed.
 
-    `empty_slots` is the slot code of every EMPTY starting slot on the CBS
-    team page (`cbs_roster.parse_empty_slots`), e.g. ["TE"]. Each one heads
-    the digest as a `!! EMPTY TE SLOT ON CBS` warning: nobody in it means
-    it scores zero, whatever the optimum below says. None or [] renders
-    nothing, so a caller that does not know is unaffected.
+    `starters_set` is (players starting on the CBS team page, the league's
+    `starters`), e.g. (7, 8). A short lineup heads the digest as a
+    `!! 1 STARTING SLOT OPEN ON CBS` warning: nobody in a slot means it
+    scores zero, whatever the optimum below says. A full lineup, or None,
+    renders nothing, so a caller that does not know is unaffected. It is a
+    count, not the page's EMPTY rows, which mark a position with nobody
+    active and appear beside a full lineup (board da76847f).
 
     `roster_board` is EVERY rostered player as a `BoardRow` - all thirteen,
     not the eight the optimizer started. The optimizer has always CONSIDERED
@@ -713,7 +723,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         lines.append("!! ALL PROJECTIONS CAPTURE FAILED: %s"
                      % projections_capture_error)
         lines.append("")
-        lines.extend(_empty_slot_lines(empty_slots))
+        lines.extend(_open_slot_lines(starters_set))
         lines.append("Your ROSTER was read successfully, but none of the "
                      "four position-group projection pages could be "
                      "captured or parsed this run, so no lineup can be "
@@ -726,7 +736,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
 
     lines.append(_roster_age_line(roster_age_days))
     lines.append("")
-    lines.extend(_empty_slot_lines(empty_slots))
+    lines.extend(_open_slot_lines(starters_set))
 
     # AHEAD of the lineup and the news, because both are built ON these
     # inputs: if the projections are the wrong week or days old, every

@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1359` passed
+- full_suite: `1360` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -30,11 +30,60 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
-## EMPTY SLOT FLAG + FULL ELIGIBILITY 2026-11-24: staged on `john/empty-multipos` (boards c44b2d8b, ef69a845)
+## SLOT COUNT 2026-11-24: staged on `john/slot-count` (board da76847f)
 
-Worktree `~/Projects/.worktrees/ff-empty-multipos`, off `6a680f4`. Both are for Friday
-11-27 16:45.
-- **EMPTY starting slot (c44b2d8b).** The 11-24 page had `\tTE\tEMPTY\t...` above
+Worktree `~/Projects/.worktrees/ff-slot-count`, off `cc352e8`. For Friday 11-27 16:45:
+until it merges, main's digest says `!! EMPTY TE SLOT ON CBS ... Fill it.` beside any full
+lineup that starts no TE, which is a false alarm.
+
+**The answer: CBS shows the row; the lineup was full; and the yaml's floor slot was wrong.**
+- **CBS counts positions, not slots.** The team page's own legality script
+  (`is_roster_legal`, in `.superpowers/sdd/2026-10-20-replace-statsdeck/cbs-probe-2026-10-20/roster.html`,
+  gitignored) says: 5 to 8 active, TQB exactly 1, RB 1 to 4, WR 1 to 4, TE at most 4 (no
+  minimum), K 1, DST 1, reserves at most 5, 13 in all. Its `lineupBuilder.rosterMap` holds a
+  hidden (`display:none`) EMPTY row for every unused place up to each maximum: on 10-20
+  (2 RB, 2 WR, 1 TE active) 2 RB, 2 WR and 3 TE placeholders, none visible, so the text
+  capture had no EMPTY line. On 11-24 (1 RB, 4 WR, 0 TE, `ACTIVE: 8`, Brock Bowers on the
+  bench) one TE placeholder showed. Inferred from those two pages: a placeholder shows when
+  its position has nobody active. Either way 8 is CBS's maximum, so the 11-24 lineup was full
+  and legal, and the c44b2d8b warning was wrong.
+- **The yaml was wrong in a different place.** Its third slot was `WR/TE` (WR or TE), so the
+  optimizer could clear the floor with a TE and start no WR, which CBS refuses (WR minimum 1).
+  It is now `{slot: "WR", eligible: ["WR"]}`. Under CBS's counts a full eight is exactly TQB,
+  RB, WR, FLEX x3, K, DST: RB max 4 and WR max 4 match, TE max 4 can't bind with both floors
+  in five places. Replay: the old and new yaml give the same optimal lineup and total on all
+  16 archived units (wk06 10-19 to wk12 11-24), so no past recommendation was affected.
+- **The digest now counts starters** instead of reporting EMPTY rows. `cbs_roster.parse_empty_slots`
+  is gone (an EMPTY row is read as nobody, never refused, never reported); `_cmd_alert` passes
+  `compose(..., starters_set=(len(starter_rows), lg.starters))`, which heads the digest with
+  `!! 1 STARTING SLOT OPEN ON CBS: only 7 of 8 starters are set, and an open slot scores 0.
+  Fill it.` only when the count is short. Runbook: "The digest says N STARTING SLOT(S) OPEN ON
+  CBS". Roster replay: 35 files (17 pages) identical across all five parsers old vs new, every
+  one 8 starters, so no warning; main's code flagged the 3 copies of 11-24.
+- **`sffl lineup` dry run on the saved 11-24 page** (scratch harness: `open_edit_mode` reads the
+  saved page, `sync_playwright` and `apply_swaps` stubbed to raise, no browser, no network):
+  CURRENT 49ers, Skattebo, Allen, Chase, Sutton, Williams, Santos, Chargers; OPTIMAL 50.90:
+  bench Allen start McConkey, bench Sutton start Bowers; "DRY RUN - nothing was changed",
+  exit 0. The EMPTY row has no playerpage link, so it never enters the plan. On a synthetic
+  7-starter copy it refuses ("target lineup has 8 starters but the page shows 7"), exit 1.
+  **Unverified:** whether CBS offers a TE on the bench as a `moveTarget` for a WR starter
+  (step 2 above). `_swap` cancels and raises, sending nothing, if it doesn't; settling it
+  needs a live edit-mode session (board follow-up).
+- **Not changed:** the auction path (`value.py`) still floors "1 WR/TE" per team; the floors
+  don't bind on the real board (41 WR/TE in the natural top 60), so no dollar value moves this
+  season. Fix it with the 2027 rules pass.
+- **Verified:** suite 1360 passed (was 1359). New or rewritten tests: the WR floor, a TE can't
+  clear it, four WRs and no TE fill every slot, 500 random rosters all pass CBS's own check
+  (`_cbs_allows`), the yaml slot list, open-slot compose cases, the 11-24 shape end to end (no
+  warning) and a 7-starter page end to end (warning). Against main's `src` and yaml, 14 of them
+  fail. Three older tests changed expectations (a TE now enters at FLEX1, the optimal five
+  include the WR, the `--curves` test names Sam LaPorta's +PTS instead of FLEX3).
+
+## EMPTY SLOT FLAG + FULL ELIGIBILITY 2026-11-24: in `main` as `cc352e8` (boards c44b2d8b, ef69a845)
+
+Worktree `~/Projects/.worktrees/ff-empty-multipos`, off `6a680f4`.
+- **EMPTY starting slot (c44b2d8b). Superseded by SLOT COUNT above:** the row is a position
+  placeholder, not an open slot. What was built: the 11-24 page had `\tTE\tEMPTY\t...` above
   RESERVES: 8 players plus that row, footer `ACTIVE: 8` (every earlier page: 8 rows, no
   EMPTY). It was read as nobody and never mentioned. New `cbs_roster.parse_empty_slots`
   returns the slot code of every EMPTY row above RESERVES (`_scan` collects them in the
@@ -42,11 +91,7 @@ Worktree `~/Projects/.worktrees/ff-empty-multipos`, off `6a680f4`. Both are for 
   passes them to `compose(..., empty_slots=[...])`, which puts `!! EMPTY TE SLOT ON CBS:
   nobody is starting there, so it scores 0. Fill it.` right under the roster-age line, ahead
   of the lineup, and also on the all-projections-failed message (the roster was read). The
-  exit code doesn't change. Runbook: "The digest says EMPTY TE SLOT ON CBS".
-  **Not understood:** why CBS shows 8 starters AND an open TE row when the league yaml has
-  8 slots (TQB, RB, WR/TE, FLEX x3, K, DST); 4 WRs started that week. Either CBS's lineup
-  rules differ from the yaml or it renders a TE row whenever no TE starts. Worth a look at
-  `/rules` before trusting `sffl lineup` on such a page (it has never run against one).
+  exit code doesn't change.
 - **Full eligibility (ef69a845).** `PlayerProjection.positions` and `Candidate.positions`
   (both default `()`, meaning just `pos`) carry every listed code, primary first;
   `cbs_weekly` now captures the whole cell (`_POS_GROUP`'s `pos` is the list) and `parse`

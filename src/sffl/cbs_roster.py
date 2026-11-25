@@ -85,8 +85,10 @@ line was skipped: the player left the roster, the lineup and the injury check
 with no warning (the 11-24 multi-position row did exactly that). It is the
 rule `cbs_weekly.parse` has had since 08-28, for the same reason: a roster
 missing or misnaming a player gives confidently wrong advice, and the digest
-says so instead (`alert.compose`'s `roster_unreadable`). An EMPTY starting
-slot ("\tTE\tEMPTY\t...", seen on 11-24) is read as nobody.
+says so instead (`alert.compose`'s `roster_unreadable`). An EMPTY row
+("\tTE\tEMPTY\t...", seen on 11-24) is read as nobody: it is CBS's
+placeholder for a position with no active player, not an open slot (see
+`_EMPTY_SLOT`).
 
 WHY AN EMPTY RESULT RAISES. Downstream, an empty roster is not an error
 state - it is a perfectly valid input meaning "Jeff owns nobody", which
@@ -244,12 +246,20 @@ _FOOTER_PREFIX = "ACTIVE:"
 # (17 of 17, 2026-10-19 to 11-24), an EMPTY slot not counted.
 _FOOTER_COUNTS = re.compile(r"^ACTIVE:\s*(\d+)\s+RESERVE:\s*(\d+)\b")
 
-# A starting slot with nobody in it: "\tTE\tEMPTY\t\t\t...". Seen on the
-# 11-24 page (a TE slot left open). It starts like a row, so it is named
-# here as the one such line that is not a player row and not unreadable.
-# `slot` is the cell as written. `parse_empty_slots` reports a starting one,
-# since a slot nobody fills scores zero (board c44b2d8b).
-_EMPTY_SLOT = re.compile(r"^\t(?P<slot>%s)\tEMPTY(?:\t.*)?$" % _POS_LIST)
+# A row with nobody in it: "\tTE\tEMPTY\t\t\t...". Seen on the 11-24 page.
+# It is NOT an open starting slot (board da76847f). CBS's lineup has no
+# slots: its page script (`is_roster_legal`, saved 10-20) checks counts per
+# position - 5 to 8 active, TQB 1, RB 1-4, WR 1-4, TE 0-4, K 1, DST 1 - and
+# the page carries a hidden EMPTY row for every unused place up to each
+# position's maximum (`display:none`, 7 of them on 10-20), as drop targets
+# for the edit mode. A visible one shows a position with no active player:
+# on 11-24 four WRs started, no TE, and the footer said ACTIVE: 8, the most
+# CBS allows. So the row is read as nobody and reported as nothing; a short
+# lineup is the active count below the league's `starters`
+# (`sffl.cli._cmd_alert`, `alert.compose`'s `starters_set`). It starts like
+# a row, so it is named here as the one such line that is not a player row
+# and not unreadable.
+_EMPTY_SLOT = re.compile(r"^\t(?:%s)\tEMPTY(?:\t.*)?$" % _POS_LIST)
 
 # A matched name ending in a status tag ("Pat Example Q" out of "Pat Example
 # Q WR • SEA"): the roster page shows designations as icons, never text, so
@@ -357,15 +367,8 @@ _Row = namedtuple("_Row", "in_reserves player_id name slot team")
 
 
 def _read_rows(path):
-    """(rows, seen_marker) - `_scan` without the empty slots."""
-    rows, seen_marker, _empty = _scan(path)
-    return rows, seen_marker
-
-
-def _scan(path):
-    """(rows, seen_marker, empty_slots): every player row on the page as a
-    `_Row`, in page order, whether the RESERVES marker was seen, and the
-    slot code of every EMPTY starting slot (above RESERVES), in page order.
+    """(rows, seen_marker): every player row on the page as a `_Row`, in
+    page order, and whether the RESERVES marker was seen.
 
     EVERY public parser here reads the page through this, so none of them
     can drop a row the others keep. It refuses (`RosterUnreadable`, F4) a
@@ -375,8 +378,8 @@ def _scan(path):
         (`_ROW_START`) or carries a row's bullet - but `_ROW` cannot read.
         Until 2026-11-24 such a line was skipped, so its player vanished
         from the roster, the lineup and the injury check with no warning
-        (the multi-position row of that day was one). An EMPTY starting
-        slot (`_EMPTY_SLOT`) is the one row-like line that is neither;
+        (the multi-position row of that day was one). An EMPTY row
+        (`_EMPTY_SLOT`) is the one row-like line that is neither;
       * a row whose name has swallowed part of the position cell or a
         status tag ("Pat Example RB" out of "Pat Example RB WR • SEA"): it
         would be filed under a wrong name, which is worse than vanishing;
@@ -390,7 +393,6 @@ def _scan(path):
     """
     rows = []
     problems = []
-    empty_slots = []
     seen_marker = False
     footer = None
     for player_id, line in _iter_lines(path):
@@ -402,10 +404,8 @@ def _scan(path):
             continue
         m = _ROW.match(line)
         if not m:
-            empty = _EMPTY_SLOT.match(line)
-            if empty:
-                if not seen_marker:
-                    empty_slots.append(empty.group("slot"))
+            if _EMPTY_SLOT.match(line):
+                pass
             elif _ROW_START.match(line) or _ROW_BULLET in line:
                 problems.append("unreadable row %r" % line)
             continue
@@ -440,23 +440,7 @@ def _scan(path):
             "so no roster is returned rather than one missing or misnaming "
             "a player (F4). First: %s"
             % (path, len(problems), problems[0]))
-    return rows, seen_marker, empty_slots
-
-
-def parse_empty_slots(path):
-    """The slot code of every EMPTY starting slot on the page, in page
-    order ([] when every starting slot holds a player).
-
-    CBS renders an open starting slot as a row with no player in it
-    ("\tTE\tEMPTY\t...", the 11-24 page). The other parsers read it as
-    nobody, which is right for the roster, but a starting slot nobody fills
-    scores zero, so `sffl.cli._cmd_alert` passes this to `alert.compose`,
-    which heads the digest with it (board c44b2d8b). An EMPTY row below
-    RESERVES (never seen) is not a starting slot and is not reported.
-
-    Refuses an unreadable page exactly as every other parser here does.
-    """
-    return _scan(path)[2]
+    return rows, seen_marker
 
 
 def parse_roster(path):

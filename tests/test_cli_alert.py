@@ -250,31 +250,71 @@ def test_an_unreadable_roster_row_refuses_the_lineup_and_says_why(
     assert "ROSTER PAGE UNREADABLE" in alert_env.sent_calls[0][2]
 
 
-def test_an_empty_starting_slot_heads_the_digest(alert_env, capsys):
-    # Board c44b2d8b: the 11-24 page left a TE starting slot open. It was
-    # read as nobody and never mentioned, though a slot nobody fills scores
-    # zero. Built by adding the 11-24 row shape above RESERVES; the footer
-    # counts players only, so it stays as it is.
+def _roster_without_bowers_starting(alert_env, footer, name):
+    """The fixture with its TE starter moved to the bench and CBS's EMPTY
+    TE row where he was: the 11-24 shape (board da76847f)."""
     with open(ROSTER_FIXTURE) as fh:
         lines = fh.read().split("\n")
-    at = lines.index("RESERVES")
-    lines.insert(at, "\tTE\tEMPTY" + "\t" * 12)
+    at = next(i for i, ln in enumerate(lines)
+              if ln.startswith("\tTE\tBrock Bowers TE "))
+    bowers = lines[at:at + 3]
+    assert bowers[2].startswith("id=")
+    lines[at:at + 3] = ["\tTE\tEMPTY" + "\t" * 12]
+    reserves = lines.index("RESERVES")
+    lines[reserves + 1:reserves + 1] = bowers
+    lines = [footer if ln.startswith("ACTIVE:") else ln for ln in lines]
+    roster = alert_env.tmp / name
+    roster.write_text("\n".join(lines))
+    alert_env.set_roster(roster)
+
+
+def test_an_empty_row_beside_a_full_lineup_is_not_flagged(alert_env, capsys):
+    # The 11-24 page: four WRs started, no TE, and CBS showed an EMPTY TE
+    # row while its footer said ACTIVE: 8, the most it allows. The row marks
+    # a position nobody starts at; it is not an open slot (board da76847f).
+    # Here the fixture's three WRs plus Sutton would be four only if he
+    # started, so a WR is promoted in Bowers' place to keep eight.
+    with open(ROSTER_FIXTURE) as fh:
+        lines = fh.read().split("\n")
+    at = next(i for i, ln in enumerate(lines)
+              if ln.startswith("\tTE\tBrock Bowers TE "))
+    sutton = next(i for i, ln in enumerate(lines)
+                  if ln.startswith("\tWR\tCourtland Sutton WR "))
+    bowers, sutton_rows = lines[at:at + 3], lines[sutton:sutton + 3]
+    assert bowers[2].startswith("id=") and sutton_rows[2].startswith("id=")
+    lines[sutton:sutton + 3] = bowers
+    lines[at:at + 3] = sutton_rows + ["\tTE\tEMPTY" + "\t" * 12]
     roster = alert_env.tmp / "roster_empty_te.txt"
     roster.write_text("\n".join(lines))
     alert_env.set_roster(roster)
 
     code, out = alert_env.run(capsys)
     assert code == 0
-    assert "!! EMPTY TE SLOT ON CBS" in out
+    assert "STARTING SLOT" not in out
+    assert "EMPTY" not in out
+    assert "BEST LINEUP" in out
+
+
+def test_a_short_lineup_heads_the_digest(alert_env, capsys):
+    # Board c44b2d8b: seven starters where the league starts eight. CBS
+    # allows it (5 to 8 active), so only the digest can say the eighth slot
+    # scores zero.
+    _roster_without_bowers_starting(alert_env, "ACTIVE: 7 RESERVE: 6",
+                                    "roster_short.txt")
+    code, out = alert_env.run(capsys)
+    assert code == 0
+    assert ("!! 1 STARTING SLOT OPEN ON CBS: only 7 of 8 starters are set"
+            in out)
     assert "Fill it" in out
     # Ahead of the lineup, and the lineup is still there.
-    assert out.index("EMPTY TE SLOT") < out.index("BEST LINEUP")
-    assert "EMPTY TE SLOT ON CBS" in alert_env.sent_calls[0][2]
+    assert out.index("STARTING SLOT OPEN") < out.index("BEST LINEUP")
+    assert "STARTING SLOT OPEN ON CBS" in alert_env.sent_calls[0][2]
 
 
-def test_a_full_lineup_says_nothing_about_empty_slots(alert_env, capsys):
+def test_a_full_lineup_says_nothing_about_open_slots(alert_env, capsys):
     _code, out = alert_env.run(capsys)
     assert "EMPTY" not in out
+    assert "STARTING SLOT" not in out
 
 
 def test_a_failed_capture_still_names_the_login_fix(alert_env, capsys):
@@ -651,7 +691,7 @@ def test_all_eight_slots_fill_with_a_tqb_a_k_and_a_dst_on_the_roster(
     """THE deliverable this task exists to pin: with all four projection
     pages present and a roster carrying a TQB, a K and a DST, every one of
     the league's eight lineup slots (leagues/sffl/2026.yaml: TQB, RB,
-    WR/TE, FLEX1-3, K, DST) fills - none renders `-- UNFILLED`.
+    WR, FLEX1-3, K, DST) fills - none renders `-- UNFILLED`.
 
     A bare count of eight would be a WEAKER guard than this: it would still
     pass if, say, K and DST both stayed empty while two RBs doubled up
@@ -692,7 +732,7 @@ def test_all_eight_slots_fill_with_a_tqb_a_k_and_a_dst_on_the_roster(
     assert "DST    Patriots" in slots_section
     # All eight slot labels from the league file are present in the
     # section at all (belt and braces on the "eight slots" claim itself).
-    for slot in ("TQB", "RB", "WR/TE", "FLEX1", "FLEX2", "FLEX3", "K",
+    for slot in ("TQB", "RB", "WR", "FLEX1", "FLEX2", "FLEX3", "K",
                 "DST"):
         assert ("\n  %-6s " % slot) in slots_section
     # Bonus: Evan McPherson and the Patriots are no longer DATA PROBLEMs

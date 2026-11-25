@@ -6,17 +6,25 @@ teams: 12
 budget: 110
 roster_size: 13
 starters: 8
-flex_slots: 5          # RB/WR/TE, floor of 1 RB and 1 WR/TE
+flex_slots: 5          # RB/WR/TE, floor of 1 RB and 1 WR
 # The weekly starting lineup, slot by slot. `starters` and `flex_slots` above
 # are the counts the auction path uses; this is the same fact as an ordered
 # list, which is what an optimizer needs. league.py asserts the two agree.
 #
-# The RB and WR/TE slots ARE the floors - there is no separate floor setting.
+# The RB and WR slots ARE the floors - there is no separate floor setting.
 # A slot that only accepts RB forces one RB into the lineup by construction.
+#
+# CBS itself has no slots: it counts positions. Its team page's own check
+# (`is_roster_legal`, saved 2026-10-20, board da76847f) allows 5 to 8
+# active players with TQB exactly 1, RB 1 to 4, WR 1 to 4, TE 0 to 4, K 1
+# and DST 1. A full lineup of eight under those counts is exactly these
+# slots: five RB/WR/TE places with at least one RB and at least one WR,
+# and a TE only ever in a FLEX. The floor slot was "WR/TE" until 11-24,
+# which let a TE stand in for the WR that CBS requires.
 lineup:
   - {slot: "TQB",   eligible: ["TQB"]}
   - {slot: "RB",    eligible: ["RB"]}
-  - {slot: "WR/TE", eligible: ["WR", "TE"]}
+  - {slot: "WR",    eligible: ["WR"]}
   - {slot: "FLEX1", eligible: ["RB", "WR", "TE"]}
   - {slot: "FLEX2", eligible: ["RB", "WR", "TE"]}
   - {slot: "FLEX3", eligible: ["RB", "WR", "TE"]}

@@ -54,7 +54,7 @@ def test_past_the_last_week_nothing_remains():
 
 # ------------------------------------------------------- value is MARGINAL
 def test_a_fourth_receiver_is_worth_far_less_than_his_projection():
-    # The point of the whole module. This league starts one WR/TE and three
+    # The point of the whole module. This league starts one WR and three
     # FLEX; a receiver behind that wall scores nothing he is projected for.
     r = roster()
     depth = c("DEPTH", "WR", 120.0)

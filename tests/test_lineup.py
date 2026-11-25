@@ -39,19 +39,51 @@ def test_the_rb_slot_forces_a_running_back_even_when_receivers_score_more():
     assert "wr5" not in picked          # the worst receiver is displaced
 
 
-def test_the_wr_te_slot_forces_a_receiver_when_backs_score_more():
+def test_the_wr_slot_forces_a_receiver_when_backs_score_more():
     roster = [c("qb", "TQB", 20), c("k", "K", 7), c("d", "DST", 6),
-              c("te1", "TE", 2),
+              c("wr1", "WR", 2),
               c("rb1", "RB", 20), c("rb2", "RB", 19), c("rb3", "RB", 18),
               c("rb4", "RB", 17), c("rb5", "RB", 16)]
     r = best_lineup(LG, roster)
-    picked = [x.name for _s, x in r.slots if x]
-    assert "te1" in picked
+    assert dict(r.slots)["WR"].name == "wr1"
+
+
+def test_a_tight_end_does_not_clear_the_wr_floor():
+    """CBS requires at least one WR and lets a TE start only where an RB or
+    WR could (its lineup check: WR 1 to 4, TE 0 to 4, board da76847f). The
+    floor slot was WR/TE until 11-24, so a TE could stand in for the WR and
+    the optimizer would propose a lineup CBS calls illegal."""
+    roster = [c("qb", "TQB", 20), c("k", "K", 7), c("d", "DST", 6),
+              c("te1", "TE", 30), c("te2", "TE", 29),
+              c("rb1", "RB", 20), c("rb2", "RB", 19), c("rb3", "RB", 18),
+              c("rb4", "RB", 17)]
+    r = best_lineup(LG, roster)
+    slots = dict(r.slots)
+    assert slots["WR"] is None          # nobody may fill it
+    assert sorted(x.pos for s, x in r.slots
+                  if s.startswith("FLEX") or s == "RB") == [
+        "RB", "RB", "TE", "TE"]
+    # With one receiver on the roster he starts, however few points.
+    r = best_lineup(LG, roster + [c("wr1", "WR", 1)])
+    assert dict(r.slots)["WR"].name == "wr1"
+    _legal(LG, r)
+
+
+def test_four_wrs_and_no_te_is_a_full_lineup():
+    """The 11-24 page: TQB, one RB, four WRs, K, DST - eight starters, no
+    TE. CBS showed an EMPTY TE row beside it, which is a position nobody
+    starts at, not a slot. The yaml agrees: every slot fills."""
+    roster = [c("qb", "TQB", 20), c("k", "K", 7), c("d", "DST", 6),
+              c("rb1", "RB", 9), c("wr1", "WR", 15), c("wr2", "WR", 14),
+              c("wr3", "WR", 13), c("wr4", "WR", 12), c("te1", "TE", 0)]
+    r = best_lineup(LG, roster)
+    assert None not in dict(r.slots).values()
+    assert "te1" not in [x.name for _s, x in r.slots]
 
 
 def test_repairing_the_rb_floor_does_not_force_a_weak_te_when_a_wr_already_clears_wr_te():
     """The RB floor forces rb1 in (it is the only RB). te1 must NOT also be
-    forced: the WR/TE floor only needs one WR-or-TE, and wr0 (10 pts) clears
+    forced: the WR floor only needs one WR, and wr0 (10 pts) clears
     it more cheaply than te1 (1 pt) - forcing te1 in too would leave 10
     points on the table. Verified against brute force rather than a
     hand-derived expectation, since an earlier version of this test asserted
@@ -69,21 +101,21 @@ def test_repairing_the_rb_floor_does_not_force_a_weak_te_when_a_wr_already_clear
         poss = [x.pos for x in combo]
         if "RB" not in poss:
             continue
-        if not ({"WR", "TE"} & set(poss)):
+        if "WR" not in poss:
             continue
         best = max(best, sum(x.points for x in combo))
     r = best_lineup(LG, roster)
     picked = [x.name for _s, x in r.slots if x]
     assert r.total == pytest.approx(best)
     assert "rb1" in picked              # the sole RB - the floor forces it
-    assert "te1" not in picked          # a WR clears WR/TE more cheaply
+    assert "te1" not in picked          # a WR clears the WR floor cheaply
 
 
 def test_the_floor_positions_do_not_overlap_which_is_why_one_cut_cannot_break_both():
     """_best_flex_five guards against repairing one floor by breaking another.
     That guard is unreachable while the restricted flex slots partition the
     positions with no overlap - violating one floor over-satisfies the other.
-    If a future league adds an overlapping slot (an RB/WR flex beside WR/TE),
+    If a future league adds an overlapping slot (an RB/WR flex beside WR),
     the guard becomes load-bearing and has no direct test. Fail here first."""
     restricted = [set(e) for s, e in LG.lineup
                   if set(e) & {"RB", "WR", "TE"} and set(e) != {"RB", "WR", "TE"}]
@@ -102,7 +134,7 @@ def test_the_fast_path_agrees_with_brute_force_on_every_legal_combination():
         poss = [x.pos for x in combo]
         if "RB" not in poss:
             continue
-        if not ({"WR", "TE"} & set(poss)):
+        if "WR" not in poss:
             continue
         best = max(best, sum(x.points for x in combo))
     r = best_lineup(LG, fixed + flex)
@@ -303,16 +335,16 @@ def test_eligible_positions_defaults_to_the_one_position():
     assert eligible_positions(dual("b", 1)) == ("RB", "WR")
 
 
-def test_a_dual_rb_wr_player_fills_the_wr_te_slot_when_no_receiver_can():
-    """The case the primary-code rule got wrong: with no WR or TE rostered,
-    an RB,WR player is the only one who can fill WR/TE. Counted as an RB
+def test_a_dual_rb_wr_player_fills_the_wr_slot_when_no_receiver_can():
+    """The case the primary-code rule got wrong: with no WR rostered,
+    an RB,WR player is the only one who can fill WR. Counted as an RB
     only, the slot went empty and his points were lost to a worse RB."""
     roster = [c("qb", "TQB", 20), c("k", "K", 7), c("d", "DST", 6),
               c("rb1", "RB", 15), c("rb2", "RB", 14), c("rb3", "RB", 13),
               c("rb4", "RB", 12), dual("flexy", 11)]
     r = best_lineup(LG, roster)
     slots = dict(r.slots)
-    assert slots["WR/TE"].name == "flexy"
+    assert slots["WR"].name == "flexy"
     assert slots["RB"].name == "rb1"
     assert None not in slots.values()
     assert r.total == pytest.approx(20 + 7 + 6 + 15 + 14 + 13 + 12 + 11)
@@ -321,16 +353,16 @@ def test_a_dual_rb_wr_player_fills_the_wr_te_slot_when_no_receiver_can():
 
 def test_counted_under_his_primary_code_only_the_same_roster_loses_points():
     """The same roster with the dual player stripped to his primary code:
-    the WR/TE slot is unfillable. This pins what the field buys."""
+    the WR slot is unfillable. This pins what the field buys."""
     roster = [c("qb", "TQB", 20), c("k", "K", 7), c("d", "DST", 6),
               c("rb1", "RB", 15), c("rb2", "RB", 14), c("rb3", "RB", 13),
               c("rb4", "RB", 12), c("flexy", "RB", 11)]
     r = best_lineup(LG, roster)
-    assert dict(r.slots)["WR/TE"] is None
+    assert dict(r.slots)["WR"] is None
 
 
 def test_a_lone_dual_player_cannot_fill_both_floors_at_once():
-    """He satisfies the RB floor AND the WR/TE floor, but fills one slot.
+    """He satisfies the RB floor AND the WR floor, but fills one slot.
     With nobody else in the flex pool, one of the two slots stays empty."""
     roster = [c("qb", "TQB", 20), dual("flexy", 11)]
     r = best_lineup(LG, roster)
@@ -395,3 +427,39 @@ def test_the_exact_path_is_deterministic_on_ties():
         again = best_lineup(LG, list(reversed(roster)))
         assert [(s, x and x.name) for s, x in again.slots] == [
             (s, x and x.name) for s, x in first.slots]
+
+
+def _cbs_allows(result):
+    """CBS's own lineup check, as its team page's `is_roster_legal` script
+    states it (saved 2026-10-20, board da76847f): 5 to 8 active, TQB 1, RB
+    1 to 4, WR 1 to 4, TE at most 4, K 1, DST 1."""
+    n = {}
+    for _slot, x in result.slots:
+        if x is not None:
+            n[x.pos] = n.get(x.pos, 0) + 1
+    active = sum(n.values())
+    return (5 <= active <= 8 and n.get("TQB", 0) == 1
+            and 1 <= n.get("RB", 0) <= 4 and 1 <= n.get("WR", 0) <= 4
+            and n.get("TE", 0) <= 4 and n.get("K", 0) == 1
+            and n.get("DST", 0) == 1)
+
+
+def test_every_lineup_the_optimizer_picks_passes_cbs_s_own_check():
+    """Rosters that hold at least one player at every position: the optimum
+    must be a lineup CBS accepts. Under the old WR/TE floor slot a roster
+    whose receivers were all TEs gave a lineup with no WR, which CBS
+    refuses."""
+    import random
+    rng = random.Random(20261124)
+    for _ in range(500):
+        cands = [c("qb", "TQB", rng.randint(0, 25)),
+                 c("k", "K", rng.randint(0, 12)),
+                 c("d", "DST", rng.randint(0, 12)),
+                 c("rb0", "RB", rng.randint(0, 25)),
+                 c("wr0", "WR", rng.randint(0, 25))]
+        for i in range(rng.randint(3, 8)):
+            cands.append(c("p%d" % i, rng.choice(("RB", "WR", "TE", "TE")),
+                           rng.randint(0, 40)))
+        r = best_lineup(LG, cands)
+        assert None not in dict(r.slots).values(), cands
+        assert _cbs_allows(r), [(s, x.pos) for s, x in r.slots]

@@ -4,7 +4,7 @@ import pytest
 
 from sffl.cbs_roster import (_ROW, RosterRow, RosterUnreadable, _iter_lines,
                              find_name_position_collisions,
-                             parse_empty_slots, parse_lineup,
+                             parse_lineup,
                              parse_lineup_rows,
                              parse_positions, parse_roster)
 
@@ -753,42 +753,32 @@ def test_an_empty_starting_slot_is_read_as_nobody_not_refused(tmp_path):
     assert parse_roster(path) == ["Pat Example", "Sam Runner"]
 
 
-def test_an_empty_starting_slot_is_reported_by_its_slot_code(tmp_path):
-    # Board c44b2d8b: read as nobody above, and also reported, so the
-    # digest can say a starting slot scores zero.
-    path = _page(tmp_path, _PAT + [
-        "\tTE\tEMPTY\t\t\t\t\t\t\t\t\t\t\t",
-        "RESERVES"] + _SAM + ["ACTIVE: 1 RESERVE: 1"])
-    assert parse_empty_slots(path) == ["TE"]
-
-
-def test_a_page_with_every_slot_filled_reports_no_empty_slot(tmp_path):
-    path = _page(tmp_path, _PAT + ["RESERVES"] + _SAM
-                 + ["ACTIVE: 1 RESERVE: 1"])
-    assert parse_empty_slots(path) == []
-
-
-def test_two_empty_slots_are_both_reported_in_page_order(tmp_path):
+def test_empty_rows_anywhere_are_read_as_nobody(tmp_path):
+    # Board da76847f: an EMPTY row is CBS's placeholder for a position with
+    # nobody active (the page hides one per unused place up to each
+    # position's maximum, and shows it when the position has no starter).
+    # It is never a player and never an unreadable line, above or below
+    # RESERVES, one or several.
     path = _page(tmp_path, [
         "\tRB\tEMPTY\t\t\t"] + _PAT + [
         "\tTE\tEMPTY\t\t\t",
-        "RESERVES"] + _SAM + ["ACTIVE: 1 RESERVE: 1"])
-    assert parse_empty_slots(path) == ["RB", "TE"]
-
-
-def test_an_empty_row_below_reserves_is_not_a_starting_slot(tmp_path):
-    path = _page(tmp_path, _PAT + ["RESERVES"] + _SAM + [
+        "RESERVES"] + _SAM + [
         "\tTE\tEMPTY\t\t\t", "ACTIVE: 1 RESERVE: 1"])
-    assert parse_empty_slots(path) == []
+    for parser in _EVERY_PARSER:
+        parser(path)
+    starters, reserves = parse_lineup_rows(path)
+    assert [r.name for r in starters] == ["Pat Example"]
+    assert [r.name for r in reserves] == ["Sam Runner"]
 
 
-def test_an_unreadable_page_refuses_parse_empty_slots_too(tmp_path):
+def test_an_empty_row_does_not_excuse_an_unreadable_one(tmp_path):
     path = _page(tmp_path, _PAT + [
-        "\tRB\tRex Dualton RB/WR • PIT\tDEN\t",
+        "\tRB\tRex Dualton RB/WR \u2022 PIT\tDEN\t",
         "\tTE\tEMPTY\t\t\t",
         "RESERVES"] + _SAM + ["ACTIVE: 1 RESERVE: 1"])
-    with pytest.raises(RosterUnreadable):
-        parse_empty_slots(path)
+    for parser in _EVERY_PARSER:
+        with pytest.raises(RosterUnreadable):
+            parser(path)
 
 
 def test_a_page_that_agrees_with_its_footer_reads(tmp_path):

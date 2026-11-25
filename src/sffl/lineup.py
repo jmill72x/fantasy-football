@@ -6,8 +6,8 @@ piece with real logic in it, so it must be exhaustively testable with no
 fixtures and no network - see the brute-force test.
 
 WHY THE OPTIMUM IS A SUBSET, NOT AN ASSIGNMENT. The flex-eligible slots
-(RB, WR/TE, FLEX x3) are interchangeable: every legal lineup uses exactly five
-players from the RB/WR/TE pool with at least one RB and at least one WR or TE,
+(RB, WR, FLEX x3) are interchangeable: every legal lineup uses exactly five
+players from the RB/WR/TE pool with at least one RB and at least one WR,
 and its total is the sum of their points. The slot LABELS do not affect the
 total, so maximizing over assignments is the same as choosing the best legal
 five-player subset. That is why a subset search is exact here and not a
@@ -129,7 +129,7 @@ def best_lineup(lg, candidates):
             need[slot] = set(elig)
     picked = _best_flex_five(pool, len(flex_slots), need)
 
-    # Assign narrowest-eligibility slots first (RB-only, then WR/TE-only,
+    # Assign narrowest-eligibility slots first (RB-only, then WR-only,
     # then the fully-open FLEXes). A wide slot filled ahead of a narrow one
     # can claim the only candidate that satisfies the narrow slot, leaving it
     # empty and silently dropping a chosen player - nothing about `lg.lineup`

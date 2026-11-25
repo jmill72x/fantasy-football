@@ -228,7 +228,7 @@ unscored and the waiver block printed `KeyError: 'RB-WR-TE'`. Since
 `john/multi-position-rows` a bare comma-joined list of known codes is read. The player is
 identified and scored under the FIRST listed code (scoring is the same for RB, WR and TE),
 and since `john/empty-multipos` the optimizer may start him in any slot one of his listed
-positions fits (an RB,WR player can fill WR/TE). `sffl lineup` still uses CBS's edit-mode
+positions fits (an RB,WR player can fill the WR slot). `sffl lineup` still uses CBS's edit-mode
 position only. Any other spelling (`RB, WR`, `RB/WR`, `RB,`) is still refused, as is a
 name that ends in a position code. When the RB-WR-TE page fails, the waiver block now
 says so by name instead of printing a `KeyError`.
@@ -237,16 +237,31 @@ A code that looks like a number (`12`) is YAML-parsed as an integer rather than 
 That is handled - the loader coerces every code with `str()` - so it neither crashes the
 command nor silently fails to match. Quoting it (`"12"`) is still clearer.
 
-## "The digest says EMPTY TE SLOT ON CBS"
+## "The digest says N STARTING SLOT(S) OPEN ON CBS"
 
-The CBS team page shows a starting slot with nobody in it (`\tTE\tEMPTY\t...` on the page,
-first seen 2026-11-24). Nobody in it means it scores 0 that week, whatever the BEST LINEUP
-block says, because that block is the optimum, not what CBS has set. Fill it on CBS.
-(`sffl lineup` hasn't been run against a page with an EMPTY slot, so check its dry run
-before trusting it there.) The warning heads the
-digest, one line per open slot, on every run that read the roster, including a run where
-every projections page failed. It doesn't change the exit code. An EMPTY row below
-RESERVES isn't a starting slot and isn't reported (never seen).
+Fewer players are starting on the CBS team page than the league's eight
+(`leagues/sffl/2026.yaml` `starters`), counted from the page's starter rows (which its
+`ACTIVE: n` footer must agree with). An open slot scores 0 that week, whatever the BEST
+LINEUP block says, because that block is the optimum, not what CBS has set. CBS allows it
+(5 to 8 active), so nothing else warns. Fill it on CBS by hand: `sffl lineup` refuses a
+page whose starter count differs from the plan's ("target lineup has 8 starters but the
+page shows 7"), so it can't fill an open slot. The warning heads the digest on every run
+that read the roster, including a run where every projections page failed. It doesn't
+change the exit code.
+
+**An EMPTY row on the page is not an open slot** (board da76847f). CBS has no lineup slots;
+it counts positions. Its team page's own check (`is_roster_legal`, in the page HTML saved
+2026-10-20) allows 5 to 8 active players: TQB exactly 1, RB 1 to 4, WR 1 to 4, TE 0 to 4,
+K 1, DST 1. The page holds a hidden EMPTY row for every unused place up to each position's
+maximum (`display:none`), and one shows as `\tTE\tEMPTY\t...` when a position has nobody
+active: on 2026-11-24 four WRs started, no TE, and the footer said `ACTIVE: 8`. That lineup
+was full and legal. The digest reads such a row as nobody and says nothing about it (from
+`cc352e8` until `john/slot-count` it printed `!! EMPTY TE SLOT ON CBS ... Fill it.`, which
+was wrong).
+
+The yaml's slots are the same rule: TQB, RB, WR, FLEX x3, K, DST. The third slot was `WR/TE`
+until `john/slot-count`, which let the optimizer clear the WR floor with a TE, a lineup CBS
+refuses. No archived week's optimum changed (16 of 16 units, wk06 to wk12).
 
 ## Where the injury news comes from
 

@@ -175,7 +175,7 @@ def _strip_id_prefix(line):
 #     fallback key still joins the two pages when an id is missing.
 # The full list goes on `PlayerProjection.positions` (since 2026-11-24,
 # board ef69a845), and the optimizer (sffl.lineup) starts him in any slot
-# one of his positions is eligible for - an RB,WR player can fill WR/TE.
+# one of his positions is eligible for - an RB,WR player can fill the WR slot.
 # Before that he could only be started where an RB could, which understated
 # him but never placed him where CBS would refuse him.
 _POS_CODES = r"TQB|QB|RB|WR|TE|K|DST"
