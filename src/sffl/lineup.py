@@ -28,10 +28,32 @@ from collections import namedtuple
 # reconstruct for a Candidate the same way it already can for a
 # PlayerProjection). Added with a default so every existing call site that
 # never mentions `team` - this module's own tests included - is unaffected.
-Candidate = namedtuple("Candidate", "name pos points team", defaults=("",))
+#
+# `positions` is OPTIONAL too (defaults to ()): every position the player may
+# start at, primary first, for a player CBS lists under more than one
+# ("RB,WR", first seen 2026-11-24; `PlayerProjection.positions`). () means
+# just `pos`, which is every ordinary player. `pos` stays the primary code,
+# the one identity and the alert's diff key on; only slot eligibility reads
+# `positions` (see `eligible_positions`).
+Candidate = namedtuple("Candidate", "name pos points team positions",
+                       defaults=("", ()))
 LineupResult = namedtuple("LineupResult", "slots total")
 
 _FLEX = ("RB", "WR", "TE")
+
+
+def eligible_positions(x):
+    """Every position `x` may start at: `x.positions`, or `(x.pos,)`."""
+    return tuple(x.positions) or (x.pos,)
+
+
+def _fits(x, elig):
+    """True when one of `x`'s positions is in the slot eligibility `elig`."""
+    return any(p in elig for p in eligible_positions(x))
+
+
+def _is_multi(x):
+    return len(set(eligible_positions(x))) > 1
 
 
 def _sorted(cands):
@@ -80,7 +102,15 @@ def best_lineup(lg, candidates):
     `slots` is in league order and carries None for any slot the roster cannot
     fill - an unfillable slot is reported, never silently skipped and never
     filled with an ineligible player.
+
+    A pool where every player has ONE position takes the original subset
+    search below, unchanged. A pool with a multi-position player (an RB,WR)
+    takes `_best_lineup_exact`: the subset argument in the module docstring
+    needs each player to satisfy exactly one floor, and a dual player can
+    satisfy both floors in the subset check while filling only one slot.
     """
+    if any(_is_multi(x) for x in candidates):
+        return _best_lineup_exact(lg, candidates)
     remaining = list(candidates)
     flex_slots = [(s, e) for s, e in lg.lineup if set(e) & set(_FLEX)]
     fixed_slots = [(s, e) for s, e in lg.lineup if not set(e) & set(_FLEX)]
@@ -116,6 +146,70 @@ def best_lineup(lg, candidates):
     slots = [(s, filled.get(s)) for s, _e in lg.lineup]
     # sum()'s start defaults to int 0, so an empty/all-None roster would
     # return an int total - the brief specifies float.
+    total = sum((x.points for _s, x in slots if x is not None), 0.0)
+    return LineupResult(slots=slots, total=total)
+
+
+def _best_lineup_exact(lg, candidates):
+    """`best_lineup` for a pool with multi-position players: an exact search
+    over slot assignments, eligibility read from `eligible_positions`.
+
+    Slots with the same eligibility form one group (the three FLEXes), so a
+    group is filled with a COMBINATION, never a permutation. Groups are
+    filled narrowest first and every group but the last is enumerated; the
+    last takes the best players left, which is optimal because nothing after
+    it competes for them. Each enumerated group only considers the top
+    `len(lg.lineup)` players still eligible for it: a slot holding anyone
+    below that line has an unused better player it could hold instead,
+    since the other slots take at most `len(lg.lineup) - 1` of them. At this
+    league's 8 slots and 13-man roster that is a few dozen assignments.
+
+    Every group is filled as far as its eligible players allow (a slot is
+    left empty only when nobody eligible is left), the same rule as the
+    one-position path. Ties go to the first assignment met in points-then-
+    name order, so two runs on one roster agree.
+    """
+    from itertools import combinations
+
+    groups = []      # [(eligibility, [slot, ...])], in first-seen order
+    for slot, elig in lg.lineup:
+        for g_elig, g_slots in groups:
+            if set(g_elig) == set(elig):
+                g_slots.append(slot)
+                break
+        else:
+            groups.append((tuple(elig), [slot]))
+    # Narrowest first; declaration order breaks ties (sorted is stable).
+    groups.sort(key=lambda g: len(g[0]))
+    cap = len(lg.lineup)
+
+    best = [None, None]      # [total, [(group index, players)]]
+
+    def search(i, remaining, total, chosen):
+        elig, slots = groups[i]
+        pool = [x for x in _sorted(remaining) if _fits(x, elig)]
+        size = min(len(slots), len(pool))
+        last = i == len(groups) - 1
+        options = ([tuple(pool[:size])] if last
+                   else combinations(pool[:cap], size))
+        for pick in options:
+            got = total + sum(x.points for x in pick)
+            path = chosen + [(i, pick)]
+            if last:
+                if best[0] is None or got > best[0]:
+                    best[0], best[1] = got, path
+                continue
+            left = [x for x in remaining if not any(x is y for y in pick)]
+            search(i + 1, left, got, path)
+
+    if groups:
+        search(0, list(candidates), 0.0, [])
+
+    filled = {}
+    for i, pick in best[1] or []:
+        for slot, x in zip(groups[i][1], _sorted(pick)):
+            filled[slot] = x
+    slots = [(s, filled.get(s)) for s, _e in lg.lineup]
     total = sum((x.points for _s, x in slots if x is not None), 0.0)
     return LineupResult(slots=slots, total=total)
 

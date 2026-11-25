@@ -247,7 +247,9 @@ _FOOTER_COUNTS = re.compile(r"^ACTIVE:\s*(\d+)\s+RESERVE:\s*(\d+)\b")
 # A starting slot with nobody in it: "\tTE\tEMPTY\t\t\t...". Seen on the
 # 11-24 page (a TE slot left open). It starts like a row, so it is named
 # here as the one such line that is not a player row and not unreadable.
-_EMPTY_SLOT = re.compile(r"^\t%s\tEMPTY(?:\t.*)?$" % _POS_LIST)
+# `slot` is the cell as written. `parse_empty_slots` reports a starting one,
+# since a slot nobody fills scores zero (board c44b2d8b).
+_EMPTY_SLOT = re.compile(r"^\t(?P<slot>%s)\tEMPTY(?:\t.*)?$" % _POS_LIST)
 
 # A matched name ending in a status tag ("Pat Example Q" out of "Pat Example
 # Q WR • SEA"): the roster page shows designations as icons, never text, so
@@ -355,8 +357,15 @@ _Row = namedtuple("_Row", "in_reserves player_id name slot team")
 
 
 def _read_rows(path):
-    """(rows, seen_marker): every player row on the page as a `_Row`, in
-    page order, and whether the RESERVES marker was seen.
+    """(rows, seen_marker) - `_scan` without the empty slots."""
+    rows, seen_marker, _empty = _scan(path)
+    return rows, seen_marker
+
+
+def _scan(path):
+    """(rows, seen_marker, empty_slots): every player row on the page as a
+    `_Row`, in page order, whether the RESERVES marker was seen, and the
+    slot code of every EMPTY starting slot (above RESERVES), in page order.
 
     EVERY public parser here reads the page through this, so none of them
     can drop a row the others keep. It refuses (`RosterUnreadable`, F4) a
@@ -381,6 +390,7 @@ def _read_rows(path):
     """
     rows = []
     problems = []
+    empty_slots = []
     seen_marker = False
     footer = None
     for player_id, line in _iter_lines(path):
@@ -392,8 +402,11 @@ def _read_rows(path):
             continue
         m = _ROW.match(line)
         if not m:
-            if ((_ROW_START.match(line) or _ROW_BULLET in line)
-                    and not _EMPTY_SLOT.match(line)):
+            empty = _EMPTY_SLOT.match(line)
+            if empty:
+                if not seen_marker:
+                    empty_slots.append(empty.group("slot"))
+            elif _ROW_START.match(line) or _ROW_BULLET in line:
                 problems.append("unreadable row %r" % line)
             continue
         name = m.group("name").strip()
@@ -427,7 +440,23 @@ def _read_rows(path):
             "so no roster is returned rather than one missing or misnaming "
             "a player (F4). First: %s"
             % (path, len(problems), problems[0]))
-    return rows, seen_marker
+    return rows, seen_marker, empty_slots
+
+
+def parse_empty_slots(path):
+    """The slot code of every EMPTY starting slot on the page, in page
+    order ([] when every starting slot holds a player).
+
+    CBS renders an open starting slot as a row with no player in it
+    ("\tTE\tEMPTY\t...", the 11-24 page). The other parsers read it as
+    nobody, which is right for the roster, but a starting slot nobody fills
+    scores zero, so `sffl.cli._cmd_alert` passes this to `alert.compose`,
+    which heads the digest with it (board c44b2d8b). An EMPTY row below
+    RESERVES (never seen) is not a starting slot and is not reported.
+
+    Refuses an unreadable page exactly as every other parser here does.
+    """
+    return _scan(path)[2]
 
 
 def parse_roster(path):

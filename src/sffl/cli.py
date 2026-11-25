@@ -1435,7 +1435,8 @@ def _cmd_week(args):
 
     def cand(p):
         return Candidate(name=p.name, pos=p.pos,
-                         points=score_week(lg, p, curves))
+                         points=score_week(lg, p, curves),
+                         positions=p.positions)
 
     # A player designated Out will not take the field and scores zero, so the
     # optimiser would otherwise start him and report a lineup total that
@@ -1687,7 +1688,8 @@ def _cmd_alert(args):
     from sffl.trade import games_remaining, rank_targets
     from sffl.cbs_weekly import (WEEK_MISMATCH_RATIO, read_report_stamp,
                                  shared_team_count, week_conflicts)
-    from sffl.cbs_roster import RosterUnreadable, parse_lineup_rows
+    from sffl.cbs_roster import (RosterUnreadable, parse_empty_slots,
+                                 parse_lineup_rows)
     from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
     from sffl.cbs_weekly import is_out
     # `delta`/`best_add_drop` power the waiver block below. Imported HERE,
@@ -1742,6 +1744,9 @@ def _cmd_alert(args):
     # True when `capture_error` is the roster page refusing to parse
     # (`cbs_roster.RosterUnreadable`), not a failed capture.
     roster_unreadable = False
+    # EMPTY starting slots on the team page (["TE"] on 11-24): each heads
+    # the digest, since nobody in a slot scores zero (board c44b2d8b).
+    empty_slots = []
     # Distinct from `capture_error` - see `_AllProjectionsFailed`'s
     # docstring and `compose`'s. Set ONLY when the roster was read fine but
     # every one of the four projection pages failed.
@@ -1840,6 +1845,7 @@ def _cmd_alert(args):
         # silently lose the second row's slot entirely, rendering that
         # slot `-- UNFILLED` at exit 0 with no mention anywhere.
         starter_rows, reserve_rows = parse_lineup_rows(roster_path)
+        empty_slots = parse_empty_slots(roster_path)
         roster_rows = starter_rows + [r for r in reserve_rows
                                       if r not in starter_rows]
         # `current_starters` is (name, pos, team) triples, not bare names -
@@ -2148,7 +2154,8 @@ def _cmd_alert(args):
         result = best_lineup(lg, [
             Candidate(name=resolved[r].name, pos=resolved[r].pos,
                       points=score_week(lg, resolved[r], curves),
-                      team=resolved[r].team)
+                      team=resolved[r].team,
+                      positions=resolved[r].positions)
             for r in roster_rows
             if r in resolved and not is_out(resolved[r].status)])
 
@@ -2182,7 +2189,8 @@ def _cmd_alert(args):
                 my_cands = [
                     Candidate(name=resolved[r].name, pos=resolved[r].pos,
                               points=score_week(lg, resolved[r], curves),
-                              team=resolved[r].team)
+                              team=resolved[r].team,
+                              positions=resolved[r].positions)
                     for r in roster_rows if r in resolved]
                 owned_keys = set((c.name, c.pos, c.team) for c in my_cands)
                 # One classifier for the pool, built from the page that
@@ -2206,7 +2214,7 @@ def _cmd_alert(args):
                 for p in free:
                     c = Candidate(name=p.name, pos=p.pos,
                                   points=score_week(lg, p, curves),
-                                  team=p.team)
+                                  team=p.team, positions=p.positions)
                     g = delta(lg, my_cands, c)
                     if g > 0:
                         scored.append((g, c, p))
@@ -2291,9 +2299,11 @@ def _cmd_alert(args):
                             games_remaining(week, p.bye)) or 1.0
                         return (score_season_calibrated(lg, p, curves)
                                 if curves else score_season(lg, p))
-                    mine_ros = [Candidate(p.name, p.pos, _ros_pts(p), p.team)
+                    mine_ros = [Candidate(p.name, p.pos, _ros_pts(p), p.team,
+                                          p.positions)
                                 for p in owned_by[my_token]]
-                    market = [(Candidate(p.name, p.pos, _ros_pts(p), p.team),
+                    market = [(Candidate(p.name, p.pos, _ros_pts(p), p.team,
+                                         p.positions),
                                token)
                               for token, players in sorted(owned_by.items())
                               if token != my_token for p in players]
@@ -2335,7 +2345,8 @@ def _cmd_alert(args):
             survivors = [
                 Candidate(name=resolved[r].name, pos=resolved[r].pos,
                           points=score_week(lg, resolved[r], curves),
-                          team=resolved[r].team)
+                          team=resolved[r].team,
+                          positions=resolved[r].positions)
                 for r in roster_rows
                 if r in resolved and not is_out(resolved[r].status)
                 and (resolved[r].name, resolved[r].pos) not in names_out]
@@ -2481,6 +2492,7 @@ def _cmd_alert(args):
     body = compose(args.kind, age_days, reports, result, sidelined,
                    capture_error=capture_error,
                    roster_unreadable=roster_unreadable,
+                   empty_slots=empty_slots,
                    current_starters=current_starters,
                    unevaluated_starters=unevaluated_starters,
                    injury_error=injury_error,
@@ -2928,9 +2940,11 @@ def _cmd_trade(args):
               "matched any name in %s" % args.roster)
         return 1
 
-    mine = [Candidate(name=p.name, pos=p.pos, points=ros(p), team=p.team)
+    mine = [Candidate(name=p.name, pos=p.pos, points=ros(p), team=p.team,
+                      positions=p.positions)
             for p in owned_by[my_token]]
-    market = [(Candidate(name=p.name, pos=p.pos, points=ros(p), team=p.team),
+    market = [(Candidate(name=p.name, pos=p.pos, points=ros(p), team=p.team,
+                         positions=p.positions),
                token)
               for token, players in sorted(owned_by.items()) if token != my_token
               for p in players]

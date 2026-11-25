@@ -4,7 +4,8 @@ import pytest
 
 from sffl.cbs_roster import (_ROW, RosterRow, RosterUnreadable, _iter_lines,
                              find_name_position_collisions,
-                             parse_lineup, parse_lineup_rows,
+                             parse_empty_slots, parse_lineup,
+                             parse_lineup_rows,
                              parse_positions, parse_roster)
 
 FIXTURE = "tests/fixtures/cbs_team_page.txt"
@@ -750,6 +751,44 @@ def test_an_empty_starting_slot_is_read_as_nobody_not_refused(tmp_path):
     assert starters == [RosterRow("Pat Example", "WR", "SEA", "9300001")]
     assert reserves == [RosterRow("Sam Runner", "RB", "DET", "9300002")]
     assert parse_roster(path) == ["Pat Example", "Sam Runner"]
+
+
+def test_an_empty_starting_slot_is_reported_by_its_slot_code(tmp_path):
+    # Board c44b2d8b: read as nobody above, and also reported, so the
+    # digest can say a starting slot scores zero.
+    path = _page(tmp_path, _PAT + [
+        "\tTE\tEMPTY\t\t\t\t\t\t\t\t\t\t\t",
+        "RESERVES"] + _SAM + ["ACTIVE: 1 RESERVE: 1"])
+    assert parse_empty_slots(path) == ["TE"]
+
+
+def test_a_page_with_every_slot_filled_reports_no_empty_slot(tmp_path):
+    path = _page(tmp_path, _PAT + ["RESERVES"] + _SAM
+                 + ["ACTIVE: 1 RESERVE: 1"])
+    assert parse_empty_slots(path) == []
+
+
+def test_two_empty_slots_are_both_reported_in_page_order(tmp_path):
+    path = _page(tmp_path, [
+        "\tRB\tEMPTY\t\t\t"] + _PAT + [
+        "\tTE\tEMPTY\t\t\t",
+        "RESERVES"] + _SAM + ["ACTIVE: 1 RESERVE: 1"])
+    assert parse_empty_slots(path) == ["RB", "TE"]
+
+
+def test_an_empty_row_below_reserves_is_not_a_starting_slot(tmp_path):
+    path = _page(tmp_path, _PAT + ["RESERVES"] + _SAM + [
+        "\tTE\tEMPTY\t\t\t", "ACTIVE: 1 RESERVE: 1"])
+    assert parse_empty_slots(path) == []
+
+
+def test_an_unreadable_page_refuses_parse_empty_slots_too(tmp_path):
+    path = _page(tmp_path, _PAT + [
+        "\tRB\tRex Dualton RB/WR • PIT\tDEN\t",
+        "\tTE\tEMPTY\t\t\t",
+        "RESERVES"] + _SAM + ["ACTIVE: 1 RESERVE: 1"])
+    with pytest.raises(RosterUnreadable):
+        parse_empty_slots(path)
 
 
 def test_a_page_that_agrees_with_its_footer_reads(tmp_path):

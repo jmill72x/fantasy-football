@@ -194,6 +194,33 @@ def test_an_all_projections_failure_gets_its_own_message_not_the_roster_ones():
     assert "roster" in msg.lower() and "read successfully" in msg.lower()
 
 
+def test_an_empty_starting_slot_is_flagged_above_the_lineup():
+    # Board c44b2d8b: an open slot on CBS scores zero; say so first.
+    msg = compose("friday", 2, [], LINEUP, [], empty_slots=["TE"])
+    assert "!! EMPTY TE SLOT ON CBS" in msg
+    assert "scores 0. Fill it." in msg
+    assert msg.index("EMPTY TE SLOT") < msg.index("Bijan Robinson")
+
+
+def test_every_empty_slot_gets_its_own_line():
+    msg = compose("tuesday", 2, [], LINEUP, [], empty_slots=["RB", "TE"])
+    assert "!! EMPTY RB SLOT ON CBS" in msg
+    assert "!! EMPTY TE SLOT ON CBS" in msg
+
+
+@pytest.mark.parametrize("empty", [None, []])
+def test_no_empty_slot_renders_nothing(empty):
+    assert (compose("friday", 2, [], LINEUP, [], empty_slots=empty)
+            == compose("friday", 2, [], LINEUP, []))
+
+
+def test_an_empty_slot_is_still_flagged_when_every_projection_failed():
+    # The roster was read, so the open slot is known and still actionable.
+    msg = compose("sunday", 2, [], LINEUP, [], empty_slots=["TE"],
+                  projections_capture_error="all 4 failed")
+    assert "!! EMPTY TE SLOT ON CBS" in msg
+
+
 def test_capture_error_wins_over_projections_capture_error_if_both_given():
     # Should never happen in practice (capture_error means the roster
     # capture never even reached the projections loop), but the ordering

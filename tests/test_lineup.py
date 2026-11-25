@@ -246,3 +246,152 @@ def test_a_starter_can_be_the_drop_when_that_is_actually_better():
     roster = _full_roster()
     drop, _net = best_add_drop(lg, roster, Candidate("Star", "WR", 30.0, "NE"))
     assert drop.name == "SCRUB"
+
+
+# --- Multi-position players ("RB,WR"), board ef69a845 ----------------------
+#
+# CBS lists some players under two positions, primary first. `pos` is the
+# primary code; `positions` is the full list, and the optimizer may start
+# him in any slot one of them is eligible for.
+
+from sffl.lineup import _best_lineup_exact, eligible_positions  # noqa: E402
+
+
+def dual(name, pts, positions=("RB", "WR")):
+    return Candidate(name=name, pos=positions[0], points=float(pts),
+                     positions=tuple(positions))
+
+
+def _brute_force_total(lg, cands):
+    """The true optimum: every assignment of players to slots, by brute force
+    over the slots in league order. Exponential, so small pools only."""
+    slots = [e for _s, e in lg.lineup]
+    best = [0.0]
+
+    def go(i, used, total):
+        if i == len(slots):
+            best[0] = max(best[0], total)
+            return
+        any_fit = False
+        for j, x in enumerate(cands):
+            if j in used:
+                continue
+            if any(p in slots[i] for p in eligible_positions(x)):
+                any_fit = True
+                go(i + 1, used | {j}, total + x.points)
+        if not any_fit:
+            go(i + 1, used, total)
+
+    go(0, frozenset(), 0.0)
+    return best[0]
+
+
+def _legal(lg, result):
+    """Every filled slot holds a player eligible for it, nobody twice."""
+    elig = dict(lg.lineup)
+    seen = []
+    for slot, x in result.slots:
+        if x is None:
+            continue
+        assert any(p in elig[slot] for p in eligible_positions(x)), (slot, x)
+        assert not any(x is y for y in seen), x
+        seen.append(x)
+
+
+def test_eligible_positions_defaults_to_the_one_position():
+    assert eligible_positions(c("a", "WR", 1)) == ("WR",)
+    assert eligible_positions(dual("b", 1)) == ("RB", "WR")
+
+
+def test_a_dual_rb_wr_player_fills_the_wr_te_slot_when_no_receiver_can():
+    """The case the primary-code rule got wrong: with no WR or TE rostered,
+    an RB,WR player is the only one who can fill WR/TE. Counted as an RB
+    only, the slot went empty and his points were lost to a worse RB."""
+    roster = [c("qb", "TQB", 20), c("k", "K", 7), c("d", "DST", 6),
+              c("rb1", "RB", 15), c("rb2", "RB", 14), c("rb3", "RB", 13),
+              c("rb4", "RB", 12), dual("flexy", 11)]
+    r = best_lineup(LG, roster)
+    slots = dict(r.slots)
+    assert slots["WR/TE"].name == "flexy"
+    assert slots["RB"].name == "rb1"
+    assert None not in slots.values()
+    assert r.total == pytest.approx(20 + 7 + 6 + 15 + 14 + 13 + 12 + 11)
+    _legal(LG, r)
+
+
+def test_counted_under_his_primary_code_only_the_same_roster_loses_points():
+    """The same roster with the dual player stripped to his primary code:
+    the WR/TE slot is unfillable. This pins what the field buys."""
+    roster = [c("qb", "TQB", 20), c("k", "K", 7), c("d", "DST", 6),
+              c("rb1", "RB", 15), c("rb2", "RB", 14), c("rb3", "RB", 13),
+              c("rb4", "RB", 12), c("flexy", "RB", 11)]
+    r = best_lineup(LG, roster)
+    assert dict(r.slots)["WR/TE"] is None
+
+
+def test_a_lone_dual_player_cannot_fill_both_floors_at_once():
+    """He satisfies the RB floor AND the WR/TE floor, but fills one slot.
+    With nobody else in the flex pool, one of the two slots stays empty."""
+    roster = [c("qb", "TQB", 20), dual("flexy", 11)]
+    r = best_lineup(LG, roster)
+    filled = [x for _s, x in r.slots if x is not None]
+    assert sorted(x.name for x in filled) == ["flexy", "qb"]
+    assert r.total == pytest.approx(31.0)
+    _legal(LG, r)
+
+
+def test_delta_credits_a_dual_waiver_player_with_the_slot_he_can_fill():
+    roster = [c("qb", "TQB", 20), c("k", "K", 7), c("d", "DST", 6),
+              c("rb1", "RB", 15), c("rb2", "RB", 14), c("rb3", "RB", 13),
+              c("rb4", "RB", 12)]
+    assert delta(LG, roster, dual("flexy", 11)) == pytest.approx(11.0)
+    assert delta(LG, roster, c("flexy", "RB", 11)) == pytest.approx(0.0)
+
+
+def test_the_exact_path_agrees_with_brute_force_on_random_dual_pools():
+    import random
+    rng = random.Random(20261124)
+    singles = ("RB", "WR", "TE")
+    duals = (("RB", "WR"), ("WR", "RB"), ("RB", "TE"), ("WR", "TE"))
+    for trial in range(300):
+        n = rng.randint(1, 8)
+        cands = [c("qb", "TQB", rng.randint(0, 25)),
+                 c("k", "K", rng.randint(0, 12))]
+        for i in range(n):
+            pts = rng.randint(0, 25)
+            if rng.random() < 0.35:
+                cands.append(dual("p%d" % i, pts, rng.choice(duals)))
+            else:
+                cands.append(c("p%d" % i, rng.choice(singles), pts))
+        r = best_lineup(LG, cands)
+        _legal(LG, r)
+        assert r.total == pytest.approx(_brute_force_total(LG, cands)), cands
+
+
+def test_the_exact_path_matches_the_subset_search_on_single_position_pools():
+    """Single-position pools still take the original path (unchanged), and
+    the exact search gives the same total on them - so the two paths cannot
+    disagree about what a roster is worth."""
+    import random
+    rng = random.Random(7)
+    for trial in range(300):
+        cands = [c("qb", "TQB", rng.randint(0, 25)),
+                 c("k", "K", rng.randint(0, 12)),
+                 c("d", "DST", rng.randint(0, 12))]
+        for i in range(rng.randint(0, 10)):
+            cands.append(c("p%d" % i, rng.choice(("RB", "WR", "TE")),
+                           rng.randint(0, 25)))
+        fast = best_lineup(LG, cands)
+        exact = _best_lineup_exact(LG, cands)
+        assert exact.total == pytest.approx(fast.total)
+        _legal(LG, exact)
+
+
+def test_the_exact_path_is_deterministic_on_ties():
+    roster = [c("qb", "TQB", 20), dual("b", 10), dual("a", 10),
+              c("r", "RB", 10), c("w", "WR", 10)]
+    first = best_lineup(LG, roster)
+    for _ in range(5):
+        again = best_lineup(LG, list(reversed(roster)))
+        assert [(s, x and x.name) for s, x in again.slots] == [
+            (s, x and x.name) for s, x in first.slots]

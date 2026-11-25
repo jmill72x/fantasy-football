@@ -250,6 +250,33 @@ def test_an_unreadable_roster_row_refuses_the_lineup_and_says_why(
     assert "ROSTER PAGE UNREADABLE" in alert_env.sent_calls[0][2]
 
 
+def test_an_empty_starting_slot_heads_the_digest(alert_env, capsys):
+    # Board c44b2d8b: the 11-24 page left a TE starting slot open. It was
+    # read as nobody and never mentioned, though a slot nobody fills scores
+    # zero. Built by adding the 11-24 row shape above RESERVES; the footer
+    # counts players only, so it stays as it is.
+    with open(ROSTER_FIXTURE) as fh:
+        lines = fh.read().split("\n")
+    at = lines.index("RESERVES")
+    lines.insert(at, "\tTE\tEMPTY" + "\t" * 12)
+    roster = alert_env.tmp / "roster_empty_te.txt"
+    roster.write_text("\n".join(lines))
+    alert_env.set_roster(roster)
+
+    code, out = alert_env.run(capsys)
+    assert code == 0
+    assert "!! EMPTY TE SLOT ON CBS" in out
+    assert "Fill it" in out
+    # Ahead of the lineup, and the lineup is still there.
+    assert out.index("EMPTY TE SLOT") < out.index("BEST LINEUP")
+    assert "EMPTY TE SLOT ON CBS" in alert_env.sent_calls[0][2]
+
+
+def test_a_full_lineup_says_nothing_about_empty_slots(alert_env, capsys):
+    _code, out = alert_env.run(capsys)
+    assert "EMPTY" not in out
+
+
 def test_a_failed_capture_still_names_the_login_fix(alert_env, capsys):
     alert_env.fail_capture(SessionExpired("CBS served its login page"))
     _code, out = alert_env.run(capsys)

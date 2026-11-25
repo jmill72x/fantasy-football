@@ -22,7 +22,7 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1337` passed
+- full_suite: `1359` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
@@ -30,7 +30,51 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
 
-## ROSTER F4 2026-11-24: staged on `john/roster-f4` (board c30a4d89)
+## EMPTY SLOT FLAG + FULL ELIGIBILITY 2026-11-24: staged on `john/empty-multipos` (boards c44b2d8b, ef69a845)
+
+Worktree `~/Projects/.worktrees/ff-empty-multipos`, off `6a680f4`. Both are for Friday
+11-27 16:45.
+- **EMPTY starting slot (c44b2d8b).** The 11-24 page had `\tTE\tEMPTY\t...` above
+  RESERVES: 8 players plus that row, footer `ACTIVE: 8` (every earlier page: 8 rows, no
+  EMPTY). It was read as nobody and never mentioned. New `cbs_roster.parse_empty_slots`
+  returns the slot code of every EMPTY row above RESERVES (`_scan` collects them in the
+  same pass every parser uses, so it refuses an unreadable page the same way). `_cmd_alert`
+  passes them to `compose(..., empty_slots=[...])`, which puts `!! EMPTY TE SLOT ON CBS:
+  nobody is starting there, so it scores 0. Fill it.` right under the roster-age line, ahead
+  of the lineup, and also on the all-projections-failed message (the roster was read). The
+  exit code doesn't change. Runbook: "The digest says EMPTY TE SLOT ON CBS".
+  **Not understood:** why CBS shows 8 starters AND an open TE row when the league yaml has
+  8 slots (TQB, RB, WR/TE, FLEX x3, K, DST); 4 WRs started that week. Either CBS's lineup
+  rules differ from the yaml or it renders a TE row whenever no TE starts. Worth a look at
+  `/rules` before trusting `sffl lineup` on such a page (it has never run against one).
+- **Full eligibility (ef69a845).** `PlayerProjection.positions` and `Candidate.positions`
+  (both default `()`, meaning just `pos`) carry every listed code, primary first;
+  `cbs_weekly` now captures the whole cell (`_POS_GROUP`'s `pos` is the list) and `parse`
+  splits it, setting `positions` only for a multi-code cell. `pos` stays the primary code,
+  so identity, scoring, the roster join and the start/sit diff are unchanged. In
+  `sffl.lineup`, a pool with no multi-position player takes the original subset search
+  untouched; one with any takes `_best_lineup_exact` (slots grouped by eligibility,
+  narrowest first, each group but the last enumerated as combinations of its top 8 eligible,
+  the last filled greedily). The subset argument breaks for a dual player, who satisfies both
+  floors while filling one slot. Every `Candidate` built from a projection in `cli.py`
+  passes `positions` (week, alert lineup, waivers, bye survivors, trade) except
+  `_cmd_lineup`'s, which uses CBS's edit-mode position (a CBS write path; follow-up).
+- **Cost:** with a dual player rostered every waiver `delta` takes the exact path: 1,700
+  deltas 2.45 s, 50 `best_add_drop` 0.37 s (synthetic 13-man roster).
+- **Verified:** 22 new test cases (brute force over 300 random dual pools, the exact path
+  equal to the subset search on 300 single-position pools, the WR/TE fill, the lone dual
+  player, delta, ties; weekly `positions` on tab and space rows; 5 `parse_empty_slots`
+  cases; 5 compose cases; 2 alert end-to-end). With main's `src` (plus shims for the new
+  names) 19 fail. Suite 1359 passed. Replay, main's parsers by path against the new ones:
+  35 roster files (17 unique pages, 10-19 to 11-24, data repo + archive + live capture)
+  identical across all five parsers, 0 refused, 455 rows; `parse_empty_slots` gives
+  `["TE"]` on the three copies of the 11-24 page and `[]` on every other. 109 projection
+  pages identical on (name, pos, team, id, stats); 2 records carry `positions` (the 11-24
+  `RB,WR` row, weekly and ROS). `sffl week --waivers --start-sit` on the 11-24 pages gives
+  byte-identical output old vs new (the dual player isn't a top target).
+- **Go-live:** on merge; the working tree runs it, so Friday 11-27 16:45 uses it.
+
+## ROSTER F4 2026-11-24: in `main` as `6a680f4` (board c30a4d89)
 
 **The gap.** `cbs_roster` skipped any line `_ROW` couldn't read, so a rostered player could
 leave the roster, the lineup and the injury check with no warning (the 11-24 multi-position
@@ -60,11 +104,11 @@ row did, until `2b11dbd`). `cbs_weekly` has refused such a page since 08-28 (F4)
   Suite 1337 passed.
 - **Not done, on purpose:** the slot column and the name cell's first code are not compared
   (equal on every saved page, but what CBS shows in the slot column for a dual-eligible
-  player is unseen, and a false refusal costs the whole digest). An empty starting slot
-  isn't flagged in the digest (follow-up idea).
+  player is unseen, and a false refusal costs the whole digest). The empty starting slot
+  is flagged since `john/empty-multipos` (section above).
 - **Go-live:** on merge; the working tree runs it, so the next job uses it.
 
-## MULTI-POSITION ROWS 2026-11-24: staged on `john/multi-position-rows`
+## MULTI-POSITION ROWS 2026-11-24: in `main` as `2b11dbd`
 
 **The failure.** Tuesday 11-24 (`com.sffl.alert.tuesday`, exit 1 at 16:46): CBS listed one
 waiver-wire player as `Name RB,WR • PIT`. The position group in `cbs_weekly` took one code,
@@ -82,8 +126,8 @@ only, nothing parses it).
   `calibrate.STAT_POSITIONS` treats RB, WR and TE alike), every lineup built from it is
   legal, and roster and projections read it the same way, so the composite fallback key
   still joins. The cost: the optimizer won't put an RB,WR player in the WR/TE slot, which
-  can understate him but never places him where CBS would refuse. Full eligibility would
-  need a field on `PlayerProjection` and `Candidate` (follow-up, not needed for Friday).
+  could understate him but never placed him where CBS would refuse. Full eligibility
+  landed on `john/empty-multipos` (section above).
 - **Strictness kept, and tightened:** any other spelling (`RB,XX`, `RB,`, `,RB`, `RB/WR`)
   is still refused, and `_NAME_SWALLOWED_POSITION` now refuses a name ending in a position
   code or a comma. Before, `Name RB, WR • PIT` or `Name RB WR • PIT` parsed silently as a WR

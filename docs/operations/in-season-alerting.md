@@ -225,15 +225,28 @@ guessing, is deliberate (see the comments in `src/sffl/cbs_weekly.py`).
 The other known cause was a player CBS lists at two positions (`Name RB,WR • PIT`): it
 refused the whole RB-WR-TE page on Tuesday 2026-11-24, so every RB, WR and TE went
 unscored and the waiver block printed `KeyError: 'RB-WR-TE'`. Since
-`john/multi-position-rows` a bare comma-joined list of known codes is read, and the player
-counts under the FIRST listed code (scoring is the same for RB, WR and TE; every lineup
-stays legal). Any other spelling (`RB, WR`, `RB/WR`, `RB,`) is still refused, as is a
+`john/multi-position-rows` a bare comma-joined list of known codes is read. The player is
+identified and scored under the FIRST listed code (scoring is the same for RB, WR and TE),
+and since `john/empty-multipos` the optimizer may start him in any slot one of his listed
+positions fits (an RB,WR player can fill WR/TE). `sffl lineup` still uses CBS's edit-mode
+position only. Any other spelling (`RB, WR`, `RB/WR`, `RB,`) is still refused, as is a
 name that ends in a position code. When the RB-WR-TE page fails, the waiver block now
 says so by name instead of printing a `KeyError`.
 
 A code that looks like a number (`12`) is YAML-parsed as an integer rather than a string.
 That is handled - the loader coerces every code with `str()` - so it neither crashes the
 command nor silently fails to match. Quoting it (`"12"`) is still clearer.
+
+## "The digest says EMPTY TE SLOT ON CBS"
+
+The CBS team page shows a starting slot with nobody in it (`\tTE\tEMPTY\t...` on the page,
+first seen 2026-11-24). Nobody in it means it scores 0 that week, whatever the BEST LINEUP
+block says, because that block is the optimum, not what CBS has set. Fill it on CBS.
+(`sffl lineup` hasn't been run against a page with an EMPTY slot, so check its dry run
+before trusting it there.) The warning heads the
+digest, one line per open slot, on every run that read the roster, including a run where
+every projections page failed. It doesn't change the exit code. An EMPTY row below
+RESERVES isn't a starting slot and isn't reported (never seen).
 
 ## Where the injury news comes from
 

@@ -166,19 +166,20 @@ def _strip_id_prefix(line):
 # list in any other spelling ("RB, WR", "RB/WR", "RB,") fails to match and
 # is refused under F4 like any other unreadable row.
 #
-# `pos` captures the FIRST listed code and the rest is matched and dropped.
-# That code is the one a dual-eligible player counts under everywhere
-# downstream (scoring, lineups, the roster join):
+# `pos` captures the WHOLE list ("RB,WR"); `parse` splits it. The FIRST code
+# is the one a dual-eligible player counts under for everything but lineup
+# eligibility (scoring, identity, the roster join):
 #   - scoring cannot change with it: score_game gates only DST, and
 #     calibrate.STAT_POSITIONS treats RB, WR and TE alike;
-#   - every lineup built from it is legal, since CBS lists him at that
-#     position; what is lost is only the extra option of starting an RB,WR
-#     player in the WR/TE slot, which can understate him, never place him
-#     where CBS would refuse him;
 #   - cbs_roster reads the same list the same way, so the (name, team, pos)
 #     fallback key still joins the two pages when an id is missing.
+# The full list goes on `PlayerProjection.positions` (since 2026-11-24,
+# board ef69a845), and the optimizer (sffl.lineup) starts him in any slot
+# one of his positions is eligible for - an RB,WR player can fill WR/TE.
+# Before that he could only be started where an RB could, which understated
+# him but never placed him where CBS would refuse him.
 _POS_CODES = r"TQB|QB|RB|WR|TE|K|DST"
-_POS_GROUP = r"(?P<pos>%s)(?:,(?:%s))*" % (_POS_CODES, _POS_CODES)
+_POS_GROUP = r"(?P<pos>(?:%s)(?:,(?:%s))*)" % (_POS_CODES, _POS_CODES)
 
 # A matched name whose LAST word is a position code, a comma-joined list of
 # them, or anything ending in a comma ("Pat Example RB" or "Pat Example RB,"
@@ -335,7 +336,8 @@ def _load_owner_codes(profile_path):
 
 def _parse_row(line, line_re):
     """One row's (avail, name, pos, team, status1, status2, tokens,
-    player_id), or None.
+    player_id), or None. `pos` is the position cell as written, a list for a
+    dual-eligible player ("RB,WR"); `parse` splits it.
 
     Dispatches PER LINE on whether it contains a tab: the Playwright
     `capture()` path used by the scheduled in-season job emits TAB-delimited
@@ -609,6 +611,14 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                     unmatched.append(line)
                 continue
             avail, name, pos, team, status1, status2, tokens, player_id = parsed
+            # "RB,WR" -> pos "RB", positions ("RB", "WR"); a one-code cell
+            # keeps positions () so every ordinary record is unchanged.
+            codes = []
+            for code in pos.split(","):
+                if code not in codes:
+                    codes.append(code)
+            pos = codes[0]
+            positions = tuple(codes) if len(codes) > 1 else ()
             if expect_tokens is not None and len(tokens) != expect_tokens:
                 raise ValueError(
                     "%s: %r has %d tokens after the team code, expected %d - "
@@ -681,6 +691,7 @@ def parse(path, group, week, profile_path=DEFAULT_PROFILE, season=2026):
                 name=name,
                 team=normalize_team(team),
                 pos=pos,
+                positions=positions,
                 source="cbs-weekly",
                 source_year=season,
                 games=1.0,

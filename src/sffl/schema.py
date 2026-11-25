@@ -1,7 +1,7 @@
 """The canonical record every source is normalized into."""
 
 from dataclasses import dataclass, field
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 
 @dataclass
@@ -56,6 +56,20 @@ class PlayerProjection(object):
                                      # sffl.cbs_weekly). NOT a cross-vendor
                                      # id: only CBS ↔ CBS rows ever share this
                                      # namespace - see identity.resolve_key.
+    positions: Tuple[str, ...] = ()  # EVERY position the source lists the
+                                     # player under, primary first, when it
+                                     # lists more than one ("RB,WR" on a CBS
+                                     # row, first seen 2026-11-24); () for
+                                     # the ordinary one-position row, so every
+                                     # existing record is unchanged. `pos`
+                                     # stays the primary code: identity,
+                                     # scoring and the roster join key on it.
+                                     # Only lineup eligibility reads this -
+                                     # see `eligible` and sffl.lineup.
+
+    def eligible(self):
+        """The positions this player may start at: `positions`, or (pos,)."""
+        return self.positions or (self.pos,)
 
     def key(self):
         from sffl.identity import resolve_key

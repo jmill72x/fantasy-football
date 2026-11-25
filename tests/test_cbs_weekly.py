@@ -707,6 +707,28 @@ def test_a_dual_position_tab_row_parses_under_its_first_listed_position(
     assert len(rows) == 2
 
 
+def test_a_dual_position_row_keeps_every_listed_position(tmp_path):
+    """`pos` is the primary code; `positions` is the whole list, which the
+    optimizer reads for slot eligibility (board ef69a845)."""
+    rows = parse(_dual_page(tmp_path, "Rex Dualton RB,WR • PIT "),
+                 group="RB-WR-TE", week=12)
+    r = by_name(rows)["Rex Dualton"]
+    assert r.positions == ("RB", "WR")
+    assert r.eligible() == ("RB", "WR")
+    # The one-position row beside him is unchanged: no list, just `pos`.
+    pat = by_name(rows)["Pat Example"]
+    assert (pat.pos, pat.positions, pat.eligible()) == ("WR", (), ("WR",))
+
+
+def test_a_dual_position_space_row_keeps_every_listed_position(tmp_path):
+    page = tmp_path / "dual_space2.txt"
+    page.write_text(
+        "FA Rex Dualton WR,TE • PIT DEN 21 11 80 74 11 "
+        "0.3 0.7 2.3 0.1 8.3 5.8 44.1 7.6 0.5 0.2 4.77\n")
+    (r,) = parse(str(page), group="RB-WR-TE", week=12)
+    assert (r.pos, r.positions) == ("WR", ("WR", "TE"))
+
+
 def test_the_first_listed_position_wins_in_either_order(tmp_path):
     rows = parse(_dual_page(tmp_path, "Rex Dualton WR,RB • PIT"),
                  group="RB-WR-TE", week=12)

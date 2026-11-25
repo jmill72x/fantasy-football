@@ -176,6 +176,24 @@ _KINDS = {
 }
 
 
+def _empty_slot_lines(empty_slots):
+    """The warning for EMPTY starting slots on the CBS team page.
+
+    A starting slot with nobody in it scores zero however good the bench
+    is, and the 11-24 page had one (a TE slot) that the digest read as
+    nobody without saying so (board c44b2d8b). One line per slot, then what
+    to do. [] or None renders nothing.
+    """
+    if not empty_slots:
+        return []
+    lines = ["!! EMPTY %s SLOT ON CBS: nobody is starting there, so it "
+             "scores 0. Fill it." % slot for slot in empty_slots]
+    lines.append("   Set the lineup on CBS before kickoff; the lineup below "
+                 "says who should start.")
+    lines.append("")
+    return lines
+
+
 def _roster_age_line(days):
     if days > STALE_ROSTER_DAYS:
         return ("!! STALE ROSTER: captured %d days ago (over %d). "
@@ -538,7 +556,8 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             next_week_holes=None, waiver_targets=None, waiver_error=None,
             stale_intel_dropped=0, injury_source_notes=None,
             official_week=None, official_week_played=False,
-            official_week_earlier=False, roster_unreadable=False):
+            official_week_earlier=False, roster_unreadable=False,
+            empty_slots=None):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -600,6 +619,12 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     digest is suppressed just the same (a roster missing a player is worse
     than none), but the heading and the fix say the page could not be read
     reliably, not that the login failed.
+
+    `empty_slots` is the slot code of every EMPTY starting slot on the CBS
+    team page (`cbs_roster.parse_empty_slots`), e.g. ["TE"]. Each one heads
+    the digest as a `!! EMPTY TE SLOT ON CBS` warning: nobody in it means
+    it scores zero, whatever the optimum below says. None or [] renders
+    nothing, so a caller that does not know is unaffected.
 
     `roster_board` is EVERY rostered player as a `BoardRow` - all thirteen,
     not the eight the optimizer started. The optimizer has always CONSIDERED
@@ -688,6 +713,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
         lines.append("!! ALL PROJECTIONS CAPTURE FAILED: %s"
                      % projections_capture_error)
         lines.append("")
+        lines.extend(_empty_slot_lines(empty_slots))
         lines.append("Your ROSTER was read successfully, but none of the "
                      "four position-group projection pages could be "
                      "captured or parsed this run, so no lineup can be "
@@ -700,6 +726,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
 
     lines.append(_roster_age_line(roster_age_days))
     lines.append("")
+    lines.extend(_empty_slot_lines(empty_slots))
 
     # AHEAD of the lineup and the news, because both are built ON these
     # inputs: if the projections are the wrong week or days old, every
