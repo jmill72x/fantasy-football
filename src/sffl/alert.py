@@ -538,7 +538,7 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
             next_week_holes=None, waiver_targets=None, waiver_error=None,
             stale_intel_dropped=0, injury_source_notes=None,
             official_week=None, official_week_played=False,
-            official_week_earlier=False):
+            official_week_earlier=False, roster_unreadable=False):
     """The full digest text for one run.
 
     `kind` is "friday" or "sunday". `sidelined` is a list of (name, status)
@@ -593,6 +593,13 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     problem). Reusing `capture_error`'s roster-failure prose for this case
     - which `_cmd_alert` did before a reviewer caught it - tells the reader
     to re-run `cbs_login.py` when the login was never the problem.
+
+    `roster_unreadable` narrows `capture_error` the same way: the team page
+    WAS captured, but `cbs_roster` refused it (`RosterUnreadable`, F4) for
+    a row it cannot read or a row count its footer disagrees with. The
+    digest is suppressed just the same (a roster missing a player is worse
+    than none), but the heading and the fix say the page could not be read
+    reliably, not that the login failed.
 
     `roster_board` is EVERY rostered player as a `BoardRow` - all thirteen,
     not the eight the optimizer started. The optimizer has always CONSIDERED
@@ -656,6 +663,17 @@ def compose(kind, roster_age_days, reports, lineup_result, sidelined,
     title, subtitle = _KINDS[kind]
 
     lines = [title, subtitle, ""]
+
+    if capture_error and roster_unreadable:
+        lines.append("!! ROSTER PAGE UNREADABLE: %s" % capture_error)
+        lines.append("")
+        lines.append("The team page was captured but could not be read "
+                     "reliably, so no lineup is shown below - a roster "
+                     "missing or misnaming a player would give confidently "
+                     "wrong advice. Check the lineup on CBS directly.")
+        lines.append("Fix: CBS has a row shape src/sffl/cbs_roster.py does "
+                     "not read. This is not a login problem.")
+        return "\n".join(lines)
 
     if capture_error:
         lines.append("!! CAPTURE FAILED: %s" % capture_error)

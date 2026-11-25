@@ -225,6 +225,38 @@ def test_a_capture_failure_still_produces_a_body_to_deliver(alert_env, capsys):
     assert "CAPTURE FAILED" in alert_env.sent_calls[0][2]
 
 
+def test_an_unreadable_roster_row_refuses_the_lineup_and_says_why(
+        alert_env, capsys):
+    # F4 for the team page (2026-11-24): a row the parser cannot read used to
+    # be skipped, so that player silently left the lineup. Now the roster is
+    # refused, and the digest says the page could not be read - not that the
+    # login failed. Built by giving the fixture's first WR row a position
+    # list the parser does not take ("WR/TE").
+    with open(ROSTER_FIXTURE) as fh:
+        text = fh.read()
+    assert " WR • " in text
+    roster = alert_env.tmp / "roster_unreadable.txt"
+    roster.write_text(text.replace(" WR • ", " WR/TE • ", 1))
+    alert_env.set_roster(roster)
+
+    code, out = alert_env.run(capsys)
+    assert code == 1
+    assert "!! ROSTER PAGE UNREADABLE" in out
+    assert "could not be read reliably" in out
+    assert " WR/TE • " in out
+    assert "cbs_login" not in out
+    assert "BEST LINEUP" not in out
+    assert "START / SIT" not in out
+    assert "ROSTER PAGE UNREADABLE" in alert_env.sent_calls[0][2]
+
+
+def test_a_failed_capture_still_names_the_login_fix(alert_env, capsys):
+    alert_env.fail_capture(SessionExpired("CBS served its login page"))
+    _code, out = alert_env.run(capsys)
+    assert "ROSTER PAGE UNREADABLE" not in out
+    assert "cbs_login.py" in out
+
+
 # --- C2: the injuries file ------------------------------------------------
 
 def test_a_missing_injuries_file_is_reported_not_rendered_as_a_quiet_week(

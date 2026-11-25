@@ -22,13 +22,47 @@ Handoff notes for a fresh session. Read this first, then the spec and the releva
 - isotonic_dataset: `127` players / `2339` player-weeks
 - interpolated_dataset: `46` players / `777` player-weeks
 - weekly_groups: `RB-WR-TE`, `TQB`, `DST`, `K`, `RB-WR-TE-ROS`, `TQB-ROS`, `DST-ROS`, `K-ROS`
-- full_suite: `1314` passed
+- full_suite: `1337` passed
 
 <!-- END MACHINE-CHECKED FACTS -->
 
 `top10_bias` is **+4.1025**, positive. It is not −0.25: that number was fabricated, sat in
 two docstrings and a test for weeks, and cost this project real time before anyone
 measured it. Never quote a diagnostic from memory.
+
+## ROSTER F4 2026-11-24: staged on `john/roster-f4` (board c30a4d89)
+
+**The gap.** `cbs_roster` skipped any line `_ROW` couldn't read, so a rostered player could
+leave the roster, the lineup and the injury check with no warning (the 11-24 multi-position
+row did, until `2b11dbd`). `cbs_weekly` has refused such a page since 08-28 (F4).
+- **The fix** (worktree `~/Projects/.worktrees/ff-roster-f4`, off `2b11dbd`): every roster
+  parser reads through the new `cbs_roster._read_rows`, which raises `RosterUnreadable` (a
+  ValueError) for (1) a line that starts like a row or carries a row's bullet but doesn't
+  match, (2) a name that swallowed a position code or a text status tag (`Pat Example RB WR`
+  would have read as a WR named "Pat Example RB"; it reuses `cbs_weekly`'s
+  `_NAME_SWALLOWED_POSITION`), and (3) a row count the page's `ACTIVE: n RESERVE: m` footer
+  disagrees with, section by section (the backstop for a shape neither line test sees). All
+  problems are collected into one message. An `EMPTY` starting slot (`\tTE\tEMPTY\t...`,
+  on the 11-24 page) is read as nobody, and the footer doesn't count it.
+- **Names may now hold any letter** (`[^\W_]`): ASCII-only was harmless only while a bad row
+  vanished; under F4 a "José" would have refused the whole page, and `cbs_weekly` already
+  reads him.
+- **The digest:** `_cmd_alert` keeps the same suppression (exit 1, no lineup), but
+  `compose(..., roster_unreadable=True)` heads it `!! ROSTER PAGE UNREADABLE`, says the page
+  couldn't be read reliably, to check the lineup on CBS, and that it isn't a login problem
+  (a failed capture still says `CAPTURE FAILED` and `cbs_login.py`).
+- **Verified:** 26 test cases (23 new, 3 rewritten); with main's `src` (plus a `RosterUnreadable =
+  ValueError` shim so the file imports) 22 fail. Three id-boundary tests built on an
+  unreadable row now assert the refusal and check the id threading through `_iter_lines`.
+  Old-vs-new replay (main's parser by path) over every archived roster page (35 files, 17
+  unique, 10-19 to 11-24, data repo + archive + live `data/captures`): 17 identical across
+  all five parsers, 0 refused, 221 rows, all with an id; every page's footer agrees.
+  Suite 1337 passed.
+- **Not done, on purpose:** the slot column and the name cell's first code are not compared
+  (equal on every saved page, but what CBS shows in the slot column for a dual-eligible
+  player is unseen, and a false refusal costs the whole digest). An empty starting slot
+  isn't flagged in the digest (follow-up idea).
+- **Go-live:** on merge; the working tree runs it, so the next job uses it.
 
 ## MULTI-POSITION ROWS 2026-11-24: staged on `john/multi-position-rows`
 

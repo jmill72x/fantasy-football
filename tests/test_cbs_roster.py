@@ -2,7 +2,8 @@ import re
 
 import pytest
 
-from sffl.cbs_roster import (_ROW, RosterRow, find_name_position_collisions,
+from sffl.cbs_roster import (_ROW, RosterRow, RosterUnreadable, _iter_lines,
+                             find_name_position_collisions,
                              parse_lineup, parse_lineup_rows,
                              parse_positions, parse_roster)
 
@@ -461,10 +462,38 @@ def test_a_row_whose_stats_line_lost_its_id_never_takes_the_next_games_id(tmp_pa
                         RosterRow("Kim Kicker", "K", "NYG", "9200003")]
 
 
+def _row_line_ids(path):
+    """{row line: id} as `_iter_lines` threads them - for the id-boundary
+    tests whose page the parsers now refuse (F4), so the id each row line
+    would get is checked below the refusal."""
+    return dict((line, pid) for pid, line in _iter_lines(path)
+                if "\u2022" in line)
+
+
 def test_a_row_line_the_parser_cannot_read_still_keeps_its_id_to_itself(tmp_path):
-    # `_ROW` allows only [A-Za-z0-9.'- ] in a name, so this next row is not
-    # parsed at all (as before). It still starts like a row, so its stats
-    # line's id is never given to the row above.
+    # `_ROW` cannot read a name with "!" in it. Since 2026-11-24 the page is
+    # refused for it (F4); below that, the line still starts like a row, so
+    # its stats line's id is never given to the row above.
+    path = _page(tmp_path, [
+        "\tWR\tPat Example WR • SEA \t@MIA\t",
+        "Sun 1:00pm EDT",
+        "\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33",
+        "\tRB\tJo! Ejemplo RB • DET\tGB\t",
+        "Sun 1:00pm EDT",
+        "id=9200004\t\t5\t47.5\t18\t8\t50%\t25%\t1.11\t2.22\t3.33",
+        "RESERVES",
+    ])
+    with pytest.raises(RosterUnreadable, match="Jo! Ejemplo"):
+        parse_lineup_rows(path)
+    assert _row_line_ids(path) == {
+        "\tWR\tPat Example WR • SEA \t@MIA\t": "",
+        "\tRB\tJo! Ejemplo RB • DET\tGB\t": "9200004"}
+
+
+def test_an_accented_name_reads_and_keeps_its_own_id(tmp_path):
+    # ASCII-only names until 2026-11-24: "José" fell out of the roster
+    # silently, and under F4 he would have refused the whole page. The
+    # projections side (`cbs_weekly`) already read him.
     path = _page(tmp_path, [
         "\tWR\tPat Example WR • SEA \t@MIA\t",
         "Sun 1:00pm EDT",
@@ -475,7 +504,8 @@ def test_a_row_line_the_parser_cannot_read_still_keeps_its_id_to_itself(tmp_path
         "RESERVES",
     ])
     starters, _reserves = parse_lineup_rows(path)
-    assert starters == [RosterRow("Pat Example", "WR", "SEA", "")]
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", ""),
+                        RosterRow("José Ejemplo", "RB", "DET", "9200004")]
 
 
 def test_a_starters_id_never_comes_from_below_the_reserves_marker(tmp_path):
@@ -541,8 +571,11 @@ def test_a_bye_row_the_parser_cannot_read_keeps_its_id_four_lines_down(tmp_path)
         "id=9200010\t\tIR\tLee Sample WR • LAC \tBYE\t\t7\t\t---\t\t50%",
         "RESERVES",
     ])
-    starters, _reserves = parse_lineup_rows(path)
-    assert starters == [RosterRow("Pat Example", "WR", "SEA", "")]
+    # Refused since 2026-11-24 (F4: the IR row has a bullet and cannot be
+    # read); the id boundary still holds below the refusal.
+    with pytest.raises(RosterUnreadable, match="Lee Sample"):
+        parse_lineup_rows(path)
+    assert _row_line_ids(path)["\tWR\tPat Example WR • SEA \t@MIA\t"] == ""
 
 
 def test_any_line_with_a_row_bullet_ends_the_search(tmp_path):
@@ -555,8 +588,9 @@ def test_any_line_with_a_row_bullet_ends_the_search(tmp_path):
         "id=9200011\t\tIR\tLee Sample WR • LAC \tBYE\t\t7\t\t---\t\t50%",
         "RESERVES",
     ])
-    starters, _reserves = parse_lineup_rows(path)
-    assert starters == [RosterRow("Pat Example", "WR", "SEA", "")]
+    with pytest.raises(RosterUnreadable, match="Lee Sample"):
+        parse_lineup_rows(path)
+    assert _row_line_ids(path)["\tWR\tPat Example WR • SEA \t@MIA\t"] == ""
 
 
 def test_an_id_on_the_row_line_is_still_read_from_there(tmp_path):
@@ -635,3 +669,120 @@ def test_a_roster_row_with_an_unreadable_position_list_does_not_match():
                  "\tRB\tRex Dualton RB, • PIT\tDEN\t",
                  "\tRB,\tRex Dualton RB • PIT\tDEN\t"):
         assert _ROW.match(line) is None, line
+
+
+# ------------------------- F4: refuse a page that cannot be read reliably
+#
+# Until 2026-11-24 a line `_ROW` could not read was skipped, so a rostered
+# player could vanish from the roster, the lineup and the injury check with
+# no warning. Since then every parser refuses such a page (`RosterUnreadable`,
+# a ValueError), the same rule as `cbs_weekly.parse`. Invented rows only.
+
+_PAT = ["\tWR\tPat Example WR • SEA \t@MIA\t",
+        "Sun 1:00pm EDT",
+        "id=9300001\t\t8\t41.0\t11\t22\t50%\t25%\t1.11\t2.22\t3.33"]
+_SAM = ["\tRB\tSam Runner RB • DET\tGB\t",
+        "Sun 1:00pm EDT",
+        "id=9300002\t\t5\t47.5\t18\t8\t50%\t25%\t1.11\t2.22\t3.33"]
+
+_EVERY_PARSER = (parse_roster, parse_positions, parse_lineup,
+                 parse_lineup_rows, find_name_position_collisions)
+
+
+@pytest.mark.parametrize("bad_line", [
+    # A position list it does not know, or a separator it does not take.
+    "\tRB\tRex Dualton RB,XX • PIT\tDEN\t",
+    "\tRB\tRex Dualton RB/WR • PIT\tDEN\t",
+    "\tRB,\tRex Dualton RB • PIT\tDEN\t",
+    # A comma in the name cell (the name class has none).
+    "\tRB\tRex Dualton RB, WR • PIT\tDEN\t",
+    "\tWR\tRex Dualton RB,TE WR • PIT\tDEN\t",
+    # A slot that is no position code (an IR or flex slot, never seen).
+    "\tIR\tRex Dualton RB • PIT\tDEN\t",
+    "\tW/T\tRex Dualton RB • PIT\tDEN\t",
+    # A row whose leading tab went missing: it still carries the bullet.
+    "RB\tRex Dualton RB • PIT\tDEN\t",
+    # Starts like a row, but its name cell is gone.
+    "\tRB\t\tDEN\t",
+])
+def test_a_row_like_line_that_does_not_match_refuses_the_page(tmp_path,
+                                                              bad_line):
+    path = _page(tmp_path, _PAT + [bad_line, "RESERVES"] + _SAM)
+    for parser in _EVERY_PARSER:
+        with pytest.raises(RosterUnreadable) as exc:
+            parser(path)
+        assert "cannot be read reliably" in str(exc.value)
+        assert repr(bad_line) in str(exc.value)
+
+
+@pytest.mark.parametrize("bad_line, swallowed", [
+    # "RB WR" with no comma: the lazy name takes "RB" and the row would
+    # read as a WR named "Rex Dualton RB".
+    ("\tRB\tRex Dualton RB WR • PIT\tDEN\t", "Rex Dualton RB"),
+    # A text status tag (the roster page shows icons, never text).
+    ("\tWR\tRex Dualton Q WR • PIT\tDEN\t", "Rex Dualton Q"),
+    ("\tWR\tRex Dualton IR WR • PIT\tDEN\t", "Rex Dualton IR"),
+])
+def test_a_name_that_swallowed_part_of_its_cell_refuses_the_page(
+        tmp_path, bad_line, swallowed):
+    path = _page(tmp_path, _PAT + [bad_line, "RESERVES"] + _SAM)
+    for parser in _EVERY_PARSER:
+        with pytest.raises(RosterUnreadable, match=re.escape(repr(swallowed))):
+            parser(path)
+
+
+def test_the_refusal_is_a_value_error_and_counts_every_problem(tmp_path):
+    path = _page(tmp_path, _PAT + [
+        "\tRB\tRex Dualton RB,XX • PIT\tDEN\t",
+        "\tIR\tLee Sample WR • LAC \tBYE\t",
+        "RESERVES"] + _SAM)
+    with pytest.raises(ValueError, match="2 problem"):
+        parse_lineup_rows(path)
+
+
+def test_an_empty_starting_slot_is_read_as_nobody_not_refused(tmp_path):
+    # The 11-24 page left a TE slot open. It starts like a row but has no
+    # player in it, and the footer does not count it.
+    path = _page(tmp_path, _PAT + [
+        "\tTE\tEMPTY\t\t\t\t\t\t\t\t\t\t\t",
+        "RESERVES"] + _SAM + ["ACTIVE: 1 RESERVE: 1"])
+    starters, reserves = parse_lineup_rows(path)
+    assert starters == [RosterRow("Pat Example", "WR", "SEA", "9300001")]
+    assert reserves == [RosterRow("Sam Runner", "RB", "DET", "9300002")]
+    assert parse_roster(path) == ["Pat Example", "Sam Runner"]
+
+
+def test_a_page_that_agrees_with_its_footer_reads(tmp_path):
+    path = _page(tmp_path, _PAT + ["RESERVES"] + _SAM
+                 + ["ACTIVE: 1 RESERVE: 1"])
+    assert parse_lineup(path) == (["Pat Example"], ["Sam Runner"])
+
+
+@pytest.mark.parametrize("footer", ["ACTIVE: 2 RESERVE: 1",
+                                    "ACTIVE: 1 RESERVE: 2",
+                                    "ACTIVE: 0 RESERVE: 2"])
+def test_a_row_count_the_footer_disagrees_with_refuses_the_page(tmp_path,
+                                                                footer):
+    # The backstop for a row shape neither line test recognises: a player
+    # row with no bullet and no leading tab would vanish with no other sign.
+    path = _page(tmp_path, _PAT + ["RESERVES"] + _SAM + [footer])
+    for parser in _EVERY_PARSER:
+        with pytest.raises(RosterUnreadable, match="footer"):
+            parser(path)
+
+
+def test_without_the_marker_the_footer_total_is_checked(tmp_path):
+    # parse_roster and parse_positions need no RESERVES marker; the total
+    # still has to agree.
+    path = _page(tmp_path, _PAT + _SAM + ["ACTIVE: 1 RESERVE: 1"])
+    assert parse_roster(path) == ["Pat Example", "Sam Runner"]
+    path = _page(tmp_path, _PAT + _SAM + ["ACTIVE: 2 RESERVE: 1"])
+    with pytest.raises(RosterUnreadable, match="footer"):
+        parse_roster(path)
+
+
+def test_the_fixture_agrees_with_its_own_footer():
+    with open(FIXTURE) as fh:
+        assert "ACTIVE: 8 RESERVE: 5\n" in fh.read()
+    starters, reserves = parse_lineup_rows(FIXTURE)
+    assert (len(starters), len(reserves)) == (8, 5)

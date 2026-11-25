@@ -1687,7 +1687,7 @@ def _cmd_alert(args):
     from sffl.trade import games_remaining, rank_targets
     from sffl.cbs_weekly import (WEEK_MISMATCH_RATIO, read_report_stamp,
                                  shared_team_count, week_conflicts)
-    from sffl.cbs_roster import parse_lineup_rows
+    from sffl.cbs_roster import RosterUnreadable, parse_lineup_rows
     from sffl.cbs_weekly import DEFAULT_PROFILE, _load_owner_codes
     from sffl.cbs_weekly import is_out
     # `delta`/`best_add_drop` power the waiver block below. Imported HERE,
@@ -1739,6 +1739,9 @@ def _cmd_alert(args):
     official_week = None
 
     capture_error = None
+    # True when `capture_error` is the roster page refusing to parse
+    # (`cbs_roster.RosterUnreadable`), not a failed capture.
+    roster_unreadable = False
     # Distinct from `capture_error` - see `_AllProjectionsFailed`'s
     # docstring and `compose`'s. Set ONLY when the roster was read fine but
     # every one of the four projection pages failed.
@@ -2365,6 +2368,9 @@ def _cmd_alert(args):
         projections_capture_error = str(exc)
     except (CaptureError, ValueError) as exc:
         capture_error = str(exc)
+        # A subclass of ValueError, so the same suppression; only the
+        # digest's heading and fix differ (see `compose`).
+        roster_unreadable = isinstance(exc, RosterUnreadable)
 
     # C2. A failed injury fetch is NOT a quiet week. This used to be a bare
     # `if args.injuries and os.path.exists(...)`: with StatsDeck down or
@@ -2474,6 +2480,7 @@ def _cmd_alert(args):
     # drift from compose's own rendering. One implementation now: compose's.
     body = compose(args.kind, age_days, reports, result, sidelined,
                    capture_error=capture_error,
+                   roster_unreadable=roster_unreadable,
                    current_starters=current_starters,
                    unevaluated_starters=unevaluated_starters,
                    injury_error=injury_error,

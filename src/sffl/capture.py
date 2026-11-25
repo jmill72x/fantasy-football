@@ -240,9 +240,10 @@ def _prefix_ids(full_text, rows):
     begins in `full_text` - migrating this row's id prefix onto the
     FOLLOWING row's line (`"id=A\tid=B\t..."`), which then fails to parse
     as ANY recognized row - loud (raises) in `cbs_weekly` (the merged
-    text still contains " • ", so it is caught as an unmatched line), but
-    a SILENT drop in `cbs_roster` (`_ROW` has no such watchdog - a line
-    that fails to match is simply skipped, no warning). A row with nothing
+    text still contains " • ", so it is caught as an unmatched line), and
+    since 2026-11-24 in `cbs_roster` too (its F4 check refuses a line with
+    a row's bullet that `_ROW` cannot read; until then the line was
+    skipped and the player silently dropped). A row with nothing
     to identify is skipped up front instead, leaving its own (blank, inert)
     text untouched and never touching its neighbor's.
     """

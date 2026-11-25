@@ -75,6 +75,19 @@ continuation lines, the `RESERVES` marker, the footer - cannot match: none
 of those lines start with a tab immediately followed by a bare position
 code.
 
+A PAGE IT CANNOT READ RELIABLY IS REFUSED, NOT READ IN PART (F4, since
+2026-11-24 - board c30a4d89). Every parser here reads through `_read_rows`,
+which raises `RosterUnreadable` (a ValueError) for a line that looks like a
+player row (it starts like one, or carries a row's bullet) but `_ROW` cannot
+read, for a name that swallowed part of its cell, and for a row count the
+page's own "ACTIVE: n RESERVE: m" footer disagrees with. Until then such a
+line was skipped: the player left the roster, the lineup and the injury check
+with no warning (the 11-24 multi-position row did exactly that). It is the
+rule `cbs_weekly.parse` has had since 08-28, for the same reason: a roster
+missing or misnaming a player gives confidently wrong advice, and the digest
+says so instead (`alert.compose`'s `roster_unreadable`). An EMPTY starting
+slot ("\tTE\tEMPTY\t...", seen on 11-24) is read as nobody.
+
 WHY AN EMPTY RESULT RAISES. Downstream, an empty roster is not an error
 state - it is a perfectly valid input meaning "Jeff owns nobody", which
 optimises to an empty lineup and ranks every free agent as a worthwhile
@@ -149,6 +162,8 @@ even TQB/DST team-aggregate rows carry their own synthetic id.
 import re
 from collections import namedtuple
 
+from sffl.cbs_weekly import _NAME_SWALLOWED_POSITION, _STATUS_TAGS
+
 _POS = r"TQB|QB|RB|WR|TE|K|DST"
 # A position cell may list two codes, comma-joined and primary first
 # ("RB,WR", first seen 2026-11-24). Before this such a row silently fell out
@@ -165,13 +180,20 @@ _POS_LIST = r"(?:%s)(?:,(?:%s))*" % (_POS, _POS)
 # it to build the same (name, pos, team) identity `identity.player_key`
 # already gives every other vendor source in this project.
 #
+# THE NAME is letters (any alphabet: `[^\W_]` is a Unicode letter or digit),
+# digits, ".", "'", "-" and spaces. ASCII-only until 2026-11-24, which was
+# harmless only while an unreadable row was silently dropped: since F4 below a
+# row it cannot read refuses the whole page, and `cbs_weekly`'s name cell
+# already takes any character, so an accented name ("José") must read here
+# too. A comma still cannot (see `_NAME_SWALLOWED_POSITION`).
+#
 # AFTER THE OPPONENT: nothing, a lone tab, or a tab and the rest of the row.
 # The last is a bye-week row, which is one line with its stat block on it -
 # see the module docstring's "TWO ROW SHAPES". Before 2026-10-20 this ended
 # `\t?$`, which dropped every player on bye.
 _ROW = re.compile(
     r"^\t(?P<slot>%s)(?:,(?:%s))*\t"
-    r"(?P<name>[A-Za-z0-9.'\- ]+?)\s+"
+    r"(?P<name>(?:[^\W_]|[.'\- ])+?)\s+"
     r"%s"
     r"\s*[•-]\s*"
     r"(?P<team>[A-Z]{2,3})"
@@ -217,6 +239,28 @@ _ROW_BULLET = "\u2022"
 
 # The line under the last reserve's row: "ACTIVE: 8 RESERVE: 5".
 _FOOTER_PREFIX = "ACTIVE:"
+# Its two counts: players in the starting lineup and on the bench. Checked
+# against the rows read (see `_read_rows`); every saved real page agrees
+# (17 of 17, 2026-10-19 to 11-24), an EMPTY slot not counted.
+_FOOTER_COUNTS = re.compile(r"^ACTIVE:\s*(\d+)\s+RESERVE:\s*(\d+)\b")
+
+# A starting slot with nobody in it: "\tTE\tEMPTY\t\t\t...". Seen on the
+# 11-24 page (a TE slot left open). It starts like a row, so it is named
+# here as the one such line that is not a player row and not unreadable.
+_EMPTY_SLOT = re.compile(r"^\t%s\tEMPTY(?:\t.*)?$" % _POS_LIST)
+
+# A matched name ending in a status tag ("Pat Example Q" out of "Pat Example
+# Q WR • SEA"): the roster page shows designations as icons, never text, so
+# a tag here means the cell changed shape and the name has swallowed it.
+_NAME_SWALLOWED_TAG = re.compile(r"\s(?:%s)$" % "|".join(_STATUS_TAGS))
+
+
+class RosterUnreadable(ValueError):
+    """The team page has a line that looks like a player row but cannot be
+    read, or fewer rows than its own footer counts (F4, the same rule as
+    `cbs_weekly.parse`). A ValueError, so every caller that refuses a bad
+    page still refuses this one; `sffl.cli._cmd_alert` tells it apart to
+    say the page could not be read, not that the login failed."""
 
 # name/slot/team/player_id. `team` is RAW off the page - it is NOT run
 # through `identity.normalize_team` here (a page-parsing module has no
@@ -305,6 +349,87 @@ def _empty_roster_error(path):
     )
 
 
+# One parsed player row: whether it sits below the RESERVES marker, its CBS
+# id ("" when none) and the three fields `_ROW` reads.
+_Row = namedtuple("_Row", "in_reserves player_id name slot team")
+
+
+def _read_rows(path):
+    """(rows, seen_marker): every player row on the page as a `_Row`, in
+    page order, and whether the RESERVES marker was seen.
+
+    EVERY public parser here reads the page through this, so none of them
+    can drop a row the others keep. It refuses (`RosterUnreadable`, F4) a
+    page it cannot read RELIABLY, rather than return part of it:
+
+      * a line that looks like a player row - it starts like one
+        (`_ROW_START`) or carries a row's bullet - but `_ROW` cannot read.
+        Until 2026-11-24 such a line was skipped, so its player vanished
+        from the roster, the lineup and the injury check with no warning
+        (the multi-position row of that day was one). An EMPTY starting
+        slot (`_EMPTY_SLOT`) is the one row-like line that is neither;
+      * a row whose name has swallowed part of the position cell or a
+        status tag ("Pat Example RB" out of "Pat Example RB WR • SEA"): it
+        would be filed under a wrong name, which is worse than vanishing;
+      * fewer or more rows than the page's own footer counts ("ACTIVE: 8
+        RESERVE: 5"), section by section, when the footer is there: the
+        backstop for a row shape neither test above recognises. Rows are
+        counted once per (name, slot, team), as `parse_lineup_rows` keeps
+        them.
+
+    Every problem on the page is collected and reported together.
+    """
+    rows = []
+    problems = []
+    seen_marker = False
+    footer = None
+    for player_id, line in _iter_lines(path):
+        if line == _RESERVES_MARKER:
+            seen_marker = True
+            continue
+        if footer is None and line.startswith(_FOOTER_PREFIX):
+            footer = _FOOTER_COUNTS.match(line)
+            continue
+        m = _ROW.match(line)
+        if not m:
+            if ((_ROW_START.match(line) or _ROW_BULLET in line)
+                    and not _EMPTY_SLOT.match(line)):
+                problems.append("unreadable row %r" % line)
+            continue
+        name = m.group("name").strip()
+        if (_NAME_SWALLOWED_POSITION.search(name)
+                or _NAME_SWALLOWED_TAG.search(name)):
+            problems.append("name %r swallowed part of its cell in %r"
+                            % (name, line))
+            continue
+        rows.append(_Row(seen_marker, player_id, name, m.group("slot"),
+                         m.group("team")))
+
+    if footer and not problems:
+        active, reserve = int(footer.group(1)), int(footer.group(2))
+        starters = set((r.name, r.slot, r.team) for r in rows
+                       if not r.in_reserves)
+        reserves = set((r.name, r.slot, r.team) for r in rows
+                       if r.in_reserves)
+        if seen_marker:
+            counts, expect = (len(starters), len(reserves)), (active, reserve)
+        else:
+            counts, expect = (len(starters),), (active + reserve,)
+        if counts != expect:
+            problems.append(
+                "the footer %r counts %s player(s) but %s row(s) were read"
+                % (footer.group(0), "+".join(map(str, expect)),
+                   "+".join(map(str, counts))))
+
+    if problems:
+        raise RosterUnreadable(
+            "%s: the roster page cannot be read reliably - %d problem(s), "
+            "so no roster is returned rather than one missing or misnaming "
+            "a player (F4). First: %s"
+            % (path, len(problems), problems[0]))
+    return rows, seen_marker
+
+
 def parse_roster(path):
     """Player display names from a captured CBS team page, in page order.
 
@@ -314,15 +439,11 @@ def parse_roster(path):
     """
     names = []
     seen = set()
-    for _player_id, line in _iter_lines(path):
-        m = _ROW.match(line)
-        if not m:
+    for row in _read_rows(path)[0]:
+        if row.name in seen:
             continue
-        name = m.group("name").strip()
-        if name in seen:
-            continue
-        seen.add(name)
-        names.append(name)
+        seen.add(row.name)
+        names.append(row.name)
 
     if not names:
         raise _empty_roster_error(path)
@@ -346,11 +467,8 @@ def parse_positions(path):
     and tests depend on, does not change shape.
     """
     positions = {}
-    for _player_id, line in _iter_lines(path):
-        m = _ROW.match(line)
-        if not m:
-            continue
-        positions.setdefault(m.group("name").strip(), m.group("slot"))
+    for row in _read_rows(path)[0]:
+        positions.setdefault(row.name, row.slot)
     return positions
 
 
@@ -378,12 +496,8 @@ def find_name_position_collisions(path):
     than silently scoring (or silently losing) one of the two real entries.
     """
     slots_by_name = {}
-    for _player_id, line in _iter_lines(path):
-        m = _ROW.match(line)
-        if not m:
-            continue
-        name = m.group("name").strip()
-        slots_by_name.setdefault(name, set()).add(m.group("slot"))
+    for row in _read_rows(path)[0]:
+        slots_by_name.setdefault(row.name, set()).add(row.slot)
     return dict((name, sorted(slots)) for name, slots in slots_by_name.items()
                if len(slots) > 1)
 
@@ -400,22 +514,15 @@ def parse_lineup(path):
     reserves = []
     seen_starters = set()
     seen_reserves = set()
-    seen_marker = False
-    names, seen = starters, seen_starters
+    rows, seen_marker = _read_rows(path)
 
-    for _player_id, line in _iter_lines(path):
-        if line == _RESERVES_MARKER:
-            seen_marker = True
-            names, seen = reserves, seen_reserves
+    for row in rows:
+        names, seen = ((reserves, seen_reserves) if row.in_reserves
+                       else (starters, seen_starters))
+        if row.name in seen:
             continue
-        m = _ROW.match(line)
-        if not m:
-            continue
-        name = m.group("name").strip()
-        if name in seen:
-            continue
-        seen.add(name)
-        names.append(name)
+        seen.add(row.name)
+        names.append(row.name)
 
     if not seen_marker:
         raise ValueError(
@@ -486,18 +593,13 @@ def parse_lineup_rows(path):
     reserves = []
     seen_starters = {}   # (name, slot, team) -> index into `rows`
     seen_reserves = {}
-    seen_marker = False
-    rows, seen = starters, seen_starters
+    page_rows, seen_marker = _read_rows(path)
 
-    for player_id, line in _iter_lines(path):
-        if line == _RESERVES_MARKER:
-            seen_marker = True
-            rows, seen = reserves, seen_reserves
-            continue
-        m = _ROW.match(line)
-        if not m:
-            continue
-        key = (m.group("name").strip(), m.group("slot"), m.group("team"))
+    for page_row in page_rows:
+        rows, seen = ((reserves, seen_reserves) if page_row.in_reserves
+                      else (starters, seen_starters))
+        player_id = page_row.player_id
+        key = (page_row.name, page_row.slot, page_row.team)
         row = RosterRow(key[0], key[1], key[2], player_id)
         if key in seen:
             # Same entity, rendered twice - a page-layout repeat. Keep
