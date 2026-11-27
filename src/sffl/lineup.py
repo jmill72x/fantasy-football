@@ -70,7 +70,7 @@ def _best_flex_five(cands, n, need):
     """Best `n`-player subset of the flex pool meeting the `need` floors.
 
     `need` maps a label to the set of positions that satisfies it, e.g.
-    {"rb": {"RB"}, "wrte": {"WR", "TE"}}.
+    {"RB": {"RB"}, "WR": {"WR"}} (slot label to its eligible positions).
     """
     ranked = _sorted(cands)
     chosen = list(ranked[:n])

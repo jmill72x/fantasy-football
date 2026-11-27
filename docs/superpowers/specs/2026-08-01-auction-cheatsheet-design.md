@@ -52,7 +52,7 @@ player**.
 | DST | 1 | 1 |
 
 TQB, K, and DST are fixed at one each. The remaining **five slots are flexible**
-across RB/WR/TE, with a floor of one RB and one WR/TE.
+across RB/WR/TE, with a floor of one RB and one WR.
 
 Two league-specific facts that no generic tool models:
 
@@ -61,12 +61,16 @@ Two league-specific facts that no generic tool models:
 2. **WR and TE are the same position** — rostered and scored identically. This is why
    TE's active minimum is 0. Valuation must treat them as one pool.
 
-**Confirmed:** CBS enforces a minimum of **one from the merged WR/TE pool**, not one WR
-specifically. The displayed `WR min 1, TE min 0` is an artifact of CBS listing the two
-separately; a lineup of 1 RB + 1 TE + 3 RB is legal.
+**Corrected 2026-11-26 (board 11a2bd50):** this spec said CBS enforces a minimum of one
+from a merged WR/TE pool and that a lineup of 1 RB + 1 TE + 3 RB is legal. CBS's own
+lineup check says otherwise: its team page's `is_roster_legal` (saved 2026-10-20) refuses
+fewer than 1 WR ("Between 1 and 4 are allowed") and has no TE minimum, so the table above
+is literal and a TE never stands in for the WR. WR and TE still score identically and
+share one replacement pool; only the floor is WR-specific.
 
 So the binding lineup constraint is: **TQB + K + DST fixed at one each, then five
-flexible slots across RB/WR/TE with a floor of one RB and one WR/TE.** Replacement level
+flexible slots across RB/WR/TE with a floor of one RB and one WR.** The floors are the
+league YAML's RB-only and WR-only `lineup` slots, which `sffl.value.flex_floors` reads. Replacement level
 must be computed against that constraint, not against per-position minimums.
 
 ### Scoring

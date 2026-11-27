@@ -7,6 +7,7 @@ from sffl.schema import PlayerProjection
 from sffl.value import (replacement_levels, assign_vorp, assign_dollars,
                         _largest_remainder_allocation, _starter_counts,
                         _select_flex_starters, _sorted_flex_records)
+import sffl.value as value_mod
 
 LG = load_league("leagues/sffl/2026.yaml")
 
@@ -263,7 +264,12 @@ def test_flat_pools_free_surplus_for_skill_players():
     assert flex_top_flat > flex_top_unflat
 
 
-# --- Lineup floors: 1 RB and 1 WR/TE per team, hard requirements at flex ---
+# --- Lineup floors: 1 RB and 1 WR per team, hard requirements at flex ---
+#
+# The floors are the league YAML's narrow flex slots (an RB-only slot and a
+# WR-only slot). Until 2026-11-26 this code floored "1 WR/TE", which let a
+# TE stand in for the WR that CBS requires (its lineup check: WR 1 to 4,
+# TE 0 to 4; board 11a2bd50).
 #
 # NOTE on direction: forcing extra RB (or WR/TE) into the starting set can
 # only ever raise the FLEX replacement level relative to the naive
@@ -290,15 +296,37 @@ def build_rb_floor_binds_pool():
     return pool
 
 
-def build_wrte_floor_binds_pool():
-    """Mirror of build_rb_floor_binds_pool: 50 RB outscore 15 WR/TE (split
-    across both positions), so the natural top 60 holds only 10 WR/TE."""
+def build_wr_floor_binds_pool():
+    """Mirror of build_rb_floor_binds_pool: 50 RB outscore 15 WR, so the
+    natural top 60 holds only 10 WR."""
     pool = []
     for i in range(50):
         pool.append(player("rb%d" % i, "RB", 200 - i))
     for i in range(15):
-        pos = "WR" if i % 2 == 0 else "TE"
-        pool.append(player("wt%d" % i, pos, 149 - i))
+        pool.append(player("wr%d" % i, "WR", 149 - i))
+    pool.append(player("tqb", "TQB", 300))
+    pool.append(player("k", "K", 50))
+    pool.append(player("d", "DST", 40))
+    return pool
+
+
+def build_te_cannot_clear_wr_floor_pool():
+    """40 RB (200..161), 15 TE (160..146), 15 WR (120..106).
+
+    The natural top 60 is 40 RB + 15 TE + 5 WR. Under the old "1 WR/TE"
+    floor the 15 TEs cleared it, so the natural cut stood and the best
+    player left out was WR6 at 115. Under CBS's real rule (1 WR per team)
+    12 WR (120..109) are forced in; 12 RB are reserved too, and the 36 open
+    places go to RB13-40 (28) and TE1-8 (160..153). The best player left
+    out is TE9 at 152.
+    """
+    pool = []
+    for i in range(40):
+        pool.append(player("rb%d" % i, "RB", 200 - i))
+    for i in range(15):
+        pool.append(player("te%d" % i, "TE", 160 - i))
+    for i in range(15):
+        pool.append(player("wr%d" % i, "WR", 120 - i))
     pool.append(player("tqb", "TQB", 300))
     pool.append(player("k", "K", 50))
     pool.append(player("d", "DST", 40))
@@ -330,13 +358,13 @@ def test_rb_floor_binds():
     assert lv["FLEX"] > naive_cut
 
 
-def test_wrte_floor_binds():
-    """Mirror of test_rb_floor_binds: natural top-60 holds only 10 WR/TE."""
-    pool = build_wrte_floor_binds_pool()
+def test_wr_floor_binds():
+    """Mirror of test_rb_floor_binds: natural top-60 holds only 10 WR."""
+    pool = build_wr_floor_binds_pool()
     recs = _sorted_flex_records(pool)
     selected = _select_flex_starters(LG, recs, 60)
-    wrte_selected = sum(1 for i in selected if recs[i].pos in ("WR", "TE"))
-    assert wrte_selected == LG.teams == 12
+    wr_selected = sum(1 for i in selected if recs[i].pos == "WR")
+    assert wr_selected == LG.teams == 12
 
     lv = replacement_levels(LG, pool, "starter")
     naive_cut = sorted((p.stats["_season_points"] for p in pool
@@ -344,6 +372,56 @@ def test_wrte_floor_binds():
     assert naive_cut == pytest.approx(139.0)
     assert lv["FLEX"] == pytest.approx(152.0)
     assert lv["FLEX"] > naive_cut
+
+
+def test_a_te_cannot_clear_the_wr_floor():
+    """CBS requires a WR; a TE never stands in for one (board 11a2bd50).
+    Hand-verified in build_te_cannot_clear_wr_floor_pool: 152, not 115."""
+    pool = build_te_cannot_clear_wr_floor_pool()
+    recs = _sorted_flex_records(pool)
+    selected = _select_flex_starters(LG, recs, 60)
+    assert sum(1 for i in selected if recs[i].pos == "WR") == 12
+    assert sum(1 for i in selected if recs[i].pos == "TE") == 8
+    assert sum(1 for i in selected if recs[i].pos == "RB") == 40
+
+    lv = replacement_levels(LG, pool, "starter")
+    assert lv["FLEX"] == pytest.approx(152.0)
+
+
+def test_the_floors_are_the_yaml_lineup_narrow_slots():
+    """The floors come from the league YAML, the same source the weekly
+    optimizer reads, so the two paths can't disagree again."""
+    assert value_mod.flex_floors(LG) == [(("RB",), 1), (("WR",), 1)]
+
+
+def test_the_old_wr_or_te_slot_reproduces_the_old_floor():
+    """With the pre-11-24 lineup (a "WR/TE" floor slot) the TEs clear the
+    floor again and the level is the natural cut's 115 - so the floor is
+    read from the lineup, not hardcoded."""
+    lg_old = copy.copy(LG)
+    lg_old.lineup = [(s, ("WR", "TE")) if s == "WR" else (s, e)
+                     for s, e in LG.lineup]
+    assert value_mod.flex_floors(lg_old) == [(("RB",), 1), (("WR", "TE"), 1)]
+    lv = replacement_levels(lg_old, build_te_cannot_clear_wr_floor_pool(),
+                            "starter")
+    assert lv["FLEX"] == pytest.approx(115.0)
+
+
+def test_overlapping_floor_slots_are_refused():
+    """Reserving greedily per floor is exact only when the floors share no
+    position; an overlapping pair must refuse, not guess."""
+    lg_bad = copy.copy(LG)
+    lg_bad.lineup = [(s, ("WR", "TE")) if s == "FLEX1" else (s, e)
+                     for s, e in LG.lineup]
+    with pytest.raises(ValueError, match="overlap"):
+        value_mod.flex_floors(lg_bad)
+
+
+def test_a_league_with_no_lineup_is_refused():
+    lg_none = copy.copy(LG)
+    lg_none.lineup = []
+    with pytest.raises(ValueError, match="no lineup"):
+        replacement_levels(lg_none, build_pool_fixture(), "starter")
 
 
 def test_neither_floor_binds_matches_naive_cut():
@@ -366,9 +444,9 @@ def test_neither_floor_binds_matches_naive_cut():
     assert lv["FLEX"] == pytest.approx(naive_cut)
 
 
-def test_wr_and_te_share_one_floor_not_one_each():
-    """12 WR and zero TE must satisfy the single shared WR/TE floor - the
-    code must not demand 12 of each position separately."""
+def test_te_has_no_floor():
+    """12 WR and zero TE satisfy the floors - TE's CBS minimum is 0, so the
+    code must never demand a TE."""
     pool = []
     for i in range(60):
         pool.append(player("rb%d" % i, "RB", 200 - i))
@@ -404,7 +482,7 @@ def test_flex_pool_raises_for_too_few_rb():
         replacement_levels(LG, pool, "starter")
 
 
-def test_flex_pool_raises_for_too_few_wrte():
+def test_flex_pool_raises_for_too_few_wr():
     pool = []
     for i in range(60):
         pool.append(player("rb%d" % i, "RB", 200 - i))
@@ -414,7 +492,25 @@ def test_flex_pool_raises_for_too_few_wrte():
     pool.append(player("k", "K", 50))
     pool.append(player("d", "DST", 40))
 
-    with pytest.raises(ValueError, match=r"only 5 WR/TE.*requires 12"):
+    with pytest.raises(ValueError, match=r"only 5 WR .*requires 12"):
+        replacement_levels(LG, pool, "starter")
+
+
+def test_tes_do_not_count_toward_the_wr_floor_count():
+    """5 WR plus 20 TE is 25 "WR/TE", enough for the old floor; CBS's
+    rule needs 12 WR, so this pool must refuse."""
+    pool = []
+    for i in range(60):
+        pool.append(player("rb%d" % i, "RB", 200 - i))
+    for i in range(20):
+        pool.append(player("te%d" % i, "TE", 150 - i))
+    for i in range(5):
+        pool.append(player("wr%d" % i, "WR", 120 - i))
+    pool.append(player("tqb", "TQB", 300))
+    pool.append(player("k", "K", 50))
+    pool.append(player("d", "DST", 40))
+
+    with pytest.raises(ValueError, match=r"only 5 WR .*requires 12"):
         replacement_levels(LG, pool, "starter")
 
 

@@ -29,17 +29,54 @@ def _sorted_flex_records(pool):
 
     Unlike _sorted_points, this keeps the records (not just the point
     values) because flex starter selection below has to know each player's
-    position to enforce the RB and WR/TE floors.
+    position to enforce the lineup floors.
     """
     recs = [p for p in pool if _pool_of(p.pos) == "FLEX"]
     return sorted(recs, key=lambda p: p.stats["_season_points"], reverse=True)
 
 
+def flex_floors(lg):
+    """The per-team flex floors, read from the league YAML's `lineup`.
+
+    A floor is a flex-eligible slot narrower than the full RB/WR/TE pool -
+    the same rule `sffl.lineup.best_lineup` uses, so the auction and weekly
+    paths read one fact. Returns [(positions, slots_per_team)] in lineup
+    order; for STRIPES 2026 that is [(("RB",), 1), (("WR",), 1)]: CBS's own
+    lineup check requires 1 to 4 WR and allows 0 to 4 TE, so a TE never
+    clears the WR floor (board 11a2bd50; it floored "1 WR/TE" until
+    2026-11-26).
+
+    Floors that share a position are refused: the per-floor reservation in
+    _select_flex_starters is exact only for disjoint floors.
+    """
+    if not lg.lineup:
+        raise ValueError(
+            "the league profile has no lineup, so there are no flex floors "
+            "to enforce; add the slot-by-slot `lineup:` to its YAML")
+    counts = []  # type: list
+    for _slot, elig in lg.lineup:
+        if not set(elig) & set(FLEX) or set(elig) == set(FLEX):
+            continue
+        key = tuple(elig)
+        for i, (k, n) in enumerate(counts):
+            if set(k) == set(key):
+                counts[i] = (k, n + 1)
+                break
+        else:
+            counts.append((key, 1))
+    for i, (a, _n) in enumerate(counts):
+        for b, _m in counts[i + 1:]:
+            if set(a) & set(b):
+                raise ValueError(
+                    "lineup floor slots %s and %s overlap; only disjoint "
+                    "floors are supported" % ("/".join(a), "/".join(b)))
+    return counts
+
+
 def _select_flex_starters(lg, recs, depth):
     """Select the depth-sized flex starting set, respecting the league's
-    lineup floors: each of lg.teams teams must start at least 1 RB and at
-    least 1 WR/TE (WR and TE are one position here and share a single
-    floor - never one floor each).
+    lineup floors (`flex_floors`): each of lg.teams teams must start at
+    least 1 RB and at least 1 WR. A TE counts toward neither.
 
     `recs` must already be sorted descending by points; `depth` must be
     strictly less than len(recs) (the caller handles the shallow-pool case
@@ -53,28 +90,30 @@ def _select_flex_starters(lg, recs, depth):
     draftable's much greater depth the floors simply never bind.
     """
     teams = lg.teams
-    if depth < 2 * teams:
+    floors = flex_floors(lg)
+    per_team = sum(n for _k, n in floors)
+    if depth < per_team * teams:
         raise ValueError(
-            "flex starter depth %d is less than 2 * lg.teams (%d): the "
-            "league requires %d RB-floor slots plus %d WR/TE-floor slots, "
-            "which cannot both fit in a %d-player flex lineup"
-            % (depth, 2 * teams, teams, teams, depth))
+            "flex starter depth %d is less than %d * lg.teams (%d): the "
+            "league requires %s, which cannot all fit in a %d-player flex "
+            "lineup"
+            % (depth, per_team, per_team * teams,
+               " plus ".join("%d %s-floor slots" % (n * teams, "/".join(k))
+                             for k, n in floors),
+               depth))
 
-    rb_idx = [i for i, p in enumerate(recs) if p.pos == "RB"]
-    wrte_idx = [i for i, p in enumerate(recs) if p.pos in ("WR", "TE")]
-
-    if len(rb_idx) < teams:
-        raise ValueError(
-            "flex pool has only %d RB but the league requires %d (1 RB "
-            "floor per team x %d teams)" % (len(rb_idx), teams, teams))
-    if len(wrte_idx) < teams:
-        raise ValueError(
-            "flex pool has only %d WR/TE but the league requires %d (1 "
-            "WR/TE floor per team x %d teams)" % (len(wrte_idx), teams, teams))
-
-    # Reserve the top `teams` at each floor position...
-    selected = set(rb_idx[:teams])
-    selected.update(wrte_idx[:teams])
+    selected = set()
+    for positions, n in floors:
+        need = n * teams
+        idx = [i for i, p in enumerate(recs) if p.pos in positions]
+        label = "/".join(positions)
+        if len(idx) < need:
+            raise ValueError(
+                "flex pool has only %d %s but the league requires %d (%d %s "
+                "floor per team x %d teams)"
+                % (len(idx), label, need, n, label, teams))
+        # Reserve the top `need` at each floor position...
+        selected.update(idx[:need])
 
     # ...then fill whatever is left with the best remaining players
     # regardless of position.
@@ -156,7 +195,7 @@ def replacement_levels(lg, pool, policy):
                     "no players in pool %r; cannot compute replacement level" % name)
             elif idx < len(recs):
                 # Pool is deep enough to fill every flex starter slot -
-                # enforce the RB and WR/TE lineup floors when choosing who
+                # enforce the RB and WR lineup floors when choosing who
                 # starts, then take the best player left out of that set.
                 selected = _select_flex_starters(lg, recs, idx)
                 levels[name] = next(

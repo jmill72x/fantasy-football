@@ -13,6 +13,7 @@ flex_slots: 5          # RB/WR/TE, floor of 1 RB and 1 WR
 #
 # The RB and WR slots ARE the floors - there is no separate floor setting.
 # A slot that only accepts RB forces one RB into the lineup by construction.
+# The auction path reads the same slots (sffl.value.flex_floors, 2026-11-26).
 #
 # CBS itself has no slots: it counts positions. Its team page's own check
 # (`is_roster_legal`, saved 2026-10-20, board da76847f) allows 5 to 8

@@ -97,14 +97,15 @@ Eight starters from a thirteen-man roster:
 |---|---|
 | TQB | TQB |
 | RB | RB |
-| WR/TE | WR, TE |
+| WR | WR (was "WR/TE" until 2026-11-24: CBS requires a WR) |
 | FLEX x3 | RB, WR, TE |
 | K | K |
 | DST | DST |
 
 This matches `leagues/sffl/2026.yaml`'s `starters: 8` and
-`flex_slots: 5  # RB/WR/TE, floor of 1 RB and 1 WR/TE`. **Five of the eight starting slots
-draw from one RB/WR/TE pool** with only one RB and one WR/TE forced — which is why the
+`flex_slots: 5  # RB/WR/TE, floor of 1 RB and 1 WR` (corrected 11-24 and 11-26; it said
+1 WR/TE). **Five of the eight starting slots
+draw from one RB/WR/TE pool** with only one RB and one WR forced — which is why the
 auction model treats the two as near-interchangeable, and is the structural reason the
 2026 positional bias (room paid +$133 into RB) did not surface in it.
 
@@ -187,7 +188,7 @@ Small enough to solve exactly, and it must be solved exactly rather than greedil
 
 1. TQB, K, DST each take the highest-scoring eligible player. Independent of everything else.
 2. The five flex-eligible slots take the best legal set from RB/WR/TE subject to **>=1 RB and
-   >=1 WR/TE**.
+   >=1 WR** (it said WR/TE until 2026-11-24; a TE never clears the WR floor).
 
 Step 2 is the only interesting part. Take the top 5 by projected points; if a floor is
 violated, the fix is a single swap — the best player of the missing position replaces the
